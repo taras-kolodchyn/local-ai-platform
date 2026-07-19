@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools==80.10.2"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "local-ai-offline-mcp"
+version = "0.1.0"
+description = "Read-only filesystem, Git, and PostgreSQL MCP tools"
+requires-python = ">=3.11,<3.15"
+dependencies = [
+  "mcp==1.28.1",
+  "prometheus-client==0.25.0",
+  "psycopg[binary]==3.3.4",
+  "uvicorn==0.51.0",
+]
+
+[project.optional-dependencies]
+test = ["pytest==9.1.1"]
+
+[project.scripts]
+local-ai-offline-mcp = "local_ai_offline_mcp.service:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

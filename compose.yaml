@@ -1,0 +1,422 @@
+name: local-ai-platform
+
+x-service-defaults: &service-defaults
+  restart: unless-stopped
+  security_opt:
+    - no-new-privileges:true
+
+services:
+  postgres:
+    <<: *service-defaults
+    image: pgvector/pgvector:0.8.5-pg17-bookworm
+    environment:
+      POSTGRES_DB: local_ai
+      POSTGRES_USER: localai
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run make bootstrap}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    command:
+      - postgres
+      - -c
+      - logging_collector=on
+      - -c
+      - log_destination=jsonlog
+      - -c
+      - log_directory=/var/log/local-ai
+      - -c
+      - log_filename=postgres.log
+      - -c
+      - log_rotation_age=0
+      - -c
+      - log_truncate_on_rotation=off
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+      - ./.local/logs:/var/log/local-ai
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U localai -d local_ai"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    networks:
+      - data
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+
+  mcp-provisioner:
+    image: pgvector/pgvector:0.8.5-pg17-bookworm
+    restart: "no"
+    environment:
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGDATABASE: local_ai
+      PGUSER: localai
+      PGPASSWORD: ${POSTGRES_PASSWORD:?run make bootstrap}
+      MCP_POSTGRES_PASSWORD: ${MCP_POSTGRES_PASSWORD:?run make bootstrap}
+    entrypoint: ["/bin/bash", "/provision/provision-mcp-role.sh"]
+    volumes:
+      - ./postgres/provision-mcp-role.sh:/provision/provision-mcp-role.sh:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - data
+    security_opt:
+      - no-new-privileges:true
+
+  redis:
+    <<: *service-defaults
+    image: redis:8.8.0-alpine
+    command:
+      - /bin/sh
+      - -ec
+      - exec redis-server --appendonly yes --save 60 1000 --requirepass "$$REDIS_PASSWORD" --logfile /var/log/local-ai/redis.log
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?run make bootstrap}
+    volumes:
+      - redis_data:/data
+      - ./.local/logs:/var/log/local-ai
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=$$REDIS_PASSWORD redis-cli ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks:
+      - gateway
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  litellm:
+    <<: *service-defaults
+    image: ghcr.io/berriai/litellm:v1.93.0
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - litellm --config /app/config.yaml --port 4000 --num_workers 1 2>&1 | tee -a /var/log/local-ai/litellm.log
+    environment:
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?run make bootstrap}
+      DATABASE_URL: postgresql://localai:${POSTGRES_PASSWORD}@postgres:5432/litellm
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      INFERENCE_BASE_URL: ${INFERENCE_BASE_URL}
+      INFERENCE_API_KEY: ${INFERENCE_API_KEY}
+      QWEN_MODEL: ${QWEN_MODEL}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL}
+      LITELLM_CACHE_TTL: ${LITELLM_CACHE_TTL}
+      LITELLM_CACHE_NAMESPACE: ${LITELLM_CACHE_NAMESPACE}
+      STORE_MODEL_IN_DB: "True"
+    volumes:
+      - ./litellm/config.yaml:/app/config.yaml:ro
+      - ./.local/logs:/var/log/local-ai
+    ports:
+      - "127.0.0.1:4000:4000"
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:4000/health/liveliness', timeout=3)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    networks:
+      - gateway
+      - data
+      - observability
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+
+  retrieval:
+    <<: *service-defaults
+    build:
+      context: ./retrieval
+      dockerfile: Dockerfile
+    image: local-ai-platform/retrieval:0.1.0
+    environment: &retrieval-env
+      DATABASE_URL: postgresql://localai:${POSTGRES_PASSWORD}@postgres:5432/local_ai
+      LITELLM_BASE_URL: http://litellm:4000/v1
+      LITELLM_API_KEY_FILE: /run/secrets/litellm_client_key
+      EMBEDDING_MODEL_ALIAS: local-embeddings
+      EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS}
+      RETRIEVAL_DEFAULT_LIMIT: ${RETRIEVAL_DEFAULT_LIMIT}
+      RETRIEVAL_MAX_LIMIT: ${RETRIEVAL_MAX_LIMIT}
+      RETRIEVAL_MAX_CONTEXT_CHARS: ${RETRIEVAL_MAX_CONTEXT_CHARS}
+      LOG_LEVEL: ${LOG_LEVEL}
+      SERVICE_LOG_FILE: /var/log/local-ai/retrieval.log
+    volumes:
+      - ./.local/logs:/var/log/local-ai
+    secrets:
+      - litellm_client_key
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      litellm:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    networks:
+      - data
+      - gateway
+      - observability
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+  mcp-tools:
+    <<: *service-defaults
+    build:
+      context: ./mcp/offline
+      dockerfile: Dockerfile
+    image: local-ai-platform/offline-mcp:0.1.0
+    environment:
+      MCP_ROOT: /workspace
+      DATABASE_URL: postgresql://mcp_reader:${MCP_POSTGRES_PASSWORD}@postgres:5432/local_ai
+      LOG_LEVEL: ${LOG_LEVEL}
+      SERVICE_LOG_FILE: /var/log/local-ai/mcp-tools.log
+    volumes:
+      - ${MCP_REPO_PATH:-.}:/workspace:ro
+      - ./.local/logs:/var/log/local-ai
+    ports:
+      - "127.0.0.1:8001:8001"
+    depends_on:
+      mcp-provisioner:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    networks:
+      - data
+      - observability
+      - mcp-host
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  github-mcp:
+    <<: *service-defaults
+    image: ghcr.io/github/github-mcp-server:v1.6.0
+    profiles: ["connected"]
+    command: ["http"]
+    read_only: true
+    tmpfs:
+      - /tmp
+    expose:
+      - "8082"
+    healthcheck:
+      test: ["CMD", "/server/github-mcp-server", "--version"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+    networks:
+      - gateway
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  ingestion:
+    image: local-ai-platform/retrieval:0.1.0
+    profiles: ["tools"]
+    environment:
+      <<: *retrieval-env
+      INDEX_ROOT: /workspace
+      SERVICE_LOG_FILE: /var/log/local-ai/ingestion.log
+    volumes:
+      - ${INDEX_REPO_PATH:-.}:/workspace:ro
+      - ./.local/logs:/var/log/local-ai
+    secrets:
+      - litellm_client_key
+    depends_on:
+      postgres:
+        condition: service_healthy
+      litellm:
+        condition: service_healthy
+    networks:
+      - data
+      - gateway
+    security_opt:
+      - no-new-privileges:true
+
+  hermes:
+    image: nousresearch/hermes-agent:v2026.7.7.2
+    profiles: ["agents"]
+    restart: "no"
+    env_file:
+      - ./.local/client.compose.env
+    environment:
+      HERMES_HOME: /opt/data
+      HERMES_UID: ${HERMES_UID:-10000}
+      HERMES_GID: ${HERMES_GID:-10000}
+    volumes:
+      - ./.local/hermes-container:/opt/data
+      - ${HERMES_WORKSPACE_PATH:-.}:/workspace:ro
+    working_dir: /workspace
+    depends_on:
+      litellm:
+        condition: service_healthy
+      retrieval:
+        condition: service_healthy
+      mcp-tools:
+        condition: service_healthy
+    networks:
+      - gateway
+      - data
+    security_opt:
+      - no-new-privileges:true
+
+  postgres-exporter:
+    <<: *service-defaults
+    image: prometheuscommunity/postgres-exporter:v0.20.1
+    environment:
+      DATA_SOURCE_NAME: postgresql://localai:${POSTGRES_PASSWORD}@postgres:5432/local_ai?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - data
+      - observability
+
+  redis-exporter:
+    <<: *service-defaults
+    image: oliver006/redis_exporter:v1.87.0
+    environment:
+      REDIS_ADDR: redis://redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - gateway
+      - observability
+
+  prometheus:
+    <<: *service-defaults
+    image: prom/prometheus:v3.13.1
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      - --web.enable-lifecycle
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    secrets:
+      - litellm_master_key
+    ports:
+      - "127.0.0.1:9090:9090"
+    depends_on:
+      litellm:
+        condition: service_healthy
+      retrieval:
+        condition: service_healthy
+      mcp-tools:
+        condition: service_healthy
+    networks:
+      - observability
+      - observability-host
+
+  loki:
+    <<: *service-defaults
+    image: grafana/loki:3.7.3
+    command: ["-config.file=/etc/loki/config.yaml"]
+    volumes:
+      - ./observability/loki/config.yaml:/etc/loki/config.yaml:ro
+      - loki_data:/loki
+    healthcheck:
+      test: ["CMD", "/usr/bin/loki", "-verify-config", "-config.file=/etc/loki/config.yaml"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+    networks:
+      - observability
+
+  alloy:
+    <<: *service-defaults
+    image: grafana/alloy:v1.17.1
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    volumes:
+      - ./observability/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - ./.local/logs:/var/log/local-ai:ro
+      - alloy_data:/var/lib/alloy/data
+    depends_on:
+      loki:
+        condition: service_healthy
+    networks:
+      - observability
+
+  grafana:
+    <<: *service-defaults
+    image: grafana/grafana:13.1.0
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?run make bootstrap}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_SERVER_HTTP_ADDR: 0.0.0.0
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      - prometheus
+      - loki
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    networks:
+      - observability
+      - observability-host
+
+volumes:
+  postgres_data:
+  redis_data:
+  prometheus_data:
+  loki_data:
+  alloy_data:
+  grafana_data:
+
+networks:
+  gateway:
+  mcp-host:
+  observability-host:
+  data:
+    internal: true
+  observability:
+    internal: true
+
+secrets:
+  litellm_client_key:
+    file: ./.local/litellm-api-key
+  litellm_master_key:
+    file: ./.local/litellm-master-key

@@ -1,0 +1,26 @@
+.DS_Store
+.env
+.env.connected
+.local/
+.venv/
+__pycache__/
+.pytest_cache/
+.playwright-cli/
+*.py[cod]
+*.egg-info/
+*.log
+coverage.xml
+htmlcov/
+tmp/
+
+# Local models and indexed material must never enter Git.
+models/
+data/
+*.gguf
+*.safetensors
+
+# Demo/build output.
+target/
+dist/
+build/
+node_modules/

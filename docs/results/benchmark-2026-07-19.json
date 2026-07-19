@@ -1,0 +1,88 @@
+{
+  "recorded_at": "2026-07-19T21:40:46Z",
+  "snapshot": "pre-publication working tree",
+  "host": {
+    "macos": "26.5.1",
+    "architecture": "arm64",
+    "memory_bytes": 51539607552
+  },
+  "runtime": {
+    "docker_server": "29.5.3",
+    "model_runner": "v1.2.1",
+    "model": "ai/qwen3-coder:30B-A3B-UD-Q4_K_XL",
+    "context_size": 65536
+  },
+  "samples": [
+    {
+      "kind": "chat",
+      "phase": "cold",
+      "run": 1,
+      "http_status": 200,
+      "seconds": 6.781154,
+      "completion_tokens": 39,
+      "output_tokens_per_second": 5.751233492116533
+    },
+    {
+      "kind": "retrieval",
+      "phase": "cold",
+      "run": 1,
+      "http_status": 200,
+      "seconds": 1.591380,
+      "result_count": 3
+    },
+    {
+      "kind": "chat",
+      "phase": "warm",
+      "run": 2,
+      "http_status": 200,
+      "seconds": 0.601266,
+      "completion_tokens": 38,
+      "cached_prompt_tokens": 17,
+      "output_tokens_per_second": 63.199981372637076
+    },
+    {
+      "kind": "retrieval",
+      "phase": "warm",
+      "run": 2,
+      "http_status": 200,
+      "seconds": 0.045547,
+      "result_count": 3
+    },
+    {
+      "kind": "chat",
+      "phase": "warm",
+      "run": 3,
+      "http_status": 200,
+      "seconds": 0.605615,
+      "completion_tokens": 38,
+      "cached_prompt_tokens": 17,
+      "output_tokens_per_second": 62.74613409509342
+    },
+    {
+      "kind": "retrieval",
+      "phase": "warm",
+      "run": 3,
+      "http_status": 200,
+      "seconds": 0.048016,
+      "result_count": 3
+    },
+    {
+      "kind": "chat",
+      "phase": "warm",
+      "run": 4,
+      "http_status": 200,
+      "seconds": 0.565639,
+      "completion_tokens": 38,
+      "cached_prompt_tokens": 17,
+      "output_tokens_per_second": 67.18065762792169
+    },
+    {
+      "kind": "retrieval",
+      "phase": "warm",
+      "run": 4,
+      "http_status": 200,
+      "seconds": 0.077498,
+      "result_count": 3
+    }
+  ]
+}

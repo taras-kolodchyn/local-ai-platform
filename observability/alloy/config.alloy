@@ -1,0 +1,38 @@
+local.file_match "platform_logs" {
+  path_targets = [{
+    __path__ = "/var/log/local-ai/*.log",
+    job      = "local-ai-platform",
+  }]
+  sync_period = "5s"
+}
+
+loki.source.file "platform_logs" {
+  targets       = local.file_match.platform_logs.targets
+  forward_to    = [loki.process.platform_logs.receiver]
+  tail_from_end = false
+}
+
+loki.process "platform_logs" {
+  forward_to = [loki.write.local.receiver]
+
+  stage.json {
+    expressions = {
+      event  = "event",
+      level  = "level",
+      logger = "logger",
+    }
+  }
+
+  stage.labels {
+    values = {
+      event = "",
+      level = "",
+    }
+  }
+}
+
+loki.write "local" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

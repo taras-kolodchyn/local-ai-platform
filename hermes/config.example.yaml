@@ -1,0 +1,33 @@
+model:
+  default: local-qwen
+  provider: custom
+  base_url: http://127.0.0.1:4000/v1
+  api_key: ${LITELLM_API_KEY}
+  context_length: 65536
+
+custom_providers:
+  - name: local-litellm
+    base_url: http://127.0.0.1:4000/v1
+    key_env: LITELLM_API_KEY
+    api_mode: chat_completions
+    models:
+      local-qwen:
+        context_length: 65536
+
+mcp_servers:
+  local_retrieval:
+    url: http://127.0.0.1:4000/local_retrieval/mcp
+    headers:
+      Authorization: Bearer ${LITELLM_API_KEY}
+    tools:
+      include: [local_retrieval-search_code, local_retrieval-get_chunk]
+      prompts: false
+      resources: false
+  local_tools:
+    url: http://127.0.0.1:4000/local_tools/mcp
+    headers:
+      Authorization: Bearer ${LITELLM_API_KEY}
+    tools:
+      include: [local_tools-list_files, local_tools-read_text_file, local_tools-git_status, local_tools-git_log, local_tools-postgres_select]
+      prompts: false
+      resources: false

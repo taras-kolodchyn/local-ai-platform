@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: retrieval/pyproject.toml
+      - uses: dtolnay/rust-toolchain@stable
+      - run: python -m venv .local/test-venv
+      - run: .local/test-venv/bin/python -m pip install -e './retrieval[test]'
+      - run: .local/test-venv/bin/python -m pip install -e './mcp/offline[test]'
+      - run: .local/test-venv/bin/python -m pytest retrieval/tests
+      - run: .local/test-venv/bin/python -m pytest mcp/offline/tests
+      - run: cargo test --manifest-path examples/rust-service/Cargo.toml
+      - run: bash -n scripts/*.sh
+      - run: docker compose --env-file .env.example config --quiet
