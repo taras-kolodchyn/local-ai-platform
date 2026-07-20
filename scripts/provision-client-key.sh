@@ -9,10 +9,14 @@ require_command jq
 write_client_env() {
   local key=$1
   umask 077
+  mkdir -p .local/codex
   printf '%s' "$key" > .local/litellm-api-key
   printf 'export LITELLM_API_KEY=%q\n' "$key" > .local/client.env
   printf 'LITELLM_API_KEY=%s\n' "$key" > .local/client.compose.env
-  chmod 600 .local/litellm-api-key .local/client.env .local/client.compose.env
+  # Codex IDE clients may not inherit shell variables. Keep the provider key
+  # in the ignored, isolated CODEX_HOME instead of VS Code workspace settings.
+  printf 'LITELLM_API_KEY=%s\n' "$key" > .local/codex/.env
+  chmod 600 .local/litellm-api-key .local/client.env .local/client.compose.env .local/codex/.env
 }
 
 if [[ -s .local/litellm-api-key ]]; then

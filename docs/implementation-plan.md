@@ -1,6 +1,6 @@
 # Implementation and milestone plan
 
-Last updated: 2026-07-19
+Last updated: 2026-07-20
 
 The plan separates a reproducible MVP from compatibility claims that require real agent workloads. A milestone is complete only when its acceptance checks are captured in tests or a dated benchmark record.
 
@@ -63,6 +63,7 @@ Exit criteria:
 Deliverables:
 
 - Codex config with `wire_api = "responses"`, workspace-write sandbox, and on-request approvals.
+- Native VS Code bootstrap using the official extension, isolated `CODEX_HOME`, and a bundled-runtime doctor check.
 - Hermes custom provider config targeting the same LiteLLM alias.
 - Tests for tool calls, streaming, `AGENTS.md`, shell execution, multi-file edits, and test execution.
 

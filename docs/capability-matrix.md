@@ -1,6 +1,6 @@
 # Capability and version matrix
 
-Research and live-verification date: 2026-07-19. Sources are upstream project
+Research and live-verification date: 2026-07-20. Sources are upstream project
 documentation or release metadata. Results below distinguish platform transport
 checks from autonomous agent quality.
 
@@ -9,6 +9,7 @@ checks from autonomous agent quality.
 | Component | Pinned/observed version | Relevant documented capability | Repository verification |
 | --- | --- | --- | --- |
 | Codex CLI | observed `0.144.6` | Custom `model_providers`, `base_url`, `env_key`, `wire_api = "responses"`, sandbox and approval configuration, `AGENTS.md` | Transport/tool bridge pass; autonomous Rust repair and model-selected retrieval MCP fail |
+| Codex VS Code extension | observed `26.715.31925`, bundled Codex `0.145.0-alpha.18`; VS Code `1.129.0` | Shared CLI/IDE configuration layers, `CODEX_HOME`, editor context, local edits and diff review | Extension install and `vscode-smoke` pass; bundled doctor loaded custom-provider auth from `CODEX_HOME/.env`, MCP config, and reachable local provider without a shell-exported key; ephemeral read-only model turn returned the expected marker without a remote plugin request; interactive autonomous repair not re-claimed |
 | LiteLLM | `1.93.0` | `/v1/responses`, explicit bridge to custom chat-completions providers, streaming, Redis cache, Prometheus, MCP and A2A gateways | Live pass for chat, embeddings, Responses, streaming, cache, MCP, metrics |
 | Docker Desktop | observed `4.79.0` | Model Runner on macOS; Compose support | Live pass after recovering a stale backend |
 | Docker Model Runner | observed `1.2.1` | llama.cpp, Metal on Apple Silicon, OpenAI-compatible API | Live pass with host Metal inference |
@@ -31,6 +32,18 @@ Live verified with an explicit bridge. LiteLLM requires
 custom provider exposes `/chat/completions`. Tool results must be submitted
 with `previous_response_id`; replaying the original function-call item caused
 the local model template to reject the request.
+
+### VS Code -> bundled Codex -> LiteLLM
+
+The official extension ships its own Codex runtime and reads the same
+configuration layers as the CLI. The repository launches VS Code with an
+isolated `CODEX_HOME`; the bundled runtime's redacted doctor report passed
+configuration, provider-authentication, provider-reachability, and MCP checks
+with `LITELLM_API_KEY` explicitly removed from the launching shell. This proves
+the IDE runtime bootstrap. A strict-config, ephemeral read-only turn also
+returned the expected marker without emitting a remote plugin-catalog request;
+neither check claims that the local model can complete a complex autonomous
+edit.
 
 ### Hermes -> LiteLLM
 
@@ -59,6 +72,9 @@ LiteLLM documents A2A 0.3 and 1.0 normalization, streaming, logging, and permiss
 ## Official sources
 
 - Codex configuration reference: https://developers.openai.com/codex/config-reference/
+- Codex IDE extension: https://developers.openai.com/codex/ide/
+- Codex configuration layers: https://developers.openai.com/codex/config-basic/
+- Codex environment variables: https://developers.openai.com/codex/environment-variables/
 - Codex `AGENTS.md`: https://developers.openai.com/codex/guides/agents-md/
 - LiteLLM Responses API and bridge: https://docs.litellm.ai/docs/response_api
 - LiteLLM caching: https://docs.litellm.ai/docs/proxy/caching

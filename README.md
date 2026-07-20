@@ -32,7 +32,23 @@ make up
 
 `make up` diagnoses the host, creates a local `.env`, enables Docker Model Runner, pulls pinned Qwen model artifacts, starts the container services, waits for health checks, verifies the gateway and cache, and writes client configuration examples under `.local/`.
 
-Run Codex with the generated isolated configuration (your normal `~/.codex` is not changed):
+Use the native Codex sidebar in VS Code while keeping the generated provider,
+credentials, sessions, and MCP configuration isolated from your normal
+`~/.codex`:
+
+```sh
+make vscode-install
+make vscode-check
+make vscode-smoke
+make vscode
+```
+
+The install target is a one-time connected step. Daily use is `make up` followed
+by `make vscode`. Open **Codex: Open Codex Sidebar** from the Command Palette and
+keep execution on **Local**. See the [VS Code workflow](docs/vscode.md) for the
+security boundary and troubleshooting.
+
+The terminal client remains available with the same generated configuration:
 
 ```sh
 source .local/client.env
@@ -48,6 +64,9 @@ make help
 make doctor
 make status
 make logs
+make vscode
+make vscode-check
+make vscode-smoke
 make smoke-test
 make index REPO=/absolute/path/to/repository
 make hermes-smoke
@@ -83,6 +102,7 @@ Docker Model Runner uses llama.cpp with automatic Metal acceleration on Apple Si
 - [Threat model and security design](docs/security.md)
 - [Risk register](docs/risks.md)
 - [Offline operation](docs/offline.md)
+- [Native VS Code workflow](docs/vscode.md)
 - [Opt-in connected mode](docs/connected.md)
 - [Troubleshooting](docs/troubleshooting.md)
 - [Benchmark method](docs/benchmarking.md)

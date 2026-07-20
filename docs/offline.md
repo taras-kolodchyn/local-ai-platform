@@ -15,6 +15,7 @@ network-level denial is required.
 make pull-model
 docker compose pull
 docker compose build retrieval
+make vscode-install
 make up
 make smoke-test
 ```
@@ -28,10 +29,12 @@ For an auditable offline transfer, record image and model digests on the connect
 - Embeddings and indexed chunks stay in the local Compose volumes.
 - Grafana, Prometheus, Loki, and retrieval bind to `127.0.0.1`.
 - `.env`, virtual keys, smoke artifacts, logs, and generated agent configs stay under ignored local paths.
+- The Codex IDE profile disables web search, app/connector and plugin features, plugin sharing, the remote plugin catalog, and Codex analytics; local turns use the loopback LiteLLM provider.
 
 ## Offline limitations
 
 - The first model/image pull and dependency installation require connectivity.
+- Installing or updating the VS Code Codex extension requires connectivity; selecting its Cloud execution path is not an offline run.
 - The GitHub Actions workflow is a connected CI check; it does not run the Metal-backed integration suite.
 - Connected MCP, web search, package lookup, and repository hosting are unavailable.
 - A local process running as the same macOS user may still reach loopback services; offline is not a multi-user authorization boundary.

@@ -1,7 +1,7 @@
 # Architecture
 
 Status: accepted for MVP
-Last verified: 2026-07-19
+Last verified: 2026-07-20
 
 ## Goals and boundaries
 
@@ -14,7 +14,7 @@ The platform does not grant a Linux container direct Metal access. Docker Model 
 ```mermaid
 flowchart TB
     subgraph Host["Apple Silicon macOS host"]
-        Codex["Codex CLI"]
+        Codex["Codex CLI / VS Code extension"]
         Hermes["Hermes Agent"]
         Other["Other OpenAI-compatible clients"]
         DMR["Docker Model Runner\nllama.cpp + Metal"]
@@ -123,7 +123,7 @@ flowchart LR
     Data --> Model
 ```
 
-Repository text and retrieved chunks are data, even when they contain phrases that look like instructions. Shell and write actions remain subject to the client sandbox and approval policy. The gateway does not make model-generated commands safe.
+Repository text and retrieved chunks are data, even when they contain phrases that look like instructions. Shell and write actions remain subject to the client sandbox and approval policy. The VS Code extension uses the same isolated Codex configuration as the CLI; selecting its Cloud path is outside the local boundary. The gateway does not make model-generated commands safe.
 
 ## Network layout
 

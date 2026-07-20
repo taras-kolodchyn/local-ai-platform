@@ -7,6 +7,19 @@ model_context_window = 65536
 sandbox_mode = "workspace-write"
 approval_policy = "on-request"
 allow_login_shell = false
+web_search = "disabled"
+
+[analytics]
+enabled = false
+
+[features]
+apps = false
+plugins = false
+plugin_sharing = false
+remote_plugin = false
+
+[shell_environment_policy]
+exclude = ["LITELLM_API_KEY"]
 
 [model_providers.litellm]
 name = "Local LiteLLM"

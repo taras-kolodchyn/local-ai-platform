@@ -21,11 +21,19 @@ fi
 
 python3 -m compileall -q retrieval/src retrieval/tests mcp/offline/src mcp/offline/tests
 python3 -m json.tool observability/grafana/dashboards/local-ai-platform.json >/dev/null
-ok "Python and dashboard syntax valid"
+python3 -m json.tool .vscode/extensions.json >/dev/null
+python3 -m json.tool .vscode/tasks.json >/dev/null
+ok "Python, dashboard, and VS Code JSON syntax valid"
 
 bash scripts/bootstrap.sh >/dev/null
+load_env
+bash scripts/configure-codex.sh >/dev/null
+cmp <(sed "s/65536/$QWEN_CONTEXT_SIZE/g" codex/config.toml.template) .local/codex/config.toml
+grep -Fq 'web_search = "disabled"' .local/codex/config.toml
+grep -Fq 'enabled = false' .local/codex/config.toml
+grep -Fq 'plugins = false' .local/codex/config.toml
 docker compose config --quiet
-ok "Compose configuration valid"
+ok "Generated Codex and Compose configuration valid"
 
 if rg -n --hidden --glob '!LICENSE' --glob '!.git/**' \
   '(ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----)' .; then

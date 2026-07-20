@@ -4,7 +4,7 @@ SHELL := /bin/bash
 COMPOSE := docker compose
 REPO ?=
 
-.PHONY: help doctor bootstrap pull-model up down restart logs status smoke-test test lint index reindex benchmark hermes-smoke connected-up connected-smoke connected-down clean reset configure-codex configure-hermes
+.PHONY: help doctor bootstrap pull-model up down restart logs status smoke-test test lint index reindex benchmark hermes-smoke vscode-install vscode-check vscode-smoke vscode connected-up connected-smoke connected-down clean reset configure-codex configure-hermes
 
 help: ## Show available commands
 	@awk 'BEGIN {FS = ":.*## "; printf "Local AI Platform\n\n"} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-18s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -32,6 +32,18 @@ logs: ## Follow service logs (metadata-only policy)
 
 status: ## Show containers, DMR models, and endpoints
 	@bash scripts/status.sh
+
+vscode-install: ## Install or update the official Codex extension for VS Code
+	@bash scripts/vscode.sh install
+
+vscode-check: ## Verify the VS Code extension, local Codex config, MCP, and provider
+	@bash scripts/vscode.sh check
+
+vscode-smoke: ## Run one ephemeral local turn through the extension's Codex runtime
+	@bash scripts/vscode.sh smoke
+
+vscode: ## Open VS Code with the isolated local Codex configuration
+	@bash scripts/vscode.sh launch
 
 smoke-test: ## Verify live endpoints, bridge, embeddings, cache, pgvector, MCP, and metrics
 	@bash scripts/smoke-test.sh

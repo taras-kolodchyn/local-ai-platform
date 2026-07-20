@@ -1,0 +1,56 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Local AI: Up",
+      "type": "process",
+      "command": "make",
+      "args": ["up"],
+      "problemMatcher": [],
+      "group": "build",
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
+    },
+    {
+      "label": "Local AI: Status",
+      "type": "process",
+      "command": "make",
+      "args": ["status"],
+      "problemMatcher": []
+    },
+    {
+      "label": "Local AI: VS Code Check",
+      "type": "process",
+      "command": "make",
+      "args": ["vscode-check"],
+      "problemMatcher": [],
+      "group": "test"
+    },
+    {
+      "label": "Local AI: Smoke Test",
+      "type": "process",
+      "command": "make",
+      "args": ["smoke-test"],
+      "problemMatcher": [],
+      "group": "test"
+    },
+    {
+      "label": "Local AI: VS Code Smoke",
+      "type": "process",
+      "command": "make",
+      "args": ["vscode-smoke"],
+      "problemMatcher": [],
+      "group": "test"
+    },
+    {
+      "label": "Local AI: Down",
+      "type": "process",
+      "command": "make",
+      "args": ["down"],
+      "problemMatcher": []
+    }
+  ]
+}

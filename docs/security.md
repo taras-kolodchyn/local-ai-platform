@@ -1,12 +1,12 @@
 # Security threat model
 
-Last reviewed: 2026-07-19
+Last reviewed: 2026-07-20
 
 ## Overview
 
 This repository assembles a single-user, local development platform for AI coding agents on Apple Silicon. Docker Model Runner (DMR) performs host-side inference; LiteLLM exposes authenticated OpenAI-compatible routes; PostgreSQL/pgvector and Redis hold retrieval and cache data; the retrieval and offline MCP services expose deliberately narrow, read-only tools; Prometheus, Loki, Alloy, and Grafana collect operational metadata. Codex runs on the host, while Hermes can run either on the host or in an optional container.
 
-The primary assets are source code and uncommitted work, Git history, locally generated API/database credentials, agent tool authority, vectorized source fragments, model gateway traffic, and host integrity. The main production-like runtime surfaces are `compose.yaml`, `litellm/config.yaml`, `retrieval/`, `mcp/offline/`, `postgres/`, and the generated client configurations. `examples/rust-service/` is an intentionally vulnerable teaching fixture; its SQL interpolation, missing JWT validation, excessive retry cap, and weak deployment resources are not platform controls. `scripts/`, `.github/`, documentation, and tests are developer/CI surfaces, but can still affect supply-chain safety or generate unsafe configuration.
+The primary assets are source code and uncommitted work, Git history, locally generated API/database credentials, agent tool authority, vectorized source fragments, model gateway traffic, and host integrity. The main production-like runtime surfaces are `compose.yaml`, `litellm/config.yaml`, `retrieval/`, `mcp/offline/`, `postgres/`, the generated client configurations, and the optional native VS Code client. `examples/rust-service/` is an intentionally vulnerable teaching fixture; its SQL interpolation, missing JWT validation, excessive retry cap, and weak deployment resources are not platform controls. `scripts/`, `.vscode/`, `.github/`, documentation, and tests are developer/CI surfaces, but can still affect supply-chain safety or generate unsafe configuration.
 
 The design protects a trusted local operator from accidental or prompt-induced overreach. It is not a hardened multi-user service, a confidentiality boundary between processes running as the same macOS user, or a safe environment for unattended execution of arbitrary model-generated shell commands.
 
@@ -22,7 +22,7 @@ Prompt injection is realistic whenever untrusted source or external content is i
 
 ### Trust boundaries
 
-1. **Host user to containers.** Codex and DMR run on macOS; the application and data services run in Docker. Only selected host directories enter containers. The offline MCP workspace and ingestion source mount are read-only; no service receives the Docker socket.
+1. **Host user to containers.** Codex CLI or the VS Code extension and DMR run on macOS; the application and data services run in Docker. Only selected host directories enter containers. The offline MCP workspace and ingestion source mount are read-only; no service receives the Docker socket.
 2. **Client to LiteLLM.** Codex/Hermes cross an authenticated HTTP boundary using scoped virtual keys. DMR is behind LiteLLM for normal client traffic, although its loopback API is still directly reachable by local processes.
 3. **Gateway to inference.** LiteLLM forwards prompts and tool schemas to DMR. DMR is a host sandbox using Apple GPU acceleration, not a Linux container controlled by Compose.
 4. **Untrusted repository to retrieval.** The scanner accepts source-like files under an operator-selected root, excludes ignored, generated, binary, sensitive-path, and likely-secret content, chunks it, and stores embeddings. Retrieved text remains untrusted data.
@@ -48,7 +48,7 @@ A crafted tool argument can attempt `../` traversal, symlink escape, or resource
 
 ### Credential or source leakage through telemetry
 
-Authorization headers, prompts, tool arguments, retrieved code, or database URLs could reach container output, LiteLLM spend logs, Loki, dashboards, smoke artifacts, or CI. Secrets are generated into ignored `.local/` files with restrictive permissions and are not echoed. Compose secrets carry the LiteLLM client key to retrieval; client keys are distinct from the master key. Logging is metadata-only, and `scripts/smoke-test.sh` searches collected logs for synthetic prompt sentinels. This is a regression control, not proof that every future error path redacts correctly.
+Authorization headers, prompts, tool arguments, retrieved code, or database URLs could reach container output, LiteLLM spend logs, Loki, dashboards, smoke artifacts, the editor extension host, or CI. Secrets are generated into ignored `.local/` files with restrictive permissions and are not echoed. The VS Code workflow keeps its scoped key in `CODEX_HOME/.env`, adds only the `CODEX_HOME` variable to the inherited editor environment, excludes the key from model-generated child processes, and disables Codex analytics in the generated profile. Compose secrets carry the LiteLLM client key to retrieval; client keys are distinct from the master key. Logging is metadata-only, and `scripts/smoke-test.sh` searches collected logs for synthetic prompt sentinels. This is a regression control, not proof that every future error path redacts correctly.
 
 ### Local gateway exposure and authentication bypass
 
@@ -56,7 +56,7 @@ If a host port changes from `127.0.0.1` to `0.0.0.0`, another LAN host could cal
 
 ### Supply-chain and configuration compromise
 
-Containers, Python/Rust packages, models, GitHub Actions, and optional MCP servers execute trusted code. Versions are pinned and the platform validates arm64 compatibility; release evidence should also record immutable image/model digests. Tags can be retargeted, so upgrades need review and scanning. A compromised developer script or CI workflow can also exfiltrate repository secrets even if the runtime is safe. The intentionally flawed demo must never be mistaken for a deployment template.
+Containers, Python/Rust packages, models, the VS Code extension and its bundled Codex binary, GitHub Actions, and optional MCP servers execute trusted code. Versions are pinned or recorded and the platform validates arm64 compatibility; release evidence should also record immutable image/model digests. Tags and editor extensions can change, so upgrades need review and repeated validation. A compromised developer script, editor extension, or CI workflow can also exfiltrate repository secrets even if the runtime is safe. The intentionally flawed demo must never be mistaken for a deployment template.
 
 ### Denial of service and resource pressure
 
@@ -65,6 +65,7 @@ Large repositories, adversarial queries, excessive context windows, cache growth
 ### Existing validation controls
 
 - `scripts/smoke-test.sh` checks authenticated model discovery, embeddings, chat, Responses tool round trips, streaming, explicit caching, RAG, MCP discovery, listener scope, telemetry health, and prompt-sentinel absence.
+- `scripts/vscode.sh check` verifies the installed official extension and requires its bundled Codex runtime to load custom-provider authentication, MCP configuration, and the loopback provider from the isolated `CODEX_HOME`.
 - `mcp/offline/tests/` and `retrieval/tests/` exercise core policy and retrieval behavior; CI also runs Rust tests for the teaching fixture.
 - Generated keys and runtime artifacts stay under ignored `.local/`; destructive cleanup requires explicit confirmation.
 - `SECURITY.md` asks reporters to use private vulnerability reporting and avoid including real credentials or source.

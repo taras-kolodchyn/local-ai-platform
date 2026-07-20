@@ -11,6 +11,24 @@ docker compose logs --tail=200 SERVICE
 
 Generated keys are never printed by these commands.
 
+## VS Code Codex opens the wrong provider or asks for sign-in
+
+Run the native-client check first:
+
+```sh
+make vscode-check
+```
+
+If it passes, fully quit every VS Code window and reopen the repository with
+`make vscode`. A VS Code process originally launched from Finder can retain a
+different `CODEX_HOME` when a later shell command only creates another window.
+
+Do not copy `LITELLM_API_KEY` into `.vscode/settings.json`, and do not set the
+extension's development-only `chatgpt.cliExecutable` option. The supported
+workflow stores the scoped key in ignored `.local/codex/.env` and launches the
+official extension with the isolated local state. See [Native VS Code
+workflow](vscode.md).
+
 ## Docker Desktop UI is open but the daemon is unavailable
 
 Symptom: `Cannot connect to the Docker daemon` while Docker Desktop processes exist.
