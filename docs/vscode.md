@@ -36,7 +36,9 @@ make vscode
 Then open the Command Palette with `Cmd+Shift+P`, run **Codex: Open Codex
 Sidebar**, and keep the run on **Local**. Open files and selections can be added
 to the prompt, edits appear as reviewable diffs, and the workspace-write sandbox
-and on-request approvals remain active.
+and on-request approvals remain active. The launcher opens the tracked
+`README.md` explicitly so VS Code does not restore an ignored `.env` file as the
+active editor.
 
 The repository also contributes VS Code tasks for `up`, `status`,
 `vscode-check`, `vscode-smoke`, the platform `smoke-test`, and `down`. Run them

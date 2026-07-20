@@ -157,7 +157,9 @@ case "$action" in
     export CODEX_HOME="$CODEX_DIR"
     info "Opening VS Code with isolated local Codex state"
     info "Use Command Palette -> Codex: Open Codex Sidebar, then keep execution Local"
-    exec "$code_cli" --new-window "$ROOT_DIR"
+    # Open a non-sensitive tracked file explicitly instead of letting VS Code
+    # restore an ignored .env or another local secret as the active editor.
+    exec "$code_cli" --new-window "$ROOT_DIR" "$ROOT_DIR/README.md"
     ;;
   *)
     die "Unknown action '$action'; use install, check, smoke, or launch"
