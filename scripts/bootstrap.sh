@@ -76,4 +76,9 @@ done
 chmod 600 .local/litellm-master-key .local/litellm-api-key .local/client.compose.env
 chmod 666 .local/logs/*.log
 
+if [[ ! -s .local/vector-backend-key ]]; then
+  openssl rand -hex 32 > .local/vector-backend-key
+fi
+chmod 600 .local/vector-backend-key
+
 ok "Local directories and secret files are ready"

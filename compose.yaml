@@ -159,6 +159,7 @@ services:
       - ./.local/logs:/var/log/local-ai
     secrets:
       - litellm_client_key
+      - vector_backend_key
     ports:
       - "127.0.0.1:8000:8000"
     depends_on:
@@ -422,3 +423,5 @@ secrets:
     file: ./.local/litellm-api-key
   litellm_master_key:
     file: ./.local/litellm-master-key
+  vector_backend_key:
+    file: ./.local/vector-backend-key
