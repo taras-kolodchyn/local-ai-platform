@@ -57,6 +57,33 @@ def provision_vectors(request, stores, backend_key):
     return result
 
 
+def provision_skill_catalog(request, manifest):
+    """Register upstream discovery references; runtime adaptations stay local."""
+    existing = {item['name']: item for item in request('GET', '/claude-code/plugins')['plugins']}
+    for entry in manifest['skills']:
+        name = entry['name']
+        source = {'source': 'git-subdir', 'url': manifest['source'] + '.git',
+                  'path': 'skills/' + name, 'sha': manifest['commit']}
+        if name in existing:
+            if existing[name]['source'] != source:
+                raise ValueError('Existing skill source differs; review catalog entry: ' + name)
+            continue
+        request('POST', '/claude-code/plugins', {
+            'name': name, 'source': source, 'version': '1.0.0',
+            'description': 'Pinned upstream workflow. Reviewed local adaptation installed for: '
+                           + ', '.join(entry['profiles']) + '. Catalog installation retrieves upstream content.',
+            'author': {'name': 'Jesse Vincent'}, 'category': 'Development',
+            'homepage': manifest['source'] + '/tree/' + manifest['commit'] + '/skills/' + name,
+            'keywords': ['local-workspace', 'reviewed-workflow']})
+
+
+def skills():
+    manifest = json.loads((ROOT / 'execution/skills/manifest.json').read_text())
+    admin = gateway((LOCAL / 'litellm-master-key').read_text().strip())
+    provision_skill_catalog(admin, manifest)
+    print('Three workflow sources registered in dashboard catalog')
+
+
 def owner_request(admin):
     teams = admin('GET', '/team/list')
     if isinstance(teams, dict):
@@ -217,13 +244,16 @@ def routes():
         'metadata': {'allowed_vector_store_indexes': [
             {'index_name': sid, 'index_permissions': ['read']} for sid in registry['stores'].values()]}})
     for profile, route_id in registered.items():
+        admin('POST', '/key/update', {
+            'key': (LOCAL / 'profiles' / profile / 'gateway.key').read_text().strip(),
+            'agent_id': route_id})
         private_write(LOCAL / 'profiles' / profile / 'caller.sha256', hashlib.sha256(client_file.read_text().strip().encode()).hexdigest())
         admin('PATCH', '/v1/agents/' + route_id, {'extra_headers': ['X-Workspace-Key']})
     print('Three execution routes registered')
 
 
 if __name__ == '__main__':
-    modes = {'vectors': vectors, 'profiles': profiles, 'routes': routes}
+    modes = {'vectors': vectors, 'profiles': profiles, 'routes': routes, 'skills': skills}
     if len(sys.argv) != 2 or sys.argv[1] not in modes:
-        raise SystemExit('Usage: provision-workspace.py vectors|profiles|routes')
+        raise SystemExit('Usage: provision-workspace.py vectors|profiles|routes|skills')
     modes[sys.argv[1]]()

@@ -10,7 +10,7 @@ PostgreSQL 17.11; pgvector 0.8.6. Runtime dependencies are pinned in
 
 - `make lint`: passed shell syntax, ShellCheck, Python compilation, generated
   configuration validation, and repository secret-pattern checks.
-- `make test`: 22 retrieval, 5 offline-tool, 7 execution, 11 script tests,
+- `make test`: 22 retrieval, 5 offline-tool, 7 execution, 13 script tests,
   and 2 Rust tests passed.
 - One optional external-database test skipped because no test DSN was supplied.
   Actual per-profile database privileges were verified by live provisioning.
@@ -48,3 +48,14 @@ are documented in the [operating guide](workspace-memory.md).
 
 Verification establishes local integration and bounded fixtures, not arbitrary
 long-running task quality, PDF parsing, background scheduling, or streaming.
+
+## Dashboard integration correction
+
+The initial acceptance covered runtime skill installation but missed the separate
+dashboard catalog and route-to-key association. Both gaps were reproduced in the
+UI: no skill rows and three Needs Setup statuses. Provisioning now registers the
+three pinned upstream source references and associates each existing profile key
+with its route ID. No key values were rotated or published. Two regression tests
+failed before the fix and passed afterward; repeated registration creates no
+duplicates. Browser verification shows three skill rows and three Active statuses.
+The catalog descriptions distinguish upstream sources from installed adaptations.

@@ -6,6 +6,7 @@ docker compose --profile workspace build workspace-development
 python3 scripts/provision-workspace.py vectors
 python3 scripts/provision-workspace.py profiles
 python3 scripts/install-workspace-skills.py
+python3 scripts/provision-workspace.py skills
 python3 scripts/source-snapshot.py
 docker compose --profile workspace up --detach --no-deps --wait --wait-timeout 120 \
   workspace-development workspace-review workspace-research

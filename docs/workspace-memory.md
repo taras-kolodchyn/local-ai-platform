@@ -39,6 +39,13 @@ commit `5bf4e78011075bcfc0dc295f0724994cd123ee71`. The local manifest records
 hashes, modifications, and profile selection. Rerunning installation preserves
 local edits. No global skill installation is changed.
 
+The dashboard Skills catalog is separate from runtime installation. Startup also
+registers three pinned upstream source references there; their descriptions identify
+which profiles use the reviewed local adaptations. Installing from the catalog
+retrieves upstream content and requires network access; local profile execution
+continues to use the already-installed adaptations offline. Each execution route
+is associated with its existing profile key so the dashboard reports Active.
+
 Mem0 OSS stores semantic facts in `workspace_memory`, using separate PostgreSQL
 roles and schemas for development, review, and research. Inference and embeddings
 use the existing local aliases. Bounded automatic file-memory mirroring is

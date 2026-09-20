@@ -62,3 +62,44 @@ class ProvisioningTest(unittest.TestCase):
             for profile in ('development', 'review', 'research'):
                 self.assertFalse((local / 'profiles' / profile / 'caller.key').exists())
                 self.assertEqual(len((local / 'profiles' / profile / 'caller.sha256').read_text()), 64)
+
+    def test_catalog_registers_pinned_sources_without_duplicates(self):
+        records = []
+        def request(method, route, body=None):
+            self.assertEqual(route, '/claude-code/plugins')
+            if method == 'GET':
+                return {'plugins': records}
+            records.append(body)
+            return {'status': 'success'}
+        manifest = {'source': 'https://github.com/obra/superpowers', 'commit': 'a' * 40,
+                    'skills': [{'name': 'systematic-debugging', 'profiles': ['development']}]}
+        module.provision_skill_catalog(request, manifest)
+        module.provision_skill_catalog(request, manifest)
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]['source']['sha'], 'a' * 40)
+        self.assertEqual(records[0]['source']['path'], 'skills/systematic-debugging')
+        self.assertIn('adaptation', records[0]['description'])
+
+    def test_routes_associate_existing_profile_keys_with_registered_ids(self):
+        import json
+        from unittest.mock import patch
+        calls = []
+        profiles = ('development', 'review', 'research')
+        def request(method, route, body=None):
+            calls.append((route, body))
+            if route == '/v1/agents':
+                return [{'agent_name': 'workspace-' + name, 'agent_id': 'route-' + name} for name in profiles]
+            return {}
+        with tempfile.TemporaryDirectory() as d:
+            local=Path(d)
+            (local/'litellm-master-key').write_text('test-master')
+            (local/'workspace-client-key').write_text('test-console')
+            (local/'workspace-registry.json').write_text(json.dumps({'stores': {}}))
+            for name in profiles:
+                home=local/'profiles'/name; home.mkdir(parents=True)
+                (home/'gateway.key').write_text('test-' + name)
+            with patch.object(module, 'LOCAL', local), patch.object(module, 'gateway', return_value=request), patch.object(module, 'owner_request'):
+                module.routes()
+            associated={body['key']:body['agent_id'] for route,body in calls
+                        if route=='/key/update' and 'agent_id' in body}
+            self.assertEqual(associated, {'test-'+name:'route-'+name for name in profiles})
