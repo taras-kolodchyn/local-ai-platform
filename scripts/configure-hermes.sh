@@ -3,6 +3,7 @@
 source "$(dirname "$0")/lib.sh"
 
 load_env
+python3 scripts/source-snapshot.py
 
 mkdir -p .local/hermes
 temp=$(mktemp "${TMPDIR:-/tmp}/hermes-config.XXXXXX")

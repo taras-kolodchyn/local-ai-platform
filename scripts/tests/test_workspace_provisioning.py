@@ -31,3 +31,34 @@ class ProvisioningTest(unittest.TestCase):
             module.private_write(path, 'secret')
             self.assertEqual(path.stat().st_mode & 0o777, 0o600)
             self.assertEqual(path.read_text(), 'secret')
+
+    def test_existing_profile_keys_receive_new_store_permissions(self):
+        import json
+        from unittest.mock import patch
+        calls = []
+        def request(method, route, body=None):
+            calls.append((route, body))
+            return {'key': 'fixture-key'}
+        with tempfile.TemporaryDirectory() as d:
+            local = Path(d)
+            (local / 'litellm-master-key').write_text('fixture-master')
+            registry = local / 'workspace-registry.json'
+            registry.write_text(json.dumps({'stores': {'first': 'vs_first'}}))
+            with patch.object(module, 'LOCAL', local), patch.object(module, 'gateway', return_value=request), \
+                 patch.object(module, 'owner_request'), patch.object(module.subprocess, 'run') as run:
+                run.return_value.returncode = 0
+                run.return_value.stdout = ''
+                module.profiles()
+                calls.clear()
+                registry.write_text(json.dumps({'stores': {'first': 'vs_first', 'second': 'vs_second'}}))
+                module.profiles()
+            updates = [body for route, body in calls if route == '/key/update']
+            self.assertEqual(len(updates), 3)
+            self.assertFalse(any(route == '/key/generate' for route, _ in calls))
+            for update in updates:
+                self.assertEqual(update['object_permission']['vector_stores'], ['vs_first', 'vs_second'])
+                self.assertEqual([s['index_name'] for s in update['metadata']['allowed_vector_store_indexes']],
+                                 ['vs_first', 'vs_second'])
+            for profile in ('development', 'review', 'research'):
+                self.assertFalse((local / 'profiles' / profile / 'caller.key').exists())
+                self.assertEqual(len((local / 'profiles' / profile / 'caller.sha256').read_text()), 64)

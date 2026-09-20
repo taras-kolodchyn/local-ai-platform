@@ -47,6 +47,9 @@ ensure_secret REDIS_PASSWORD "$(generate_hex 24)"
 ensure_secret GRAFANA_ADMIN_PASSWORD "$(generate_hex 18)"
 ensure_secret MCP_POSTGRES_PASSWORD "$(generate_hex 24)"
 
+replace_value WORKSPACE_UID "$(id -u)"
+replace_value WORKSPACE_GID "$(id -g)"
+
 load_env
 
 for variable in LITELLM_MASTER_KEY POSTGRES_PASSWORD REDIS_PASSWORD GRAFANA_ADMIN_PASSWORD MCP_POSTGRES_PASSWORD; do

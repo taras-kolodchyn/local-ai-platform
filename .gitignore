@@ -25,3 +25,6 @@ dist/
 build/
 node_modules/
 *.docx
+
+# Also ignore the local-runtime symlink used by isolated checkouts.
+.local

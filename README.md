@@ -122,3 +122,5 @@ See [SECURITY.md](SECURITY.md) for reporting vulnerabilities.
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).
+
+See [local knowledge and persistent profiles](docs/workspace-memory.md) for vector stores, skills, execution, and semantic memory.

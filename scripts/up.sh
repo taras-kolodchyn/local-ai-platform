@@ -21,6 +21,7 @@ docker compose restart retrieval >/dev/null
 docker compose up --detach --wait --wait-timeout 120 retrieval >/dev/null
 
 bash scripts/smoke-test.sh
+bash scripts/workspace-up.sh
 
 printf '\nLiteLLM: http://127.0.0.1:4000\n'
 printf 'Grafana: http://127.0.0.1:3000\n'

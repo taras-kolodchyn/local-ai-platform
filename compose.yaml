@@ -273,7 +273,7 @@ services:
       HERMES_GID: ${HERMES_GID:-10000}
     volumes:
       - ./.local/hermes-container:/opt/data
-      - ${HERMES_WORKSPACE_PATH:-.}:/workspace:ro
+      - ./.local/source-snapshot:/workspace:ro
     working_dir: /workspace
     depends_on:
       litellm:
@@ -287,6 +287,120 @@ services:
       - data
     security_opt:
       - no-new-privileges:true
+
+  workspace-development:
+    <<: *service-defaults
+    image: workspace-runtime:0.1.0
+    build:
+      context: ./execution
+    profiles: ["workspace"]
+    user: "${WORKSPACE_UID:-10000}:${WORKSPACE_GID:-10000}"
+    environment:
+      WORKSPACE_PROFILE: development
+      WORKSPACE_LOCK_DIR: /run/workspace
+      MEM0_TELEMETRY: "false"
+      HERMES_HOME: /opt/data
+      HOME: /opt/data
+    volumes:
+      - workspace_development_state:/opt/data
+      - ./.local/profiles/development/config.yaml:/opt/data/config.yaml:ro
+      - ./.local/profiles/development/mem0.json:/opt/data/mem0.json:ro
+      - ./.local/profiles/development/backend.key:/opt/data/backend.key:ro
+      - ./.local/profiles/development/caller.sha256:/opt/data/caller.sha256:ro
+      - ./.local/profiles/development/skills:/opt/data/skills:ro
+      - ./.local/execution:/run/workspace
+      - ./.local/source-snapshot:/workspace:ro
+    working_dir: /opt/data/scratch
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=128m
+    networks:
+      - data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8100/health', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+  workspace-review:
+    <<: *service-defaults
+    image: workspace-runtime:0.1.0
+    build:
+      context: ./execution
+    profiles: ["workspace"]
+    user: "${WORKSPACE_UID:-10000}:${WORKSPACE_GID:-10000}"
+    environment:
+      WORKSPACE_PROFILE: review
+      WORKSPACE_LOCK_DIR: /run/workspace
+      MEM0_TELEMETRY: "false"
+      HERMES_HOME: /opt/data
+      HOME: /opt/data
+    volumes:
+      - workspace_review_state:/opt/data
+      - ./.local/profiles/review/config.yaml:/opt/data/config.yaml:ro
+      - ./.local/profiles/review/mem0.json:/opt/data/mem0.json:ro
+      - ./.local/profiles/review/backend.key:/opt/data/backend.key:ro
+      - ./.local/profiles/review/caller.sha256:/opt/data/caller.sha256:ro
+      - ./.local/profiles/review/skills:/opt/data/skills:ro
+      - ./.local/execution:/run/workspace
+      - ./.local/source-snapshot:/workspace:ro
+    working_dir: /opt/data/scratch
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=128m
+    networks:
+      - data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8100/health', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+  workspace-research:
+    <<: *service-defaults
+    image: workspace-runtime:0.1.0
+    build:
+      context: ./execution
+    profiles: ["workspace"]
+    user: "${WORKSPACE_UID:-10000}:${WORKSPACE_GID:-10000}"
+    environment:
+      WORKSPACE_PROFILE: research
+      WORKSPACE_LOCK_DIR: /run/workspace
+      MEM0_TELEMETRY: "false"
+      HERMES_HOME: /opt/data
+      HOME: /opt/data
+    volumes:
+      - workspace_research_state:/opt/data
+      - ./.local/profiles/research/config.yaml:/opt/data/config.yaml:ro
+      - ./.local/profiles/research/mem0.json:/opt/data/mem0.json:ro
+      - ./.local/profiles/research/backend.key:/opt/data/backend.key:ro
+      - ./.local/profiles/research/caller.sha256:/opt/data/caller.sha256:ro
+      - ./.local/profiles/research/skills:/opt/data/skills:ro
+      - ./.local/execution:/run/workspace
+      - ./.local/source-snapshot:/workspace:ro
+    working_dir: /opt/data/scratch
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=128m
+    networks:
+      - data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8100/health', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    deploy:
+      resources:
+        limits:
+          memory: 1G
 
   postgres-exporter:
     <<: *service-defaults
@@ -402,6 +516,12 @@ services:
       - observability-host
 
 volumes:
+  workspace_development_state:
+    external: true
+  workspace_review_state:
+    external: true
+  workspace_research_state:
+    external: true
   postgres_data:
   redis_data:
   prometheus_data:
