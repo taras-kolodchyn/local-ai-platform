@@ -7,6 +7,8 @@ An open-source, reproducible local AI platform for coding agents on Apple Silico
 > The autonomous local-model coding exercise did not pass its acceptance
 > criteria; that limitation is documented instead of being hidden.
 
+Current dependency pins and upgrade verification: [2026-09-20 update](docs/dependency-update-2026-09-20.md).
+
 ## Why this exists
 
 A coding agent is more than a local chat UI. It needs a model gateway, tool permissions, retrieval, caching, auditability, and a safe execution boundary. This repository puts those pieces behind one OpenAI-compatible endpoint:
@@ -120,3 +122,5 @@ See [SECURITY.md](SECURITY.md) for reporting vulnerabilities.
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).
+
+See [local knowledge and persistent profiles](docs/workspace-memory.md) for vector stores, skills, execution, and semantic memory.

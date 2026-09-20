@@ -7,7 +7,7 @@ import logging
 import time
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel, ConfigDict, Field
@@ -16,6 +16,8 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Mount, Route
 
+from .vector_api import vector_routes
+from .vector_registry import list_stores, scoped_search
 from .config import Settings
 from .db import get_chunk as db_get_chunk
 from .db import migrate, observability_snapshot, search_chunks
@@ -130,17 +132,12 @@ async def search(request: Request) -> JSONResponse:
         )
 
 
-mcp = FastMCP(
-    "local_retrieval",
-    stateless_http=True,
-    json_response=True,
-    transport_security=TransportSecuritySettings(
-        enable_dns_rebinding_protection=True,
-        allowed_hosts=["127.0.0.1:*", "localhost:*", "[::1]:*", "retrieval:*"],
-        allowed_origins=["http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*"],
-    ),
+mcp = MCPServer("local_retrieval")
+transport_security = TransportSecuritySettings(
+    enable_dns_rebinding_protection=True,
+    allowed_hosts=["127.0.0.1:*", "localhost:*", "[::1]:*", "retrieval:*"],
+    allowed_origins=["http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*"],
 )
-mcp.settings.streamable_http_path = "/"
 
 
 @mcp.tool()
@@ -183,11 +180,20 @@ async def lifespan(_: Starlette):
 
 
 app = Starlette(
-    routes=[
+    routes=vector_routes(SETTINGS.vector_key_file, lambda: list_stores(SETTINGS),
+                         lambda scope, query, path, limit: scoped_search(SETTINGS, scope, query, path, limit)) + [
         Route("/health", health, methods=["GET"]),
         Route("/metrics", metrics, methods=["GET"]),
         Route("/search", search, methods=["POST"]),
-        Mount("/mcp", app=mcp.streamable_http_app()),
+        Mount(
+            "/mcp",
+            app=mcp.streamable_http_app(
+                streamable_http_path="/",
+                stateless_http=True,
+                json_response=True,
+                transport_security=transport_security,
+            ),
+        ),
     ],
     lifespan=lifespan,
 )

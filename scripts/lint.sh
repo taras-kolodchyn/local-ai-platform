@@ -19,7 +19,7 @@ else
   warn "shellcheck is unavailable; syntax checks still ran"
 fi
 
-python3 -m compileall -q retrieval/src retrieval/tests mcp/offline/src mcp/offline/tests
+python3 -m compileall -q retrieval/src retrieval/tests mcp/offline/src mcp/offline/tests execution/src execution/tests scripts/*.py
 python3 -m json.tool observability/grafana/dashboards/local-ai-platform.json >/dev/null
 python3 -m json.tool .vscode/extensions.json >/dev/null
 python3 -m json.tool .vscode/tasks.json >/dev/null

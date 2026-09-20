@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools==84.0.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "workspace-runtime"
+version = "0.1.0"
+requires-python = ">=3.11,<3.15"
+dependencies = ["starlette==1.6.0", "httpx==0.28.1", "uvicorn==0.53.0"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+addopts = "-q"

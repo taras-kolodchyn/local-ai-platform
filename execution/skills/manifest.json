@@ -1,0 +1,42 @@
+{
+  "source": "https://github.com/obra/superpowers",
+  "commit": "5bf4e78011075bcfc0dc295f0724994cd123ee71",
+  "license": "MIT",
+  "modifications": "Condensed and adapted to local profile tools, read-only source, scratch patches, private semantic memory, and metadata-only diagnostics. Host-specific commands and delegation instructions omitted.",
+  "skills": [
+    {
+      "name": "systematic-debugging",
+      "profiles": [
+        "development",
+        "review",
+        "research"
+      ],
+      "files": {
+        "LICENSE": "a37e0e9697144819e1d965176ac4ae5bc3fa02d11e7812036bbcadf6dafe2400",
+        "SKILL.md": "75ed0a04f29db7a763bc7556a327878b821921b4dc00f50022d39a668d4b024d"
+      }
+    },
+    {
+      "name": "verification-before-completion",
+      "profiles": [
+        "development",
+        "review",
+        "research"
+      ],
+      "files": {
+        "LICENSE": "a37e0e9697144819e1d965176ac4ae5bc3fa02d11e7812036bbcadf6dafe2400",
+        "SKILL.md": "e49182db67efb21fb33202a7df893a0556f7e69a42e209ad14038ddfcaeb6bf1"
+      }
+    },
+    {
+      "name": "test-driven-development",
+      "profiles": [
+        "development"
+      ],
+      "files": {
+        "LICENSE": "a37e0e9697144819e1d965176ac4ae5bc3fa02d11e7812036bbcadf6dafe2400",
+        "SKILL.md": "bd14911ab7fc73ceb5ca5f90c380cff8216b1f2b12e7f67ce769b126623a2d35"
+      }
+    }
+  ]
+}

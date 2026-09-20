@@ -143,6 +143,22 @@ ls -l .local/logs
 docker compose logs --tail=100 alloy loki
 ```
 
+## Startup reaches MCP checks but monitoring is not ready
+
+After retrieval restarts, Prometheus can retain its previous failed scrape until
+the next collection (configured every 15 seconds). Container health and scrape
+health are separate checks. The smoke test waits up to 60 seconds for monitoring,
+requires a nonempty healthy target list, and reports the failing endpoint or
+target's last scrape error if that deadline expires.
+
+Repeat only the monitoring check with:
+
+```sh
+bash scripts/check-observability.sh
+```
+
+If the error persists, inspect the named target rather than resetting data.
+
 ## Connected GitHub MCP is unavailable
 
 Connected mode is intentionally absent from `make up`. Verify that `.env.connected` contains a dedicated fine-grained read-only token, then run:
