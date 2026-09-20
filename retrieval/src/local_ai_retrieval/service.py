@@ -7,7 +7,7 @@ import logging
 import time
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel, ConfigDict, Field
@@ -130,17 +130,12 @@ async def search(request: Request) -> JSONResponse:
         )
 
 
-mcp = FastMCP(
-    "local_retrieval",
-    stateless_http=True,
-    json_response=True,
-    transport_security=TransportSecuritySettings(
-        enable_dns_rebinding_protection=True,
-        allowed_hosts=["127.0.0.1:*", "localhost:*", "[::1]:*", "retrieval:*"],
-        allowed_origins=["http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*"],
-    ),
+mcp = MCPServer("local_retrieval")
+transport_security = TransportSecuritySettings(
+    enable_dns_rebinding_protection=True,
+    allowed_hosts=["127.0.0.1:*", "localhost:*", "[::1]:*", "retrieval:*"],
+    allowed_origins=["http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*"],
 )
-mcp.settings.streamable_http_path = "/"
 
 
 @mcp.tool()
@@ -187,7 +182,15 @@ app = Starlette(
         Route("/health", health, methods=["GET"]),
         Route("/metrics", metrics, methods=["GET"]),
         Route("/search", search, methods=["POST"]),
-        Mount("/mcp", app=mcp.streamable_http_app()),
+        Mount(
+            "/mcp",
+            app=mcp.streamable_http_app(
+                streamable_http_path="/",
+                stateless_http=True,
+                json_response=True,
+                transport_security=transport_security,
+            ),
+        ),
     ],
     lifespan=lifespan,
 )

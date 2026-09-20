@@ -151,14 +151,7 @@ awk '/^data: / {sub(/^data: /, ""); print; exit}' "$smoke/mcp-postgres-call.sse"
 jq -e '.result.isError == false and (.result.structuredContent.result | fromjson | .[0].chunks >= 1)' "$smoke/mcp-postgres-call.json" >/dev/null
 ok "Read-only PostgreSQL MCP tool call returned bounded metadata"
 
-curl --fail --silent --show-error http://127.0.0.1:8000/metrics \
-  | grep -q 'local_ai_retrieval_requests_total'
-curl --fail --silent --show-error http://127.0.0.1:9090/-/ready >/dev/null
-curl --fail --silent --show-error http://127.0.0.1:3000/api/health \
-  | jq -e '.database == "ok"' >/dev/null
-prometheus_targets=$(curl --fail --silent --show-error http://127.0.0.1:9090/api/v1/targets)
-jq -e '[.data.activeTargets[] | select(.health != "up")] | length == 0' <<< "$prometheus_targets" >/dev/null
-ok "Prometheus, Grafana, and all configured scrape targets are healthy"
+bash scripts/check-observability.sh
 
 if rg -n 'CACHE-SMOKE-|bounded exponential backoff in Rust|What is the required maximum retry delay' .local/logs; then
   die "A synthetic prompt sentinel leaked into metadata-only logs"

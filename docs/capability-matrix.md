@@ -1,10 +1,13 @@
 # Capability and version matrix
 
+Current dependency pins and verification: [2026-09-20 update](dependency-update-2026-09-20.md).
+
+The results below are the historical baseline, not verification of the updated stack.
 Research and live-verification date: 2026-07-20. Sources are upstream project
 documentation or release metadata. Results below distinguish platform transport
 checks from autonomous agent quality.
 
-## Selected versions
+## Historical versions (2026-07-20)
 
 | Component | Pinned/observed version | Relevant documented capability | Repository verification |
 | --- | --- | --- | --- |

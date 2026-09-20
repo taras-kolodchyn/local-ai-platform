@@ -7,6 +7,8 @@ load_env
 mkdir -p .local/hermes
 temp=$(mktemp "${TMPDIR:-/tmp}/hermes-config.XXXXXX")
 cat > "$temp" <<EOF
+_config_version: 44
+
 model:
   default: local-qwen
   provider: custom
@@ -47,6 +49,8 @@ ok "Hermes configuration generated at .local/hermes/config.yaml"
 info "Use the generated config as a reviewed template; do not overwrite ~/.hermes automatically."
 
 cat > "$temp" <<EOF
+_config_version: 44
+
 model:
   default: local-qwen
   provider: custom

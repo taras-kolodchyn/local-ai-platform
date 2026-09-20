@@ -8,7 +8,7 @@ x-service-defaults: &service-defaults
 services:
   postgres:
     <<: *service-defaults
-    image: pgvector/pgvector:0.8.5-pg17-bookworm
+    image: pgvector/pgvector:0.8.6-pg17-bookworm
     environment:
       POSTGRES_DB: local_ai
       POSTGRES_USER: localai
@@ -46,7 +46,7 @@ services:
           memory: 2G
 
   mcp-provisioner:
-    image: pgvector/pgvector:0.8.5-pg17-bookworm
+    image: pgvector/pgvector:0.8.6-pg17-bookworm
     restart: "no"
     environment:
       PGHOST: postgres
@@ -68,7 +68,7 @@ services:
 
   redis:
     <<: *service-defaults
-    image: redis:8.8.0-alpine
+    image: redis:8.10.1-alpine
     command:
       - /bin/sh
       - -ec
@@ -92,12 +92,14 @@ services:
 
   litellm:
     <<: *service-defaults
-    image: ghcr.io/berriai/litellm:v1.93.0
+    image: ghcr.io/berriai/litellm:v1.102.0
     entrypoint: ["/bin/sh", "-ec"]
     command:
       - litellm --config /app/config.yaml --port 4000 --num_workers 1 2>&1 | tee -a /var/log/local-ai/litellm.log
     environment:
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?run make bootstrap}
+      UI_USERNAME: ${UI_USERNAME:-admin}
+      UI_PASSWORD: ${UI_PASSWORD:-${LITELLM_MASTER_KEY}}
       DATABASE_URL: postgresql://localai:${POSTGRES_PASSWORD}@postgres:5432/litellm
       REDIS_HOST: redis
       REDIS_PORT: "6379"
@@ -215,7 +217,7 @@ services:
 
   github-mcp:
     <<: *service-defaults
-    image: ghcr.io/github/github-mcp-server:v1.6.0
+    image: ghcr.io/github/github-mcp-server:v1.12.2
     profiles: ["connected"]
     command: ["http"]
     read_only: true
@@ -259,7 +261,7 @@ services:
       - no-new-privileges:true
 
   hermes:
-    image: nousresearch/hermes-agent:v2026.7.7.2
+    image: nousresearch/hermes-agent:v2026.9.14
     profiles: ["agents"]
     restart: "no"
     env_file:
@@ -299,7 +301,7 @@ services:
 
   redis-exporter:
     <<: *service-defaults
-    image: oliver006/redis_exporter:v1.87.0
+    image: oliver006/redis_exporter:v1.91.1
     environment:
       REDIS_ADDR: redis://redis:6379
       REDIS_PASSWORD: ${REDIS_PASSWORD}
@@ -312,7 +314,7 @@ services:
 
   prometheus:
     <<: *service-defaults
-    image: prom/prometheus:v3.13.1
+    image: prom/prometheus:v3.14.0
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
@@ -338,7 +340,7 @@ services:
 
   loki:
     <<: *service-defaults
-    image: grafana/loki:3.7.3
+    image: grafana/loki:3.7.8
     command: ["-config.file=/etc/loki/config.yaml"]
     volumes:
       - ./observability/loki/config.yaml:/etc/loki/config.yaml:ro
@@ -353,7 +355,7 @@ services:
 
   alloy:
     <<: *service-defaults
-    image: grafana/alloy:v1.17.1
+    image: grafana/alloy:v1.19.2
     command:
       - run
       - --server.http.listen-addr=0.0.0.0:12345
@@ -371,7 +373,7 @@ services:
 
   grafana:
     <<: *service-defaults
-    image: grafana/grafana:13.1.0
+    image: grafana/grafana:13.2.2
     environment:
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?run make bootstrap}

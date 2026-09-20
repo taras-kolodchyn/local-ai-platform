@@ -160,4 +160,4 @@ working sequence.
 
 ## Extensibility
 
-Clients only know `local-qwen`, `local-embeddings`, and LiteLLM. A future Ollama or MLX-LM backend can replace DMR by changing the gateway configuration. LiteLLM 1.93.0 also has an A2A Agent Gateway; it is deliberately deferred until an end-to-end local A2A agent is tested and protocol version 1.0 is pinned.
+Clients only know `local-qwen`, `local-embeddings`, and LiteLLM. A future Ollama or MLX-LM backend can replace DMR by changing the gateway configuration. LiteLLM also has an A2A Agent Gateway; it is deliberately deferred until an end-to-end local A2A agent is tested and protocol version 1.0 is pinned.
