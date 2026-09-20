@@ -16,6 +16,8 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Mount, Route
 
+from .vector_api import vector_routes
+from .vector_registry import list_stores, scoped_search
 from .config import Settings
 from .db import get_chunk as db_get_chunk
 from .db import migrate, observability_snapshot, search_chunks
@@ -178,7 +180,8 @@ async def lifespan(_: Starlette):
 
 
 app = Starlette(
-    routes=[
+    routes=vector_routes(SETTINGS.vector_key_file, lambda: list_stores(SETTINGS),
+                         lambda scope, query, path, limit: scoped_search(SETTINGS, scope, query, path, limit)) + [
         Route("/health", health, methods=["GET"]),
         Route("/metrics", metrics, methods=["GET"]),
         Route("/search", search, methods=["POST"]),

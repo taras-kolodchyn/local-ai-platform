@@ -12,12 +12,12 @@ class EmbeddingError(RuntimeError):
     pass
 
 
-def embed_texts(texts: list[str], settings: Settings) -> list[list[float]]:
+def embed_texts(texts: list[str], settings: Settings, *, timeout: float = 300.0) -> list[list[float]]:
     if not texts:
         return []
 
     try:
-        with httpx.Client(timeout=httpx.Timeout(300.0)) as client:
+        with httpx.Client(timeout=httpx.Timeout(timeout)) as client:
             response = client.post(
                 f"{settings.litellm_base_url}/embeddings",
                 headers={"Authorization": f"Bearer {settings.api_key()}"},
@@ -30,6 +30,8 @@ def embed_texts(texts: list[str], settings: Settings) -> list[list[float]]:
             )
             response.raise_for_status()
             body = response.json()
+    except httpx.TimeoutException as exc:
+        raise TimeoutError("Embedding deadline exceeded") from exc
     except (httpx.HTTPError, ValueError, OSError) as exc:
         EMBEDDING_REQUESTS.labels(status="error").inc()
         raise EmbeddingError(f"Embedding request failed: {type(exc).__name__}") from exc

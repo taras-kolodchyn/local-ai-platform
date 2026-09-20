@@ -39,6 +39,7 @@ def migrate(settings: Settings) -> None:
     sql = sql_path.read_text(encoding="utf-8")
     with psycopg.connect(settings.database_url, autocommit=True) as connection:
         connection.execute(sql)
+        connection.execute((sql_path.parent / "002_vector_registry.sql").read_text())
 
 
 def existing_hashes(settings: Settings, repository: str, branch: str) -> dict[tuple[str, int], str]:
@@ -171,6 +172,7 @@ def search_chunks(
     repository: str | None = None,
     branch: str | None = None,
     path_prefix: str | None = None,
+    exact_path: str | None = None,
     limit: int | None = None,
     max_chars: int | None = None,
 ) -> list[dict[str, Any]]:
@@ -187,6 +189,9 @@ def search_chunks(
     if path_prefix:
         filters.append("path LIKE %s")
         values.append(path_prefix.replace("%", "\\%").replace("_", "\\_") + "%")
+    if exact_path is not None:
+        filters.append("path = %s")
+        values.append(exact_path)
     where = "WHERE " + " AND ".join(filters) if filters else ""
     values.extend([vector_literal(embedding), bounded_limit])
 
@@ -201,6 +206,7 @@ def search_chunks(
     """
     with psycopg.connect(settings.database_url, row_factory=dict_row) as connection:
         with connection.transaction():
+            connection.execute("SET LOCAL statement_timeout = '5s'")
             connection.execute("SET LOCAL hnsw.iterative_scan = strict_order")
             connection.execute("SET LOCAL hnsw.ef_search = 100")
             rows = connection.execute(query, values).fetchall()
