@@ -12,7 +12,7 @@ from typing import Any, Callable, TypeVar
 
 import psycopg
 import uvicorn
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
 from psycopg.rows import dict_row
@@ -124,17 +124,12 @@ def validate_select(sql: str) -> str:
     return statement
 
 
-mcp = FastMCP(
-    "local_tools",
-    stateless_http=True,
-    json_response=True,
-    transport_security=TransportSecuritySettings(
-        enable_dns_rebinding_protection=True,
-        allowed_hosts=["127.0.0.1:*", "localhost:*", "[::1]:*", "mcp-tools:*"],
-        allowed_origins=["http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*"],
-    ),
+mcp = MCPServer("local_tools")
+transport_security = TransportSecuritySettings(
+    enable_dns_rebinding_protection=True,
+    allowed_hosts=["127.0.0.1:*", "localhost:*", "[::1]:*", "mcp-tools:*"],
+    allowed_origins=["http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*"],
 )
-mcp.settings.streamable_http_path = "/"
 
 
 @mcp.tool()
@@ -256,7 +251,15 @@ app = Starlette(
     routes=[
         Route("/health", health, methods=["GET"]),
         Route("/metrics", metrics, methods=["GET"]),
-        Mount("/mcp", app=mcp.streamable_http_app()),
+        Mount(
+            "/mcp",
+            app=mcp.streamable_http_app(
+                streamable_http_path="/",
+                stateless_http=True,
+                json_response=True,
+                transport_security=transport_security,
+            ),
+        ),
     ],
     lifespan=lifespan,
 )

@@ -30,7 +30,7 @@ make connected-down
 
 ## Enforced boundaries
 
-- `github-mcp` uses `ghcr.io/github/github-mcp-server:v1.6.0`, runs with a read-only root filesystem and no host port, and exists only in the `connected` profile.
+- `github-mcp` uses `ghcr.io/github/github-mcp-server:v1.12.2`, runs with a read-only root filesystem and no host port, and exists only in the `connected` profile.
 - LiteLLM forwards the caller-specific `Authorization` header only to the `github` MCP server.
 - Both LiteLLM and GitHub MCP enforce a named tool allowlist. GitHub MCP also receives its read-only and lockdown headers on every request.
 - Connected clients use a different LiteLLM virtual key and configuration directory from offline clients.

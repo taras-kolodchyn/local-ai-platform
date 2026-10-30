@@ -1,3 +1,5 @@
+_config_version: 44
+
 model:
   default: local-qwen
   provider: custom

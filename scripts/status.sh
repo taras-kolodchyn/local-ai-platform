@@ -15,3 +15,7 @@ printf '  MCP gateway http://127.0.0.1:4000/<server>/mcp\n'
 printf '  MCP debug   http://127.0.0.1:8001/mcp/\n'
 printf '  Grafana    http://127.0.0.1:3000\n'
 printf '  Prometheus http://127.0.0.1:9090\n'
+
+if [[ -f .local/workspace-registry.json ]]; then
+  python3 -c 'import json; from pathlib import Path; r=json.loads(Path(".local/workspace-registry.json").read_text()); print("Knowledge stores:", len(r.get("stores",{}))); print("Execution profiles:", ", ".join(r.get("routes",{})))'
+fi

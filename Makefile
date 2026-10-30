@@ -91,3 +91,17 @@ reset: ## Delete local containers and volumes (requires CONFIRM_RESET=yes)
 	@test "$(CONFIRM_RESET)" = "yes" || { echo "Refusing destructive reset. Re-run with CONFIRM_RESET=yes" >&2; exit 2; }
 	@$(COMPOSE) down --volumes --remove-orphans
 	@echo "Local Compose volumes removed. DMR model artifacts were preserved."
+
+.PHONY: vector-smoke memory-smoke workspace-smoke
+vector-smoke: ## Verify registered vector search and access boundaries
+	@python3 scripts/vector-smoke.py
+
+memory-smoke: ## Verify persistent semantic memory and profile isolation
+	@python3 scripts/memory-smoke.py
+
+workspace-smoke: ## Verify real profile execution through the gateway
+	@python3 scripts/workspace-smoke.py
+
+.PHONY: workspace
+workspace: ## Run PROFILE=development|review|research with a task from stdin
+	@python3 scripts/workspace.py "$(PROFILE)"

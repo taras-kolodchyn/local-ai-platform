@@ -23,6 +23,7 @@ class Settings:
     max_limit: int
     max_context_chars: int
     log_level: str
+    vector_key_file: Path = Path("/run/secrets/vector_backend_key")
 
     @classmethod
     def from_env(cls) -> "Settings":
