@@ -91,6 +91,51 @@ All host-facing services bind to loopback by default.
 
 Client-facing aliases are `local-qwen` and `local-embeddings`. The Docker Model Runner artifact names are internal implementation details.
 
+## Shared dashboard login (optional)
+
+To use `admin` and one chosen password for both local dashboards, first run
+`make bootstrap` from the repository root. Edit these entries in the generated,
+Git-ignored `.env`, replacing both placeholders with the same password:
+
+```dotenv
+UI_USERNAME=admin
+UI_PASSWORD='YOUR_SHARED_LOCAL_PASSWORD'
+GRAFANA_ADMIN_PASSWORD='YOUR_SHARED_LOCAL_PASSWORD'
+```
+
+Keep the single quotes around the password so characters such as `$` remain
+literal. Keep `.env` private; only these dashboard entries need changing.
+This is an opt-in setup: bootstrap normally generates separate credentials.
+
+Apply the settings using the supported entry point:
+
+```sh
+make up
+```
+
+For an existing Grafana data volume, also update its stored admin password;
+changing the environment variable alone does not replace it. This command reads
+the configured password inside the container and passes it through stdin,
+without putting the value in shell history or command arguments:
+
+```sh
+docker compose exec -T grafana sh -c '
+  printf "%s\n" "$GF_SECURITY_ADMIN_PASSWORD" |
+    grafana cli --homepath /usr/share/grafana --config /etc/grafana/grafana.ini \
+      admin reset-admin-password --password-from-stdin --user-id 1
+'
+```
+
+User ID `1` is the default Grafana admin created by this stack. Sign in with
+`admin` and your chosen password at [LiteLLM](http://127.0.0.1:4000/ui) and
+[Grafana](http://127.0.0.1:3000). Sign out of an existing browser session first
+to verify the new login.
+
+Verified on 2026-11-16 with LiteLLM 1.109.1 and Grafana 13.3.1. Upstream references:
+[LiteLLM UI credentials](https://docs.litellm.ai/docs/proxy/ui) and
+[Grafana password configuration](https://grafana.com/docs/grafana/latest/setup-grafana/configure-grafana/#admin_password)
+and [admin CLI](https://grafana.com/docs/grafana/latest/administration/cli/).
+
 ## macOS inference boundary
 
 Docker Model Runner uses llama.cpp with automatic Metal acceleration on Apple Silicon. On macOS, its inference engine does not run in a normal Linux container; Docker Desktop runs it in a host sandbox and exposes an API to containers. See [ADR 0001](docs/adr/0001-inference-runtime.md) for the decision and fallback design.
