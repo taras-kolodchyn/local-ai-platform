@@ -12,6 +12,7 @@ case "${1:-up}" in
       docker compose -f compose.moyai.yaml up --detach --wait --wait-timeout 120 \
         --force-recreate --no-deps moyai
     fi
+    python3 scripts/moyai-prepare.py --ui connect
     ok "Local Moyai is ready at http://127.0.0.1:8787 (user: admin)"
     info "Private password: $ROOT_DIR/.local/moyai/admin-password"
     ;;

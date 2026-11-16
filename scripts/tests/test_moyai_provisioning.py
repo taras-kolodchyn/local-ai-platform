@@ -47,6 +47,36 @@ class MoyaiProvisioningTests(unittest.TestCase):
                 module.bootstrap_password(local, retained_data=True)
             self.assertFalse((local / 'admin-password').exists())
 
+    def test_ui_connection_sets_only_the_local_url_and_is_idempotent(self):
+        module = self.preparer()
+        self.assertTrue(hasattr(module, 'connect_ui'), 'LiteLLM UI connection is missing')
+        state = {'moyai_url': None, 'enable_chat_ui': False, 'disable_custom_api_keys': True}
+        patches = []
+
+        def gateway(key, route, body=None, *, method=None):
+            self.assertEqual(key, 'fixture-admin-key')
+            if route == '/get/ui_settings':
+                self.assertIsNone(body)
+                return {'values': dict(state)}
+            self.assertEqual((route, method), ('/update/ui_settings', 'PATCH'))
+            patches.append(body)
+            state.update(body)
+            return {'status': 'success'}
+
+        module.request = gateway
+        module.connect_ui('fixture-admin-key')
+        module.connect_ui('fixture-admin-key')
+        self.assertEqual(state, {'moyai_url': 'http://127.0.0.1:8787',
+                                'enable_chat_ui': False, 'disable_custom_api_keys': True})
+        self.assertEqual(patches, [{'moyai_url': 'http://127.0.0.1:8787'}])
+
+    def test_ui_connection_rejects_a_gateway_that_did_not_apply_the_setting(self):
+        module = self.preparer()
+        self.assertTrue(hasattr(module, 'connect_ui'), 'LiteLLM UI connection is missing')
+        module.request = lambda *_args, **_kwargs: {'values': {'moyai_url': None}}
+        with self.assertRaises(module.ProvisionError):
+            module.connect_ui('fixture-admin-key')
+
     def test_changed_credentials_reload_only_existing_controller(self):
         for changed, existing, expected in [('changed', True, True), ('unchanged', True, False), ('changed', False, False)]:
             with self.subTest(changed=changed, existing=existing), tempfile.TemporaryDirectory() as directory:
@@ -56,7 +86,15 @@ class MoyaiProvisioningTests(unittest.TestCase):
                     shutil.copy(ROOT / 'scripts' / script, root / 'scripts' / script)
                 binaries = root / 'bin'
                 binaries.mkdir()
-                (binaries / 'python3').write_text('#!/bin/sh\nprintf "%s\\n" "$CONFIG_CHANGE"\n')
+                (binaries / 'python3').write_text('''#!/usr/bin/env python3_fixture
+import json, os, sys
+with open(os.environ['COMMAND_LOG'], 'a') as stream:
+    stream.write(json.dumps(['python3', *sys.argv[1:]]) + '\\n')
+if sys.argv[1:] == ['scripts/moyai-prepare.py']:
+    print(os.environ['CONFIG_CHANGE'])
+elif sys.argv[1:] != ['scripts/moyai-prepare.py', '--ui', 'connect']:
+    raise SystemExit(1)
+'''.replace('/usr/bin/env python3_fixture', str(Path(os.sys.executable))))
                 (binaries / 'ssh-keygen').write_text('#!/bin/sh\nexit 0\n')
                 (binaries / 'docker').write_text('''#!/usr/bin/env python3_fixture
 import json, os, sys
@@ -74,6 +112,7 @@ if sys.argv[-3:] == ['ps','-q','moyai'] and os.environ['EXISTING'] == 'yes':
                         'COMMAND_LOG': str(log)}, capture_output=True, text=True)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 calls = [json.loads(line) for line in log.read_text().splitlines()]
+                self.assertEqual(calls[-1], ['python3', 'scripts/moyai-prepare.py', '--ui', 'connect'])
                 forced = [call for call in calls if '--force-recreate' in call]
                 self.assertEqual(bool(forced), expected)
                 if forced:

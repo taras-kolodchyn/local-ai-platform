@@ -72,6 +72,7 @@ def main():
     args = parser.parse_args()
     os.chdir(ROOT)
     os.umask(0o077)
+    subprocess.run([sys.executable, 'scripts/moyai-prepare.py', '--ui', 'check'], check=True)
     client = MoyaiClient()
     if b'fontshare.com' in client.request('/', raw=True):
         raise RuntimeError('The local UI still requests external fonts')
@@ -152,6 +153,7 @@ results; do not print tool-call markup as text. Do not search other directories,
         'moyai_commit': 'c375632aea66f6695b66158b5edf6ee4983dad72',
         'model_alias': 'local-qwen', 'session': session, 'turn': turn,
         'checks': {'native_agent_turn': 'passed', 'python_files': 'passed',
+                   'litellm_ui_link': 'passed',
                    'pytest': '3 passed', 'authenticated_artifact_downloads': 'passed',
                    'native_shell_receipt': first_shell, 'runtime_isolation': 'passed',
                    'followup_tests': '3 passed', 'separate_conversation_directory': 'passed',

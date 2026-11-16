@@ -22,6 +22,15 @@ is in the Git-ignored `.local/moyai/admin-password`. Upstream requires at least
 SSH identities and runtime configuration are private files under `.local/moyai/`.
 Do not commit or paste these files into logs.
 
+After startup, the Moyai entry in LiteLLM's workspace switcher opens this local
+deployment. `make moyai-up` sets the supported LiteLLM UI setting `moyai_url` to
+`http://127.0.0.1:8787` through its admin API, preserving the other UI settings.
+Without that setting, LiteLLM 1.109.1 displays its default cloud setup page even
+when a separate local Moyai is running. The link persists in the gateway database;
+reload an already-open LiteLLM tab after connecting. The menu's upstream
+description may still say “Cloud Coding Agent”; its target is the local URL.
+See the [upstream UI setting](https://github.com/BerriAI/litellm/blob/v1.109.1/litellm/proxy/ui_crud_endpoints/proxy_setting_endpoints.py#L373).
+
 The password file is an initial bootstrap credential, not an account-reset
 mechanism. Keep it with the private configuration backup. If it is lost, startup
 restores it from `runtime-config.json`; if both are missing while data remains,
@@ -102,7 +111,7 @@ Verified 2026-11-16 against these exact components:
 | LiteLLM | `1.109.1`, model alias `local-qwen` |
 
 `make moyai-smoke RESTART=1` checks real native shell receipts with pytest exit
-code 0, downloaded artifacts, blocked external execution egress, offline HTML,
+code 0, downloaded artifacts, the local LiteLLM UI link, blocked external execution egress, offline HTML,
 loopback publishing, restart persistence and different conversation directories.
 A trusted observer reads the controller's workspace registry and independently
 checks the actual SSH filesystem and file hashes before any followup model turn. Its

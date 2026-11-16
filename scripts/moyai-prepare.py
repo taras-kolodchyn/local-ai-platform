@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Create private local Moyai credentials and SSH identities; never print values."""
+import argparse
 import json
 import hashlib
 import os
@@ -52,12 +53,24 @@ def bootstrap_password(local, *, retained_data):
     return password
 
 
-def request(key, route, body=None):
+def request(key, route, body=None, *, method=None):
     req = Request('http://127.0.0.1:4000' + route,
                   data=None if body is None else json.dumps(body).encode(),
-                  headers={'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json'})
+                  headers={'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json'},
+                  method=method)
     with build_opener(ProxyHandler({})).open(req, timeout=30) as response:
         return json.load(response)
+
+
+def check_ui(key):
+    if request(key, '/get/ui_settings')['values'].get('moyai_url') != 'http://127.0.0.1:8787':
+        raise ProvisionError('LiteLLM Moyai UI link is not local; run make moyai-up to reconnect it')
+
+
+def connect_ui(key):
+    if request(key, '/get/ui_settings')['values'].get('moyai_url') != 'http://127.0.0.1:8787':
+        request(key, '/update/ui_settings', {'moyai_url': 'http://127.0.0.1:8787'}, method='PATCH')
+    check_ui(key)
 
 
 def new_key_payload():
@@ -107,7 +120,15 @@ def main():
 
 if __name__ == '__main__':
     try:
-        main()
+        parser = argparse.ArgumentParser(description=__doc__)
+        parser.add_argument('--ui', choices=('connect', 'check'), help='Configure or verify the local LiteLLM UI link')
+        args = parser.parse_args()
+        if args.ui:
+            master = (ROOT / '.local/litellm-master-key').read_text().strip()
+            (connect_ui if args.ui == 'connect' else check_ui)(master)
+            print('LiteLLM Moyai UI link verified: http://127.0.0.1:8787')
+        else:
+            main()
     except ProvisionError as error:
         raise SystemExit(str(error)) from None
     except (HTTPError, URLError, OSError, KeyError, ValueError, RuntimeError, subprocess.SubprocessError):
