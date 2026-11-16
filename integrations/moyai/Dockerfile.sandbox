@@ -1,0 +1,12 @@
+FROM ghcr.io/berriai/moyai@sha256:05e9b95fdd96507b39784b9d8531758efdf2db30f0bceb03c161e2bd46b43419 AS upstream
+FROM python:3.14.10-slim-bookworm@sha256:3fe1a0b6c2d6b2ebb572906cdabeca75aeb558c0c17db5ffefbcf8094871c32b
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    openssh-server git ripgrep bash curl jq \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --uid 10001 --create-home --shell /bin/bash agent \
+    && usermod --password x agent \
+    && python -m pip install --no-cache-dir pytest==9.2.0
+COPY --from=upstream /app/native/skills /opt/moyai/skills
+COPY sshd_config /etc/ssh/sshd_config
+COPY sandbox-entrypoint.sh /usr/local/bin/moyai-sandbox
+ENTRYPOINT ["/bin/bash", "/usr/local/bin/moyai-sandbox"]

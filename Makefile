@@ -108,3 +108,16 @@ workspace-smoke: ## Verify real profile execution through the gateway
 .PHONY: workspace
 workspace: ## Run PROFILE=development|review|research with a task from stdin
 	@python3 scripts/workspace.py "$(PROFILE)"
+
+.PHONY: moyai-up moyai-down moyai-status moyai-smoke
+moyai-up: up ## Start the optional local Moyai coding MVP after the supported stack entry point
+	@bash scripts/moyai.sh up
+
+moyai-down: ## Stop local Moyai without removing its files or history
+	@bash scripts/moyai.sh down
+
+moyai-status: ## Show the local Moyai services
+	@bash scripts/moyai.sh status
+
+moyai-smoke: ## Verify real Moyai file, shell, test and artifact workflows
+	@python3 scripts/moyai-smoke.py $(if $(filter 1,$(RESTART)),--restart,)

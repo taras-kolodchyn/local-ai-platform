@@ -1,0 +1,122 @@
+# Local Moyai coding MVP
+
+This optional integration runs the real upstream Moyai web app, API, agent,
+dispatcher and Temporal workflow with the platform's `local-qwen` alias. Agent
+commands execute over SSH in a separate local Linux container. Inference remains
+behind LiteLLM and Docker Model Runner's existing macOS Metal boundary.
+
+## Start and sign in
+
+```sh
+make moyai-up
+```
+
+This first invokes the supported `make up`, prepares private local credentials,
+then builds and starts the separate `local-ai-moyai` Compose project. The default
+platform startup does not enable this optional MVP. Initial image/package builds
+require downloads; the execution services have private internal runtime networks.
+
+Open [Moyai](http://127.0.0.1:8787) and sign in as `admin`. Its generated password
+is in the Git-ignored `.local/moyai/admin-password`. Upstream requires at least
+12 characters. Existing LiteLLM/Grafana passwords are unaffected. The gateway key,
+SSH identities and runtime configuration are private files under `.local/moyai/`.
+Do not commit or paste these files into logs.
+
+The password file is an initial bootstrap credential, not an account-reset
+mechanism. Keep it with the private configuration backup. If it is lost, startup
+restores it from `runtime-config.json`; if both are missing while data remains,
+startup fails with recovery guidance rather than generating an invalid new login.
+Changing the file does not reset an existing account. Key preparation verifies
+the actual virtual-key scope through LiteLLM; a replaced/revoked key causes only
+the existing Moyai controller to reload its private configuration.
+
+```sh
+make moyai-status
+make moyai-smoke
+make moyai-smoke RESTART=1
+make moyai-down
+```
+
+The restart variant restarts only the local Moyai project, so run it when other
+Moyai tasks are idle. Stop preserves files and history; no command above deletes
+data volumes. Use `make moyai-down` to stop this separate optional project.
+
+## What the MVP provides
+
+- Authenticated upstream web chat and real streamed Responses tool calls.
+- Native read/write/edit/list/grep and shell tools in a local nonroot sandbox.
+- Python 3.14.10, pytest 9.2.0, Git and common terminal utilities available offline.
+- Native `save_artifact` and authenticated downloads in Moyai's Files panel.
+- Persistent application/Temporal state and per-conversation working directories.
+
+For example, ask it to create `calc.py` and tests, run `python -m pytest -q`,
+then call `save_artifact` for the program, tests and test report. Shell tool
+results show stdout, stderr and exit status. The Files panel lists saved artifacts,
+not every file in the live working directory. There is no separate interactive PTY.
+
+This is a single-user coding MVP. Desktop/browser streaming, external service
+connections and cloud filesystem snapshots are outside its verified scope.
+Conversations have separate directories but share one sandbox OS user; this is
+not a multi-tenant security boundary. Persistent files survive service restarts;
+running processes and RAM do not. Native cloud-only panels/tools should not be
+used with this SSH workspace.
+
+## Local execution boundary
+
+Moyai and Temporal share a private control network. Moyai and its SSH sandbox
+share another private network; the sandbox cannot reach Temporal. The agent has
+no Docker socket, host home, platform source checkout, model key or cloud account
+credentials mounted into its workspace. Only `127.0.0.1:8787` is published.
+
+A small unprivileged bridge has two fixed destinations: Moyai HTTP and the
+existing LiteLLM service. It does not inspect request contents or accept a
+client-selected upstream. The application's loopback relay satisfies upstream's
+HTTPS-or-loopback gateway policy without exposing another host port.
+
+The served web index uses local assets and system font fallbacks; upstream's
+external Fontshare preconnect/stylesheet links are removed during image build.
+
+Moyai uses a separate LiteLLM virtual key restricted to `local-qwen`, with no MCP
+or vector-store grants. The model profile explicitly sets `parallel_tool_calls=false` and `temperature=0`,
+matching the local alias's declared capabilities. An initial default-profile run
+returned textual tool markup; the sequential profile produced actual native tool
+receipts and successful file/test/artifact results. The local adapter logs only
+request metadata, not prompts, responses or credentials.
+
+Tool generation remains model-dependent. The acceptance check rejects turns
+that merely print tool markup or omit the required native artifacts; a completed
+assistant message alone does not count as successful execution.
+
+## Versions and verification
+
+Verified 2026-11-16 against these exact components:
+
+| Component | Pin |
+| --- | --- |
+| Moyai | `c375632aea66f6695b66158b5edf6ee4983dad72` |
+| Official Moyai image | `sha256:05e9b95fdd96507b39784b9d8531758efdf2db30f0bceb03c161e2bd46b43419` |
+| Pydantic AI / Harness | `2.55.0` / `0.55.0` |
+| OpenAI SDK | `3.29.0` |
+| Temporal CLI | `1.10.1`, pinned OCI digest in `compose.moyai.yaml` |
+| Sandbox Python / pytest | `3.14.10` / `9.2.0` |
+| LiteLLM | `1.109.1`, model alias `local-qwen` |
+
+`make moyai-smoke RESTART=1` checks real native shell receipts with pytest exit
+code 0, downloaded artifacts, blocked external execution egress, offline HTML,
+loopback publishing, restart persistence and different conversation directories.
+A trusted observer reads the controller's workspace registry and independently
+checks the actual SSH filesystem and file hashes before any followup model turn. Its
+metadata-only receipt is `.local/moyai/smoke-receipt.json`; application history and
+artifacts remain in dedicated local volumes. No user request bodies are committed.
+
+The full local `make lint`, `make test` and `make smoke-test` suite also passed,
+including the required PostgreSQL memory test. The local Rust demo check was
+skipped because Cargo was unavailable. Controlled replacement of a blocked Moyai
+key verified its restricted replacement scope and controller reload; repeating
+startup without changes preserved the running controller.
+
+Upstream references: [Moyai runtime injection](https://github.com/BerriAI/moyai/blob/c375632aea66f6695b66158b5edf6ee4983dad72/native/src/moyai/runtime.py#L124),
+[native local-workspace tests](https://github.com/BerriAI/moyai/blob/c375632aea66f6695b66158b5edf6ee4983dad72/native/tests/conftest.py#L53),
+[SSH workspace](https://github.com/pydantic/pydantic-ai/blob/v2.55.0/src/pydantic_ai_harness/pydantic_ai_harness/ssh_workspace/README.md),
+[Temporal CLI](https://github.com/temporalio/cli/releases/tag/v1.10.1).
+Moyai's MIT license is preserved in `integrations/moyai/LICENSE.upstream`.
