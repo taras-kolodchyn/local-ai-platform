@@ -48,7 +48,7 @@ vscode: ## Open VS Code with the isolated local Codex configuration
 smoke-test: ## Verify live endpoints, bridge, embeddings, cache, pgvector, MCP, and metrics
 	@bash scripts/smoke-test.sh
 
-test: ## Run deterministic unit and contract tests
+test: ## Run unit, contract, and isolated PostgreSQL tests
 	@bash scripts/test.sh
 
 lint: ## Validate shell, Python, YAML/Compose, and configuration invariants

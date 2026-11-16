@@ -229,5 +229,20 @@ internal data network, with pytest 9.2.0 installed from downloaded wheels using
 `--no-index`. Profile configuration and tests were mounted read-only. The DSN
 was assembled inside the process, never printed or placed in command arguments;
 no PostgreSQL host port was published and the production image was unchanged.
-The ordinary host-only `make test` may still report this optional test skipped
-without a host DSN; the real database test has now been executed independently.
+At this stage, the host-only `make test` still skipped the DB test without a DSN;
+the automation follow-up below removes that limitation.
+
+## Automated database test follow-up — 2026-11-16
+
+`make test` and GitHub CI now run the DB isolation test automatically. Its pytest
+fixture starts a separate `pgvector/pgvector:0.8.7-pg17-bookworm` container with
+tmpfs data and a random loopback-only host port, then runs the production memory
+provisioner. Generated credentials stay out of logs, command arguments and
+repository files; `MEMORY_TEST_DSN` is exported only within pytest. No platform
+`.env`, volumes or running services are needed.
+
+The automatic DB test passed without a supplied DSN, and `make test` reported
+**17 passed, 0 skipped** for execution tests. Container removal was verified
+after both successful execution and an intentionally failing test. Unavailable
+Docker caused a setup error rather than a skipped test. `make lint` and the full
+live `make smoke-test` also passed.

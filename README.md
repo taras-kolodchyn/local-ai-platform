@@ -76,6 +76,20 @@ make connected-up
 make down
 ```
 
+## Tests
+
+`make test` runs unit and contract tests plus real PostgreSQL memory isolation.
+The DB test starts a disposable `pgvector/pgvector:0.8.7-pg17-bookworm` container,
+binds a random port on `127.0.0.1`, and runs the production memory provisioner.
+Its data lives in tmpfs; the container is removed after success or failure.
+This requires a running Docker engine, but no `.env`, models, or running platform
+stack. Database startup or provisioning failures fail the test instead of
+skipping it. GitHub CI runs the same fixture automatically.
+
+For an explicitly provisioned disposable database, `MEMORY_TEST_DSN` can still
+be supplied to use that database instead. The default generates temporary
+credentials and exports the DSN only inside pytest.
+
 ## Endpoints
 
 All host-facing services bind to loopback by default.

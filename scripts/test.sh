@@ -15,7 +15,8 @@ fi
 "$venv/bin/python" -m pip check
 "$venv/bin/python" -m pytest retrieval/tests
 "$venv/bin/python" -m pytest mcp/offline/tests
-"$venv/bin/python" -m pytest execution/tests
+info "Running execution tests, including required PostgreSQL memory isolation..."
+"$venv/bin/python" -m pytest execution/tests -ra
 "$venv/bin/python" -m unittest discover -s scripts/tests
 
 if command -v cargo >/dev/null 2>&1; then
