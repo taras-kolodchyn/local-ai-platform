@@ -6,6 +6,7 @@ load_env
 require_command curl
 require_command jq
 require_command lsof
+require_command python3
 
 key=$(read_secret_file .local/litellm-api-key)
 base=http://127.0.0.1:4000
@@ -39,6 +40,9 @@ for port in 3000 4000 8000 8001 9090 12434; do
   fi
 done
 ok "All host listeners are loopback-only"
+
+info "Checking fresh LiteLLM and Grafana dashboard logins using .env credentials..."
+python3 scripts/check-dashboard-login.py
 
 embedding_payload=$(jq -cn '{model:"local-embeddings",input:["bounded exponential backoff in Rust"],encoding_format:"float",cache:{"no-cache":true,"no-store":true}}')
 api_post /v1/embeddings "$embedding_payload" "$smoke/embedding.json"

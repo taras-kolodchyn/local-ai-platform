@@ -131,6 +131,14 @@ User ID `1` is the default Grafana admin created by this stack. Sign in with
 [Grafana](http://127.0.0.1:3000). Sign out of an existing browser session first
 to verify the new login.
 
+`make smoke-test` (also run by `make up`) checks fresh logins using `.env`:
+LiteLLM uses `UI_USERNAME` (default `admin`) and `UI_PASSWORD` (falling back to
+`LITELLM_MASTER_KEY` when empty); Grafana uses `admin` and
+`GRAFANA_ADMIN_PASSWORD`. The check requires a new LiteLLM UI session and
+verifies the Grafana session's admin identity. A stale Grafana volume password
+therefore fails the smoke test. Passwords and session tokens are kept out of
+test output and artifacts.
+
 Verified on 2026-11-16 with LiteLLM 1.109.1 and Grafana 13.3.1. Upstream references:
 [LiteLLM UI credentials](https://docs.litellm.ai/docs/proxy/ui) and
 [Grafana password configuration](https://grafana.com/docs/grafana/latest/setup-grafana/configure-grafana/#admin_password)
