@@ -27,12 +27,23 @@ require_command() {
   command -v "$1" >/dev/null 2>&1 || die "Required command not found: $1"
 }
 
+configure_compose_scope() {
+  export COMPOSE_PROJECT_NAME=local-ai-platform
+  export COMPOSE_FILE="$ROOT_DIR/compose.yaml"
+  unset COMPOSE_PROFILES
+}
+
+# Public scripts own this localhost platform. Inherited Compose overrides must
+# not redirect them to another project or implicitly enable connected profiles.
+configure_compose_scope
+
 load_env() {
   [[ -f .env ]] || die ".env is missing; run make bootstrap"
   set -a
   # shellcheck disable=SC1091
   source .env
   set +a
+  configure_compose_scope
 }
 
 read_secret_file() {

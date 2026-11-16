@@ -1,6 +1,6 @@
 # Local Moyai coding MVP
 
-This optional integration runs the real upstream Moyai web app, API, agent,
+This integration runs the real upstream Moyai web app, API, agent,
 dispatcher and Temporal workflow with the platform's `local-qwen` alias. Agent
 commands execute over SSH in a separate local Linux container. Inference remains
 behind LiteLLM and Docker Model Runner's existing macOS Metal boundary.
@@ -8,13 +8,16 @@ behind LiteLLM and Docker Model Runner's existing macOS Metal boundary.
 ## Start and sign in
 
 ```sh
-make moyai-up
+make up
 ```
 
-This first invokes the supported `make up`, prepares private local credentials,
-then builds and starts the separate `local-ai-moyai` Compose project. The default
-platform startup does not enable this optional MVP. Initial image/package builds
-require downloads; the execution services have private internal runtime networks.
+The complete platform startup prepares private local credentials, then builds and
+starts Moyai after the gateway and persistent execution profiles are ready. Its
+`local-ai-moyai` Compose project remains isolated for networking and storage, but
+the public `make up` / `make down` commands manage both projects together. Existing
+conversations and volumes need no migration. Initial image/package builds require
+downloads; the execution services have private internal runtime networks.
+`make moyai-up` remains a compatibility alias for `make up`.
 
 Open [Moyai](http://127.0.0.1:8787) and sign in as `admin`. Its generated password
 is in the Git-ignored `.local/moyai/admin-password`. Upstream requires at least
@@ -23,7 +26,7 @@ SSH identities and runtime configuration are private files under `.local/moyai/`
 Do not commit or paste these files into logs.
 
 After startup, the Moyai entry in LiteLLM's workspace switcher opens this local
-deployment. `make moyai-up` sets the supported LiteLLM UI setting `moyai_url` to
+deployment. `make up` sets the supported LiteLLM UI setting `moyai_url` to
 `http://127.0.0.1:8787` through its admin API, preserving the other UI settings.
 Without that setting, LiteLLM 1.109.1 displays its default cloud setup page even
 when a separate local Moyai is running. The link persists in the gateway database;
@@ -40,15 +43,24 @@ the actual virtual-key scope through LiteLLM; a replaced/revoked key causes only
 the existing Moyai controller to reload its private configuration.
 
 ```sh
+make status
+make down
+make restart
 make moyai-status
 make moyai-smoke
 make moyai-smoke RESTART=1
-make moyai-down
 ```
 
-The restart variant restarts only the local Moyai project, so run it when other
-Moyai tasks are idle. Stop preserves files and history; no command above deletes
-data volumes. Use `make moyai-down` to stop this separate optional project.
+`make down` stops Moyai first, then the core platform and all its profiles, then
+unloads the configured coding and embedding models from memory without deleting
+their artifacts. Files, history and volumes are preserved. `make restart` performs
+the full stop/start cycle, including model unloading and automatic reloading when
+inference resumes. `make status` lists both service groups and resident models.
+
+The smoke test's `RESTART=1` option restarts only the Moyai services, so run it
+when other Moyai tasks are idle. For maintenance, `make moyai-down` can stop only
+the agent services; the core platform and its models remain available. Use
+`make down` for complete shutdown and model memory release.
 
 ## What the MVP provides
 

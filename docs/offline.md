@@ -16,6 +16,8 @@ make pull-model
 docker compose pull
 docker compose build retrieval
 docker compose --profile workspace build workspace-development
+docker compose -f compose.moyai.yaml pull --ignore-buildable
+docker compose -f compose.moyai.yaml build
 make vscode-install
 make up
 make smoke-test
@@ -44,4 +46,4 @@ For an auditable offline transfer, record image and model digests on the connect
 - The default profile does not configure external calls, but it does not enforce
   an egress firewall for every container.
 
-To confirm the external service is absent, run `docker compose ps github-mcp`; it must not be running unless connected mode was explicitly enabled. To stop all Compose services while preserving data and model artifacts, run `make down`.
+To confirm the external service is absent, run `docker compose ps github-mcp`; it must not be running unless connected mode was explicitly enabled. `make up` also starts the local Moyai agent. To stop both Compose projects and unload the configured models from memory while preserving data and downloaded artifacts, run `make down`.

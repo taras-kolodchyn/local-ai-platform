@@ -5,8 +5,12 @@ source "$(dirname "$0")/lib.sh"
 bash scripts/bootstrap.sh >/dev/null
 
 printf '%s\n' 'Compose services:'
-docker compose --profile connected ps
-printf '\n%s\n' 'Docker Model Runner models:'
+docker compose --profile '*' ps
+printf '\n%s\n' 'Moyai services (managed by make up/down):'
+bash scripts/moyai.sh status
+printf '\n%s\n' 'Resident models (memory in use):'
+docker model ps 2>/dev/null || warn "Docker Model Runner unavailable"
+printf '\n%s\n' 'Downloaded model artifacts (disk):'
 docker model list 2>/dev/null || warn "Docker Model Runner unavailable"
 printf '\n%s\n' 'Endpoints:'
 printf '  LiteLLM    http://127.0.0.1:4000\n'
@@ -15,6 +19,7 @@ printf '  MCP gateway http://127.0.0.1:4000/<server>/mcp\n'
 printf '  MCP debug   http://127.0.0.1:8001/mcp/\n'
 printf '  Grafana    http://127.0.0.1:3000\n'
 printf '  Prometheus http://127.0.0.1:9090\n'
+printf '  Moyai      http://127.0.0.1:8787\n'
 
 if [[ -f .local/workspace-registry.json ]]; then
   python3 -c 'import json; from pathlib import Path; r=json.loads(Path(".local/workspace-registry.json").read_text()); print("Knowledge stores:", len(r.get("stores",{}))); print("Execution profiles:", ", ".join(r.get("routes",{})))'

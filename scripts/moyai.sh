@@ -2,14 +2,16 @@
 
 source "$(dirname "$0")/lib.sh"
 
+moyai_compose=(docker compose --project-name local-ai-moyai --file compose.moyai.yaml)
+
 case "${1:-up}" in
   up)
     require_command ssh-keygen
     changed=$(python3 scripts/moyai-prepare.py)
-    existing=$(docker compose -f compose.moyai.yaml ps -q moyai)
-    docker compose -f compose.moyai.yaml up --detach --build --wait --wait-timeout 300
+    existing=$("${moyai_compose[@]}" ps -q moyai)
+    "${moyai_compose[@]}" up --detach --build --wait --wait-timeout 300
     if [[ "$changed" == changed && -n "$existing" ]]; then
-      docker compose -f compose.moyai.yaml up --detach --wait --wait-timeout 120 \
+      "${moyai_compose[@]}" up --detach --wait --wait-timeout 120 \
         --force-recreate --no-deps moyai
     fi
     python3 scripts/moyai-prepare.py --ui connect
@@ -17,10 +19,10 @@ case "${1:-up}" in
     info "Private password: $ROOT_DIR/.local/moyai/admin-password"
     ;;
   down)
-    docker compose -f compose.moyai.yaml down
+    "${moyai_compose[@]}" down
     ;;
   status)
-    docker compose -f compose.moyai.yaml ps
+    "${moyai_compose[@]}" ps
     ;;
   *) die 'Usage: scripts/moyai.sh up|down|status' ;;
 esac

@@ -113,6 +113,10 @@ if sys.argv[-3:] == ['ps','-q','moyai'] and os.environ['EXISTING'] == 'yes':
                 self.assertEqual(result.returncode, 0, result.stderr)
                 calls = [json.loads(line) for line in log.read_text().splitlines()]
                 self.assertEqual(calls[-1], ['python3', 'scripts/moyai-prepare.py', '--ui', 'connect'])
+                for call in calls:
+                    if call[0] == 'compose':
+                        self.assertIn('--project-name', call)
+                        self.assertEqual(call[call.index('--project-name') + 1], 'local-ai-moyai')
                 forced = [call for call in calls if '--force-recreate' in call]
                 self.assertEqual(bool(forced), expected)
                 if forced:

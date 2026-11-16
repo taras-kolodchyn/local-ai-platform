@@ -61,6 +61,19 @@ docker model list
 
 On macOS, the DMR engine is a host-sandboxed process, not a Linux container. An ordinary Compose service cannot gain Metal access by adding a device mapping.
 
+## Containers stopped but models still occupy memory
+
+Use `make down` for the complete lifecycle. Calling `docker compose down`
+directly affects only the selected Compose project and does not unload
+host-side models. The supported command stops Moyai and all platform clients
+before invoking `docker model unload` for the two configured models.
+
+Check `docker model ps` for resident models; `docker model list` shows downloaded
+artifacts on disk, which are deliberately preserved. Unrelated loaded models are
+left alone. If shutdown reports an error, resolve it and retry `make down`; its
+nonzero exit means complete cleanup was not confirmed. macOS file cache and
+Docker Desktop's VM can remain allocated independently of the inference runners.
+
 ## A model pull is interrupted
 
 Run `make pull-model` again. DMR resumes or verifies content-addressed layers. Avoid deleting Docker data while diagnosing a partial pull.

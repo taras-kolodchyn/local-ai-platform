@@ -32,7 +32,29 @@ cd local-ai-platform
 make up
 ```
 
-`make up` diagnoses the host, creates a local `.env`, enables Docker Model Runner, pulls pinned Qwen model artifacts, starts the container services, waits for health checks, verifies the gateway and cache, and writes client configuration examples under `.local/`.
+`make up` diagnoses the host, creates a local `.env`, enables Docker Model Runner, pulls pinned Qwen model artifacts, starts the core services, persistent execution profiles and local Moyai agent, waits for health checks, verifies the gateway and cache, and writes client configuration examples under `.local/`.
+
+`make down` stops Moyai, then all platform containers (including previously
+enabled profiles), then unloads the configured coding and embedding models from
+Model Runner memory. Volumes, conversations and downloaded model artifacts stay
+on disk. `make restart` performs this same stop/start cycle. `make status` shows
+both service groups and distinguishes resident models from downloaded artifacts.
+
+Moyai keeps its isolated Compose definition and existing data volumes, while the
+public commands manage it as part of the complete stack. The shutdown order
+removes its bridge before the core gateway network, then unloads inference after
+all platform clients have stopped. A failed cleanup phase makes `make down` fail
+after attempting the remaining phases, so it cannot silently report success.
+Managed commands pin the canonical Compose project names and files, ignore
+ambient Compose overrides, and load model settings from `.env` for both startup
+and shutdown. Connected profiles require their explicit opt-in command.
+
+Model unloading uses the official [`docker model unload`](https://docs.docker.com/reference/cli/docker/model/unload/)
+command for `QWEN_MODEL` and `EMBEDDING_MODEL` from `.env`; unrelated models and
+Docker projects are outside this shutdown. Without `.env`, shutdown uses the
+repository defaults and reports that fallback. Docker Desktop remains running;
+macOS may retain reclaimable file cache after inference allocations are released.
+Verified 2026-11-16 with Docker CLI 29.9.3 and Docker Model Runner 1.2.9.
 
 Use the native Codex sidebar in VS Code while keeping the generated provider,
 credentials, sessions, and MCP configuration isolated from your normal
@@ -102,6 +124,7 @@ All host-facing services bind to loopback by default.
 | Offline MCP tools | `http://127.0.0.1:8001/mcp/` |
 | Grafana | `http://127.0.0.1:3000` |
 | Prometheus | `http://127.0.0.1:9090` |
+| Moyai agent | `http://127.0.0.1:8787` |
 
 Client-facing aliases are `local-qwen` and `local-embeddings`. The Docker Model Runner artifact names are internal implementation details.
 
@@ -172,7 +195,7 @@ Docker Model Runner uses llama.cpp with automatic Metal acceleration on Apple Si
 - [Risk register](docs/risks.md)
 - [Offline operation](docs/offline.md)
 - [Native VS Code workflow](docs/vscode.md)
-- [Optional local Moyai coding MVP](docs/moyai-local.md)
+- [Local Moyai coding MVP](docs/moyai-local.md)
 - [Opt-in connected mode](docs/connected.md)
 - [Troubleshooting](docs/troubleshooting.md)
 - [Benchmark method](docs/benchmarking.md)

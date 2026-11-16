@@ -17,7 +17,8 @@ from acceptance import valid_pytest_action, valid_workspace_states
 
 
 def compose(*args):
-    return subprocess.run(['docker', 'compose', '-f', 'compose.moyai.yaml', *args],
+    return subprocess.run(['docker', 'compose', '--project-name', 'local-ai-moyai',
+                           '--file', 'compose.moyai.yaml', *args],
                           cwd=ROOT, capture_output=True, text=True, check=True).stdout
 
 
