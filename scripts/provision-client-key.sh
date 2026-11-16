@@ -24,7 +24,9 @@ if [[ -s .local/litellm-api-key ]]; then
   status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
     --header "Authorization: Bearer $existing_key" \
     http://127.0.0.1:4000/v1/models || true)
-  if [[ "$status" == 200 ]]; then
+  # Bootstrap uses the master credential only until the gateway is ready.
+  # A successful auth check alone must not preserve that placeholder for clients.
+  if [[ "$status" == 200 && "$existing_key" != "$LITELLM_MASTER_KEY" ]]; then
     write_client_env "$existing_key"
     ok "Existing scoped LiteLLM virtual key is valid and was preserved"
     exit 0

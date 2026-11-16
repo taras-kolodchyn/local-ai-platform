@@ -7,7 +7,7 @@ An open-source, reproducible local AI platform for coding agents on Apple Silico
 > The autonomous local-model coding exercise did not pass its acceptance
 > criteria; that limitation is documented instead of being hidden.
 
-Current dependency pins and upgrade verification: [2026-09-20 update](docs/dependency-update-2026-09-20.md).
+Current dependency pins and upgrade verification: [2026-11-16 update](docs/dependency-update-2026-11-16.md).
 
 ## Why this exists
 

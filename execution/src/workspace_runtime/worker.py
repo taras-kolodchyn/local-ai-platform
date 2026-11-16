@@ -61,8 +61,13 @@ def main():
             skip_context_files=True, load_soul_identity=False, skip_background_review=True,
             session_db=database, session_id=request.get('task_id'), run_budget_seconds=40,
             skip_memory=memory_status != 'ready')
+        manager = getattr(runtime, '_memory_manager', None)
+        active_provider = manager.get_provider('mem0') if manager else None
+        if not active_provider or active_provider._backend is None:
+            memory_status = 'degraded'
         if request.get('inspect'):
-            result = {'tools': [t['function']['name'] for t in runtime.tools]}
+            result = {'tools': [t['function']['name'] for t in runtime.tools],
+                      'memory_status': memory_status}
         else:
             response = runtime.run_conversation(request['text'], system_message=(
                 f'You perform {profile} work in a local workspace. '
@@ -75,9 +80,8 @@ def main():
                 task_id=request.get('task_id'))
             if response.get('error') or response.get('completed') is False:
                 raise RuntimeError('Turn did not complete')
-            manager = getattr(runtime, '_memory_manager', None)
             result = {'text': response.get('final_response', '')[:24000],
-                      'memory_status': memory_status if manager else 'degraded'}
+                      'memory_status': memory_status}
     print(json.dumps(result))
 
 

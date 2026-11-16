@@ -32,6 +32,16 @@ class ProvisioningTest(unittest.TestCase):
             self.assertEqual(path.stat().st_mode & 0o777, 0o600)
             self.assertEqual(path.read_text(), 'secret')
 
+    def test_unchanged_secret_keeps_inode_for_running_bind_mounts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'caller.sha256'
+            module.private_write(path, 'fixture-verifier')
+            inode = path.stat().st_ino
+            path.chmod(0o644)
+            module.private_write(path, 'fixture-verifier')
+            self.assertEqual(path.stat().st_ino, inode)
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+
     def test_existing_profile_keys_receive_new_store_permissions(self):
         import json
         from unittest.mock import patch

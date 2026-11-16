@@ -8,7 +8,10 @@ python3 scripts/source-snapshot.py
 mkdir -p .local/hermes
 temp=$(mktemp "${TMPDIR:-/tmp}/hermes-config.XXXXXX")
 cat > "$temp" <<EOF
-_config_version: 44
+_config_version: 53
+
+security:
+  allow_lazy_installs: false
 
 model:
   default: local-qwen
@@ -50,7 +53,10 @@ ok "Hermes configuration generated at .local/hermes/config.yaml"
 info "Use the generated config as a reviewed template; do not overwrite ~/.hermes automatically."
 
 cat > "$temp" <<EOF
-_config_version: 44
+_config_version: 53
+
+security:
+  allow_lazy_installs: false
 
 model:
   default: local-qwen

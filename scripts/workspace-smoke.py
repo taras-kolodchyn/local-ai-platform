@@ -34,6 +34,7 @@ def main():
             raise RuntimeError(f'{profile}: gateway protocol error {response["error"].get("code")}')
         result=response['result']
         assert result['status']['state']=='completed', f'{profile}: {result["status"]["state"]}'
+        assert result.get('metadata', {}).get('memory_status')=='ready', f'{profile}: memory degraded'
         assert 'WORKSPACE-READY' in json.dumps(result['artifacts']), f'{profile}: unexpected result'
         print(profile, 'gateway execution passed')
     denied=p.gateway((p.LOCAL/'litellm-api-key').read_text().strip())

@@ -180,3 +180,17 @@ make reset CONFIRM_RESET=yes
 ```
 
 DMR model artifacts are preserved even by this repository reset.
+
+## Tests fail after a host Python upgrade
+
+The application supports Python 3.11–3.14. `make test` prefers `python3.14`,
+then tries the other supported minor versions and `python3`. Install a supported
+interpreter (for example, `brew install python@3.14`) or select one explicitly:
+
+```sh
+PYTHON=/opt/homebrew/bin/python3.14 make test
+```
+
+An explicit unsupported interpreter fails before package installation. An old
+`.local/test-venv` created with unsupported Python is rebuilt automatically;
+this directory contains generated test dependencies only.

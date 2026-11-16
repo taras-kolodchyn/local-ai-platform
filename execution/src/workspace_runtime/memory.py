@@ -54,7 +54,7 @@ def operate(action, text='', fact_id=''):
             return call(instance, 'mem0_delete', {'memory_id': fact_id})
         raise ValueError('Unknown memory operation')
     finally:
-        instance._shutdown_backend()
+        instance.shutdown()
 
 
 if __name__ == '__main__':

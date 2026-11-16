@@ -2,11 +2,12 @@
 
 source "$(dirname "$0")/lib.sh"
 
-require_command python3
+test_python=$(bash scripts/test-python.sh)
 
 venv=.local/test-venv
-if [[ ! -x "$venv/bin/python" ]]; then
-  python3 -m venv "$venv"
+if [[ ! -x "$venv/bin/python" ]] || ! "$venv/bin/python" -c \
+  'import sys; sys.exit(not ((3, 11) <= sys.version_info[:2] < (3, 15)))'; then
+  "$test_python" -m venv --clear "$venv"
 fi
 
 "$venv/bin/python" -m pip install --quiet --upgrade pip

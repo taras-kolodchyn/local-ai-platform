@@ -1,5 +1,9 @@
 # Workspace verification
 
+Current Hermes v0.23.1 / Mem0 SDK 2.2.1 / provider 1.3.0 migration and verification:
+[2026-11-16 dependency report](dependency-update-2026-11-16.md#hermes-migration-verification--2026-11-16).
+The September results below remain the historical baseline.
+
 Date: 2026-09-21. Local Apple Silicon environment, offline profile.
 
 Versions: LiteLLM 1.102.0; Hermes v2026.9.14; Mem0 2.1.0;

@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools==84.0.0"]
+requires = ["setuptools==84.2.1"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,18 +8,18 @@ version = "0.1.0"
 description = "Read-only local repository ingestion, pgvector retrieval, and MCP service"
 requires-python = ">=3.11,<3.15"
 dependencies = [
-  "fastapi==0.141.1",
+  "fastapi==0.163.1",
   "httpx==0.28.1",
-  "mcp==2.2.0",
+  "mcp==2.3.0",
   "pathspec==1.1.1",
   "prometheus-client==0.26.0",
-  "psycopg[binary]==3.3.6",
-  "pydantic==2.13.5",
-  "uvicorn==0.53.0",
+  "psycopg[binary]==3.3.9",
+  "pydantic==2.14.3",
+  "uvicorn==0.54.0",
 ]
 
 [project.optional-dependencies]
-test = ["pytest==9.1.1"]
+test = ["pytest==9.2.0"]
 
 [project.scripts]
 local-ai-retrieval = "local_ai_retrieval.main:main"

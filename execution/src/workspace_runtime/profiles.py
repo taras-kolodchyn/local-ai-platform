@@ -24,7 +24,7 @@ def build_profile_config(profile: str, secrets: dict[str, str]) -> dict:
             'embedding_model_dims': 1024, 'user': 'memory_' + profile,
             'password': secrets['database_password'], 'host': 'postgres',
             'port': 5432, 'minconn': 1, 'maxconn': 2}}}}
-    config = {'_config_version': 44,
+    config = {'_config_version': 53,
         'model': {'default': 'local-qwen', 'provider': 'custom', 'base_url': base,
                   'api_key': key, 'context_length': 65536},
         'memory': {'provider': 'mem0', 'memory_enabled': False, 'user_profile_enabled': False},

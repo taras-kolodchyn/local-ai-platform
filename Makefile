@@ -92,12 +92,15 @@ reset: ## Delete local containers and volumes (requires CONFIRM_RESET=yes)
 	@$(COMPOSE) down --volumes --remove-orphans
 	@echo "Local Compose volumes removed. DMR model artifacts were preserved."
 
-.PHONY: vector-smoke memory-smoke workspace-smoke
+.PHONY: vector-smoke memory-smoke runtime-smoke workspace-smoke
 vector-smoke: ## Verify registered vector search and access boundaries
 	@python3 scripts/vector-smoke.py
 
 memory-smoke: ## Verify persistent semantic memory and profile isolation
 	@python3 scripts/memory-smoke.py
+
+runtime-smoke: ## Verify Mem0 activation and tools in each real agent runtime
+	@python3 scripts/runtime-smoke.py
 
 workspace-smoke: ## Verify real profile execution through the gateway
 	@python3 scripts/workspace-smoke.py

@@ -1,6 +1,6 @@
 # Capability and version matrix
 
-Current dependency pins and verification: [2026-09-20 update](dependency-update-2026-09-20.md).
+Current dependency pins and verification: [2026-11-16 update](dependency-update-2026-11-16.md).
 
 The results below are the historical baseline, not verification of the updated stack.
 Research and live-verification date: 2026-07-20. Sources are upstream project

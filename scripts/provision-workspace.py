@@ -18,6 +18,11 @@ TEAM = 'workspace-knowledge'
 def private_write(path, content):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    # Replacing an unchanged single-file bind mount invalidates its backing
+    # inode in running Docker Desktop containers. Preserve it on reconciliation.
+    if not path.is_symlink() and path.is_file() and path.read_text() == content:
+        path.chmod(0o600)
+        return
     fd, name = tempfile.mkstemp(dir=path.parent)
     try:
         with os.fdopen(fd, 'w') as stream:

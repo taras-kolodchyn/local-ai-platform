@@ -8,7 +8,7 @@ x-service-defaults: &service-defaults
 services:
   postgres:
     <<: *service-defaults
-    image: pgvector/pgvector:0.8.6-pg17-bookworm
+    image: pgvector/pgvector:0.8.7-pg17-bookworm
     environment:
       POSTGRES_DB: local_ai
       POSTGRES_USER: localai
@@ -46,7 +46,7 @@ services:
           memory: 2G
 
   mcp-provisioner:
-    image: pgvector/pgvector:0.8.6-pg17-bookworm
+    image: pgvector/pgvector:0.8.7-pg17-bookworm
     restart: "no"
     environment:
       PGHOST: postgres
@@ -68,7 +68,7 @@ services:
 
   redis:
     <<: *service-defaults
-    image: redis:8.10.1-alpine
+    image: redis:8.10.3-alpine
     command:
       - /bin/sh
       - -ec
@@ -92,7 +92,7 @@ services:
 
   litellm:
     <<: *service-defaults
-    image: ghcr.io/berriai/litellm:v1.102.0
+    image: ghcr.io/berriai/litellm:v1.109.1
     entrypoint: ["/bin/sh", "-ec"]
     command:
       - litellm --config /app/config.yaml --port 4000 --num_workers 1 2>&1 | tee -a /var/log/local-ai/litellm.log
@@ -218,7 +218,7 @@ services:
 
   github-mcp:
     <<: *service-defaults
-    image: ghcr.io/github/github-mcp-server:v1.12.2
+    image: ghcr.io/github/github-mcp-server:v1.14.0
     profiles: ["connected"]
     command: ["http"]
     read_only: true
@@ -262,7 +262,10 @@ services:
       - no-new-privileges:true
 
   hermes:
-    image: nousresearch/hermes-agent:v2026.9.14
+    image: workspace-runtime:0.1.0
+    build:
+      context: ./execution
+    entrypoint: ["/opt/hermes/docker/entrypoint-dispatch.sh"]
     profiles: ["agents"]
     restart: "no"
     env_file:
@@ -416,7 +419,7 @@ services:
 
   redis-exporter:
     <<: *service-defaults
-    image: oliver006/redis_exporter:v1.91.1
+    image: oliver006/redis_exporter:v1.97.0
     environment:
       REDIS_ADDR: redis://redis:6379
       REDIS_PASSWORD: ${REDIS_PASSWORD}
@@ -429,7 +432,7 @@ services:
 
   prometheus:
     <<: *service-defaults
-    image: prom/prometheus:v3.14.0
+    image: prom/prometheus:v3.16.0
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
@@ -455,7 +458,7 @@ services:
 
   loki:
     <<: *service-defaults
-    image: grafana/loki:3.7.8
+    image: grafana/loki:3.7.10
     command: ["-config.file=/etc/loki/config.yaml"]
     volumes:
       - ./observability/loki/config.yaml:/etc/loki/config.yaml:ro
@@ -470,7 +473,7 @@ services:
 
   alloy:
     <<: *service-defaults
-    image: grafana/alloy:v1.19.2
+    image: grafana/alloy:v1.22.0
     command:
       - run
       - --server.http.listen-addr=0.0.0.0:12345
@@ -488,7 +491,7 @@ services:
 
   grafana:
     <<: *service-defaults
-    image: grafana/grafana:13.2.2
+    image: grafana/grafana:13.3.1
     environment:
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?run make bootstrap}

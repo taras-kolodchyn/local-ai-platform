@@ -1,4 +1,7 @@
-_config_version: 44
+_config_version: 53
+
+security:
+  allow_lazy_installs: false
 
 model:
   default: local-qwen

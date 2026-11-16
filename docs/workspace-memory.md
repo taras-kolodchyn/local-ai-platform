@@ -1,7 +1,8 @@
 # Local knowledge and persistent profiles
 
-Implementation versions: LiteLLM 1.102.0, Hermes v2026.9.14, Mem0 2.1.0,
-PostgreSQL 17.11, pgvector 0.8.6. Validation date: 2026-09-21.
+Implementation versions: LiteLLM 1.109.1, Hermes image v0.23.1, Mem0 SDK 2.2.1
+and external provider 1.3.0, PostgreSQL 17.12, pgvector 0.8.7.
+Verification date: 2026-11-16.
 End-to-end acceptance is recorded in the [verification report](workspace-verification.md).
 
 ## Start and use
@@ -90,6 +91,7 @@ make test
 make smoke-test
 make vector-smoke
 make memory-smoke
+make runtime-smoke
 make workspace-smoke
 ```
 
@@ -113,6 +115,6 @@ the IDs listed in the workspace registry. Preserve PostgreSQL, all profile state
 volumes, and ignored credential/configuration files. Rerunning provisioning reuses
 valid credentials and existing store/profile identities.
 
-References: [Mem0 provider](https://github.com/NousResearch/hermes-agent/blob/v2026.9.14/plugins/memory/mem0/README.md),
+References: [Mem0 provider](https://github.com/mem0ai/mem0/blob/43849c6e9d4d773b83a8144b6373aedc67241a5d/integrations/hermes-plugin-mem0/README.md),
 [upstream skills](https://github.com/obra/superpowers/tree/5bf4e78011075bcfc0dc295f0724994cd123ee71),
 [vector backend contract](https://github.com/BerriAI/litellm-pgvector).
