@@ -26,6 +26,12 @@ Codex / Hermes / other clients -> LiteLLM -> local Qwen on Apple Silicon
 
 Requirements: an Apple Silicon Mac and Docker Desktop 4.40 or newer with at least 32 GiB unified memory. The default 30B coding model is approximately 16.5 GB before runtime and KV-cache overhead; 48 GiB is recommended for a useful coding context.
 
+Cargo must also be available on `PATH`: install the Rust toolchain using the
+official [Rust installer](https://rust-lang.org/tools/install/) or
+[`brew install rust`](https://formulae.brew.sh/formula/rust), then check
+`cargo --version`. `make doctor` checks both command availability and whether
+Cargo can run. Verified 2026-11-17 with Homebrew Cargo and Rust 1.100.0.
+
 ```sh
 git clone https://github.com/taras-kolodchyn/local-ai-platform.git
 cd local-ai-platform
@@ -100,7 +106,12 @@ make down
 
 ## Tests
 
-`make test` runs unit and contract tests plus real PostgreSQL memory isolation.
+`make test` requires Python 3.11–3.14 and Cargo. It runs unit and contract tests,
+real PostgreSQL memory isolation, and the Rust demo tests using
+`cargo test --locked`. Missing or unusable Cargo fails before Python environment
+setup, package installation, or database startup; Rust tests are required and
+their failures fail the command.
+
 The DB test starts a disposable `pgvector/pgvector:0.8.7-pg17-bookworm` container,
 binds a random port on `127.0.0.1`, and runs the production memory provisioner.
 Its data lives in tmpfs; the container is removed after success or failure.

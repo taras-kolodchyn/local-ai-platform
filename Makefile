@@ -9,7 +9,7 @@ REPO ?=
 help: ## Show available commands
 	@awk 'BEGIN {FS = ":.*## "; printf "Local AI Platform\n\n"} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-18s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-doctor: ## Check macOS, Apple Silicon, memory, Docker, DMR, ports, and tools
+doctor: ## Check macOS, Apple Silicon, memory, Docker, DMR, ports, and tools including Cargo
 	@bash scripts/doctor.sh
 
 bootstrap: ## Create local secrets, directories, and generated support files
@@ -49,7 +49,7 @@ vscode: ## Open VS Code with the isolated local Codex configuration
 smoke-test: ## Verify live endpoints, bridge, embeddings, cache, pgvector, MCP, and metrics
 	@bash scripts/smoke-test.sh
 
-test: ## Run unit, contract, and isolated PostgreSQL tests
+test: ## Run unit, contract, isolated PostgreSQL, and required Rust tests
 	@bash scripts/test.sh
 
 lint: ## Validate shell, Python, YAML/Compose, and configuration invariants
