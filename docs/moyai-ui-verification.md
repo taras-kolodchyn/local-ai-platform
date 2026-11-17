@@ -37,6 +37,9 @@ the response. The controller invokes that hook directly with the current durable
 run context. It does not re-enter the whole SDK before-chain: Temporal's model
 repair hook requires the inner model wrapper's scope, which synthetic completion
 skips. A separate Temporal marker preserves the previous hook path during replay.
+The native Authority import uses Temporal's explicit pass-through boundary;
+its import-time environment/configuration setup belongs to the worker process.
+A further marker preserves the previous import path for older histories.
 The pinned SDK still accounts for this synthetic final response as a request;
 there is no additional inference call or repository model-budget charge.
 

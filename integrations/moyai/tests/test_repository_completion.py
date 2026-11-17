@@ -14,6 +14,45 @@ from repository_workflow import RepositoryWorkflow
 
 
 class RepositoryCompletionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_completion_native_import_respects_temporal_runtime_restrictions(self):
+        from temporalio import workflow
+        from temporalio.worker.workflow_sandbox import SandboxRestrictions
+        from temporalio.worker.workflow_sandbox._importer import Importer
+        from temporalio.worker.workflow_sandbox._restrictions import RestrictionContext
+
+        cap,ctx=self.setup_capability(self.completed())
+        cap.completion_message=AsyncMock(return_value='Recorded completion')
+        handler=AsyncMock()
+        restriction_context=RestrictionContext()
+        importer=Importer(SandboxRestrictions.default,restriction_context)
+        restriction_context.is_runtime=True
+        with patch.object(workflow,'in_workflow',return_value=True), \
+                patch.object(workflow,'patched',return_value=True):
+            with importer.applied():
+                response=await cap.wrap_model_request(ctx,request_context=None,handler=handler)
+        self.assertEqual(response.parts[0].content,'Recorded completion')
+        ctx.capabilities['moyai_authority'].before_model_request.assert_awaited_once()
+        handler.assert_not_awaited()
+
+    async def test_legacy_import_replay_preserves_original_import_boundary(self):
+        from temporalio import workflow
+        from temporalio.worker.workflow_sandbox import SandboxRestrictions
+        from temporalio.worker.workflow_sandbox._importer import Importer
+        from temporalio.worker.workflow_sandbox._restrictions import RestrictionContext, RestrictedWorkflowAccessError
+
+        cap,ctx=self.setup_capability(self.completed())
+        cap.completion_message=AsyncMock(return_value='Recorded completion')
+        handler=AsyncMock()
+        restriction_context=RestrictionContext()
+        importer=Importer(SandboxRestrictions.default,restriction_context)
+        restriction_context.is_runtime=True
+        with patch.object(workflow,'in_workflow',return_value=True), \
+                patch.object(workflow,'patched',side_effect=lambda name:name!='local-repository-completion-authority-import-v3'):
+            with importer.applied(), self.assertRaises(RestrictedWorkflowAccessError):
+                await cap.wrap_model_request(ctx,request_context=None,handler=handler)
+        ctx.capabilities['moyai_authority'].before_model_request.assert_not_awaited()
+        handler.assert_not_awaited()
+
     async def test_streaming_completion_preserves_native_authority_without_entering_inner_lifecycle(self):
         import tempfile
         from pathlib import Path

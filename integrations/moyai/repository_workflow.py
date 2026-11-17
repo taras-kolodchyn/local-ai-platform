@@ -137,7 +137,13 @@ class RepositoryWorkflow(AbstractCapability):
                         # Only native authority/checkpoint work is needed for a synthetic
                         # response. Re-entering the full before-chain would invoke Temporal's
                         # model repair hook outside the durable model wrapper's scope.
-                        from moyai.agent import Authority
+                        if not workflow.in_workflow() or workflow.patched('local-repository-completion-authority-import-v3'):
+                            # Moyai's import-time setup belongs to the worker process,
+                            # just like its own workflow's native runtime imports.
+                            with workflow.unsafe.imports_passed_through():
+                                from moyai.agent import Authority
+                        else:
+                            from moyai.agent import Authority
                         authority=ctx.capabilities.get('moyai_authority')
                         if not isinstance(authority,Authority):
                             raise PermissionError('Native completion authority is unavailable.')
