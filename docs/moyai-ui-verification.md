@@ -31,8 +31,12 @@ requires the completed phase, the same native turn, matching verified tree and
 passed receipt, and matching file hashes. It prevents further model/tool loops
 after delivery. Later user turns, child runs and incomplete tasks keep their
 normal model path. A Temporal patch marker preserves replay of older executions.
-Native authorization and workspace checkpoint hooks still run before this final
-response; a revoked authority cannot receive a synthesized success.
+The registered native Moyai Authority's authorization and workspace checkpoint
+hook still runs before this final response; missing or revoked authority blocks
+the response. The controller invokes that hook directly with the current durable
+run context. It does not re-enter the whole SDK before-chain: Temporal's model
+repair hook requires the inner model wrapper's scope, which synthetic completion
+skips. A separate Temporal marker preserves the previous hook path during replay.
 The pinned SDK still accounts for this synthetic final response as a request;
 there is no additional inference call or repository model-budget charge.
 

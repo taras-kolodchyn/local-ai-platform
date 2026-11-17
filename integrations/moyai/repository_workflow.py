@@ -133,9 +133,18 @@ class RepositoryWorkflow(AbstractCapability):
                 and (not workflow.in_workflow() or workflow.patched('local-repository-completion-v1'))):
             if message:=await self.completion_message(*scope_of(ctx),ctx.deps.turn_id):
                 if completion_authority_version():
-                    # The wrapper skips the SDK's inner lifecycle. Preserve all native
-                    # authorization/checkpoint hooks; only our inference budget is skipped.
-                    await ctx.root_capability.before_model_request(ctx,request_context)
+                    if not workflow.in_workflow() or workflow.patched('local-repository-completion-native-authority-v2'):
+                        # Only native authority/checkpoint work is needed for a synthetic
+                        # response. Re-entering the full before-chain would invoke Temporal's
+                        # model repair hook outside the durable model wrapper's scope.
+                        from moyai.agent import Authority
+                        authority=ctx.capabilities.get('moyai_authority')
+                        if not isinstance(authority,Authority):
+                            raise PermissionError('Native completion authority is unavailable.')
+                        with set_current_run_context(ctx):
+                            await authority.before_model_request(ctx,request_context)
+                    else:
+                        await ctx.root_capability.before_model_request(ctx,request_context)
                 return ModelResponse(parts=[TextPart(message)],finish_reason='stop',provider_name='local-controller')
         return await handler(request_context)
 
