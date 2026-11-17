@@ -1015,6 +1015,7 @@ class Guest:
             checks['regression_tests_run']=sum(proof['repaired_passed'] for proof in proofs)
             checks['regression_counterexample_passed']=regression_proofs_passed(proofs)
             if not checks['regression_counterexample_passed']:
+                receipt['failure_code']='regression_requirement'
                 receipt['error']=('Every added test must pass the candidate and complete on the compiled counterexample; at least one must fail its 60,000 ms policy. See regression_proofs for each identity.')
             receipt['state']='passed' if (checks['oracle_passed'] and checks['regression_counterexample_passed'] and checks['project_tests_run']>0 and mandatory_commands_passed(commands) and not receipt['launch_errors']) else 'failed'
         except TimeoutError:

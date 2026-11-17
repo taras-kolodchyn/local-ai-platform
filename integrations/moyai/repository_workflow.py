@@ -92,7 +92,7 @@ class RepositoryWorkflow(AbstractCapability):
             return await backend.status(scope)
 
         async def run_repository_checks(ctx: RunContext) -> dict:
-            """Run the fixed offline verification profile on the pristine baseline or current edited tree."""
+            """Run the fixed offline profile. Add regressions in tests/*.rs, follow next_action, and edit before retrying failed checks. An unchanged repair reuses settled evidence without another validation attempt."""
             return await backend.check(scope_of(ctx), identity(ctx,ctx.tool_call_id))
 
         async def finish_repository_task(ctx: RunContext) -> dict:

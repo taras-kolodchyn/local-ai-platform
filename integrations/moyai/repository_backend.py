@@ -22,6 +22,13 @@ MAX_WIRE = 16 << 20
 MAX_FILE = 512 << 10
 MAX_TREE = 8 << 20
 MAX_FILES = 512
+RUST_RETRY_CONTRACT = (
+    'Add new Cargo integration regressions in tests/*.rs using write_file, for example '
+    'tests/retry_regression.rs. Tests embedded only in src/lib.rs are project tests, '
+    'not added integration-regression evidence. All added tests must pass this repair '
+    'and complete on the compiled same-API 60,000 ms counterexample; at least one '
+    'must fail that counterexample. Test both public retry entry points at the 30,000 ms ceiling.'
+)
 SSH_ARGS = ('-i', '/run/moyai-ssh/id_ed25519', '-o', 'IdentitiesOnly=yes',
             '-o', 'StrictHostKeyChecking=yes', '-o', 'UserKnownHostsFile=/run/moyai-ssh/known_hosts')
 GUEST = ('python3', '-I', '/opt/local-repository/guest.py')
@@ -391,6 +398,8 @@ class RepositoryBackend:
         result = {key:task.get(key) for key in ('task_id','phase','binding','baseline_failed','attempts',
                                               'verified_tree','artifacts','files','deadline','model_calls','tool_calls',
                                               'pending','write_outcome','check_observation')}
+        if task['binding'].get('verification_profile') == 'rust-retry':
+            result['verification_contract'] = RUST_RETRY_CONTRACT
         if task.get('receipts'):
             latest = task['receipts'][-1]
             result['latest_check'] = {'state':latest['state'], 'operation_id':latest['operation_id'],
@@ -437,6 +446,10 @@ class RepositoryBackend:
                 return self.check_summary(settled)
         manifest, _ = await asyncio.to_thread(self.snapshot, task['binding'])
         _, tree = scoped_tree(await self.guest(scope, 'tree'), manifest)
+        if cached := self.ledger.reusable_check(*scope, tree):
+            return {**self.check_summary(cached), 'reused':True,
+                    'reused_operation_id':cached['operation_id'],
+                    'reuse_reason':'The current tree matches the latest settled check; no Cargo work or validation attempt was repeated.'}
         decision = self.ledger.start_check(*scope, operation, tree)
         remaining = max(1, min(CHECK_TIMEOUT, int(task['deadline'] - time.time())))
         if not decision['dispatch']:
@@ -493,12 +506,22 @@ class RepositoryBackend:
             commands.append(item)
         summary = {'state':receipt['state'], 'checks':receipt.get('checks',{}),
                    'tree_hash':receipt['tree_hash'], 'commands':commands}
+        if receipt.get('failure_code'):
+            summary['failure_code'] = receipt['failure_code']
         if isinstance(receipt.get('error'), str):
             summary['error'] = receipt['error'][:256]
         if failure_cause:
             if 'error' in summary:
                 summary['verification_error'] = summary['error']
             summary['error'] = failure_cause.encode('utf-8', errors='replace')[:512].decode('utf-8', errors='ignore')
+        checks = receipt.get('checks', {})
+        if receipt['state'] == 'passed':
+            summary['next_action'] = 'Trusted checks passed on this tree. Call finish_repository_task now to deliver the verified patch and reports; no further check is needed without edits.'
+        elif receipt['state'] == 'failed' and checks.get('oracle_passed'):
+            if not checks.get('regression_tests_added'):
+                summary['next_action'] = RUST_RETRY_CONTRACT + ' Create the integration test before running checks again.'
+            elif not checks.get('regression_counterexample_passed'):
+                summary['next_action'] = 'Inspect regression_proofs and failing command diagnostics. Add or fix a tests/*.rs regression that passes the repaired tree and fails the compiled 60,000 ms counterexample. Change the tests before retrying.'
         return summary
 
     async def settle(self, scope, operation, receipt, manifest):

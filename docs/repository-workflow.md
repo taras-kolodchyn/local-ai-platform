@@ -20,6 +20,11 @@ name/signature with identical corrected values, and add a regression test coveri
 both entry points. Ask it to complete the trusted checks and
 deliver the patch through Files.
 
+The controller explains this profile's integration-test requirements to the
+model and returns actionable check feedback. An unchanged-tree retry reuses its
+latest settled check without spending another validation attempt. See
+[UI verification and bounded download observation](moyai-ui-verification.md).
+
 The first verification profile is `rust-retry`, anchored to the bundled fixture's
 package and lockfile. It is a concrete acceptance case, rather than a general
 Rust build service. The existing repository indexing commands remain available

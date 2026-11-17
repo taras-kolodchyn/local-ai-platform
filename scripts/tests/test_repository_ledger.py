@@ -87,7 +87,7 @@ class RepositoryLedgerTests(unittest.TestCase):
         with self.assertRaises(RepositoryError):
             verify_artifact(b'other', digest)
 
-    def receipt(self, operation, tree, outcome, *, baseline=False):
+    def receipt(self, operation, tree, outcome, *, baseline=False, missing_regression=False):
         import hmac
         import json
         commands = []
@@ -106,7 +106,12 @@ class RepositoryLedgerTests(unittest.TestCase):
                        'regression_counterexample_passed':True,'regression_proofs':[], 'baseline_policy_violation':baseline,
                        'project_tests_run':3,'oracle_tests_run':4,'regression_tests_added':1,
                        'regression_tests_run':1,'oracle_passed':not baseline}}
-        add_regression(receipt)
+        if missing_regression:
+            receipt['failure_code'] = 'regression_requirement'
+            receipt['checks'].update(regression_tests_added=0,regression_tests_run=0,
+                                     regression_counterexample_passed=False)
+        else:
+            add_regression(receipt)
         key = self.ledger.check_key('s','a',operation)
         receipt['receipt_mac'] = hmac.digest(bytes.fromhex(key), json.dumps(
             receipt,sort_keys=True,separators=(',',':'),ensure_ascii=True).encode(),'sha256').hex()
@@ -135,6 +140,76 @@ class RepositoryLedgerTests(unittest.TestCase):
         restarted.start_write('s','a','edit-again','new')
         with self.assertRaises(RepositoryError):
             restarted.ready_to_finish('s','a','repaired')
+
+    def test_unchanged_repair_reuses_latest_authenticated_receipt_without_attempt(self):
+        self.implement()
+        self.ledger.start_check('s','a','repair','repaired')
+        receipt = self.receipt('repair','repaired','failed',missing_regression=True)
+        self.ledger.finish_check('s','a','repair',receipt,'repaired')
+        before = self.ledger.status('s','a')
+        for _ in range(6):
+            self.assertEqual(self.ledger.reusable_check('s','a','repaired'), receipt)
+        self.assertEqual(self.ledger.status('s','a'), before)
+        self.assertIsNone(self.ledger.reusable_check('s','a','edited'))
+        restarted = Ledger(self.ledger.path,clock=lambda: self.now)
+        self.assertEqual(restarted.reusable_check('s','a','repaired'),receipt)
+
+    def test_check_reuse_never_bypasses_authority_pending_terminal_or_deadline(self):
+        self.implement()
+        self.assertIsNone(self.ledger.reusable_check('s','a','base'))
+        self.ledger.start_check('s','a','repair','repaired')
+        receipt = self.receipt('repair','repaired','passed')
+        self.assertIsNone(self.ledger.reusable_check('s','a','repaired'))
+        self.ledger.finish_check('s','a','repair',receipt,'repaired')
+        self.assertEqual(self.ledger.reusable_check('s','a','repaired'),receipt)
+        with self.assertRaises(RepositoryError):
+            self.ledger.reusable_check('s','foreign','repaired')
+        self.ledger.start_write('s','a','new-write','fingerprint')
+        self.assertIsNone(self.ledger.reusable_check('s','a','repaired'))
+        self.ledger.uncertain('s','a','new-write')
+        with self.assertRaises(RepositoryError):
+            self.ledger.reusable_check('s','a','repaired')
+        self.ledger.recover_write('s','a','new-write','different-turn',None)
+        self.now += 4000
+        with self.assertRaises(RepositoryError):
+            self.ledger.reusable_check('s','a','repaired')
+        self.assertEqual(self.ledger.status('s','a')['phase'],'timed_out')
+
+    def test_admitted_write_invalidates_pass_even_if_bytes_are_unchanged(self):
+        self.implement()
+        self.ledger.start_check('s','a','repair','repaired')
+        self.ledger.finish_check('s','a','repair',self.receipt('repair','repaired','passed'),'repaired')
+        self.ledger.start_write('s','a','same-bytes','fingerprint')
+        self.ledger.finish_write('s','a','same-bytes')
+        self.assertIsNone(self.ledger.reusable_check('s','a','repaired'))
+        with self.assertRaises(RepositoryError):
+            self.ledger.ready_to_finish('s','a','repaired')
+
+    def test_failed_command_does_not_prevent_unchanged_tree_retry(self):
+        from repository_guest import sign_receipt
+        self.implement()
+        self.ledger.start_check('s','a','repair','repaired')
+        receipt = self.receipt('repair','repaired','failed',missing_regression=True)
+        receipt['commands'][0]['exit_code'] = 137
+        receipt.pop('receipt_mac')
+        receipt = sign_receipt(receipt,self.ledger.check_key('s','a','repair'))
+        self.ledger.finish_check('s','a','repair',receipt,'repaired')
+        self.assertIsNone(self.ledger.reusable_check('s','a','repaired'))
+        self.assertTrue(self.ledger.start_check('s','a','retry-after-resource-recovery','repaired')['dispatch'])
+
+    def test_partial_or_unclassified_failure_is_not_reused(self):
+        from repository_guest import sign_receipt
+        self.implement()
+        for index, extra in enumerate(({'launch_errors':[{'type':'BlockingIOError','message':'EAGAIN'}]},
+                                       {'failure_code':None,'error':'temporary result read failure'})):
+            operation, tree = f'repair-{index}',f'tree-{index}'
+            self.ledger.start_check('s','a',operation,tree)
+            receipt = self.receipt(operation,tree,'failed',missing_regression=True)
+            receipt.update(extra)
+            receipt.pop('receipt_mac')
+            receipt = sign_receipt(receipt,self.ledger.check_key('s','a',operation))
+            self.ledger.finish_check('s','a',operation,receipt,tree)
+            self.assertIsNone(self.ledger.reusable_check('s','a',tree))
 
     def test_native_file_reservations_survive_lost_delivery_and_require_all_downloads(self):
         from repository_ledger import ARTIFACT_PATHS

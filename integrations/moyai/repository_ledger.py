@@ -282,6 +282,28 @@ class Ledger:
             self._save(db, task, 'verifying')
             return {'dispatch': True}
 
+    def reusable_check(self, session, authority, tree):
+        """Return settled evidence for an unchanged repair; never resume terminal work."""
+        with self._transaction() as db:
+            task = self._task(db, session, authority)
+            self._active(db, task)
+            if (task['phase'] not in {'implementing','verified'} or task.get('pending')
+                    or len(task['receipts']) < 2):
+                return None
+            latest = task['receipts'][-1]
+            if latest['state'] == 'passed' and (task['phase'] != 'verified' or task['verified_tree'] != tree):
+                return None  # Every admitted write invalidates a pass, including identical-byte writes.
+            if latest['state'] == 'failed':
+                checks, commands = latest.get('checks', {}), latest.get('commands', [])
+                if (latest.get('failure_code') != 'regression_requirement' or latest.get('launch_errors')
+                        or checks.get('oracle_passed') is not True
+                        or checks.get('regression_counterexample_passed') is not False
+                        or not commands or any(c['exit_code'] != 0 or not passing_command(c) for c in commands)):
+                    return None  # A failed process may recover without a source edit; allow a bounded retry.
+            if latest['state'] in {'passed','failed'} and latest['tree_hash'] == tree:
+                return latest
+            return None
+
     def uncertain(self, session, authority, operation):
         with self._transaction() as db:
             task = self._task(db, session, authority)

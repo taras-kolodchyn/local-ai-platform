@@ -37,6 +37,46 @@ class BackendTests(unittest.IsolatedAsyncioTestCase):
             return self.guest.handle({'conversation_id':'a'*64,'op':op,**fields})
         self.backend.guest = invoke
 
+    async def test_missing_integration_regression_has_actionable_feedback(self):
+        receipt = {'state':'failed', 'tree_hash':'a'*64, 'commands':[],
+                   'checks':{'oracle_passed':True,'regression_tests_added':0,
+                             'regression_counterexample_passed':False}}
+        original = json.dumps(receipt, sort_keys=True)
+        summary = self.backend.check_summary(receipt)
+        self.assertIn('tests/*.rs', summary['next_action'])
+        self.assertIn('write_file', summary['next_action'])
+        self.assertIn('src/lib.rs', summary['next_action'])
+        self.assertEqual(json.dumps(receipt, sort_keys=True), original)
+
+    async def test_passed_check_points_to_delivery(self):
+        summary = self.backend.check_summary({'state':'passed','tree_hash':'a'*64,'commands':[]})
+        self.assertIn('finish_repository_task', summary['next_action'])
+
+    async def test_profile_contract_is_returned_at_attachment(self):
+        result = await self.backend.open(self.scope,self.id)
+        self.assertIn('tests/*.rs', result['verification_contract'])
+        self.assertIn('integration', result['verification_contract'])
+
+    async def test_unchanged_check_returns_existing_evidence_without_guest_execution(self):
+        from unittest.mock import patch
+        await self.backend.open(self.scope,self.id)
+        current = await self.backend.guest(self.scope,'tree')
+        receipt = {'state':'failed','tree_hash':current['tree_hash'],'operation_id':'settled',
+                   'commands':[],'checks':{'oracle_passed':True,'regression_tests_added':0}}
+        actual_guest = self.backend.guest
+        operations = []
+        async def observed(scope, op, **fields):
+            operations.append(op)
+            return await actual_guest(scope,op,**fields)
+        with patch.object(self.backend.ledger,'reusable_check',return_value=receipt) as reuse, \
+                patch.object(self.backend,'guest',observed):
+            result = await self.backend.check(self.scope,'new-call')
+        reuse.assert_called_once_with(*self.scope,current['tree_hash'])
+        self.assertEqual(operations,['tree'])
+        self.assertTrue(result['reused'])
+        self.assertEqual(result['reused_operation_id'],'settled')
+        self.assertEqual(result['state'],'failed')
+
     async def test_actual_late_compiler_failure_reaches_summary_without_altering_receipt(self):
         artifact = {'reason': 'compiler-artifact', 'executable': None, 'profile': {'test': False}, 'target': {'name': 'dependency'}}
         diagnostic = {'reason': 'compiler-message', 'message': {'level': 'error', 'code': {'code': 'E0425'},
