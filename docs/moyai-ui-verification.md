@@ -25,6 +25,24 @@ if it leaves identical bytes; that pass cannot be reused until a fresh validatio
 Pending, uncertain, expired and terminal work remains
 fenced. Reuse never changes signed receipt bytes or reopens a failed task.
 
+Once all three verified Files objects are delivered, the controller ends that
+delivery turn with a short result and download links. The completion response
+requires the completed phase, the same native turn, matching verified tree and
+passed receipt, and matching file hashes. It prevents further model/tool loops
+after delivery. Later user turns, child runs and incomplete tasks keep their
+normal model path. A Temporal patch marker preserves replay of older executions.
+Native authorization and workspace checkpoint hooks still run before this final
+response; a revoked authority cannot receive a synthesized success.
+The pinned SDK still accounts for this synthetic final response as a request;
+there is no additional inference call or repository model-budget charge.
+
+Verified on 2026-11-17 with `pydantic-ai-slim 2.55.0` and
+`pydantic-ai-harness 0.55.0`. See the official
+[capability hook contract](https://github.com/pydantic/pydantic-ai/blob/main/docs/hooks.md#wrap-hooks)
+and [capability API](https://pydantic.dev/docs/ai/api/pydantic-ai/capabilities/).
+The tests use the pinned running SDK rather than assuming current documentation
+alone proves compatibility.
+
 ## Bound browser download observation
 
 The native **Download original** link remains the authenticated Files endpoint.

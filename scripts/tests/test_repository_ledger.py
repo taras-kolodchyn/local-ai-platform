@@ -226,8 +226,9 @@ class RepositoryLedgerTests(unittest.TestCase):
             with self.assertRaises(RepositoryError):
                 self.ledger.delivered('s','a',path,{'sha256':'wrong','name':path,'id':'native'})
             self.ledger.delivered('s','a',path,{'sha256':digest,'name':path,'id':'native'})
-        self.ledger.complete('s','a','repaired')
+        self.ledger.complete('s','a','repaired',turn='delivery-turn')
         self.assertEqual(self.ledger.status('s','a')['phase'],'completed')
+        self.assertEqual(self.ledger.status('s','a')['completion_turn'],'delivery-turn')
 
     def test_cannot_use_zero_or_incomplete_validation_as_success(self):
         from repository_ledger import validate_checks

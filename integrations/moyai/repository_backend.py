@@ -602,5 +602,5 @@ class RepositoryBackend:
         _, current = scoped_tree(await self.guest(scope, 'tree'), manifest)
         if current != tree:
             raise RepositoryError('Project changed during delivery.')
-        self.ledger.complete(*scope, tree)
+        self.ledger.complete(*scope, tree, turn=ctx.deps.turn_id)
         return self.summary(self.ledger.status(*scope))

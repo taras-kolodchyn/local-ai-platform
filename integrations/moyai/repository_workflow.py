@@ -8,11 +8,12 @@ from pydantic_ai import RunContext
 from pydantic_ai._run_context import set_current_run_context
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.exceptions import ModelRetry, ToolFailed, ToolRetryError, UsageLimitExceeded
+from pydantic_ai.messages import ModelResponse, TextPart
 from pydantic_ai.toolsets import FunctionToolset
 from temporalio import workflow
 
 from repository_backend import NativeFiles, RepositoryBackend, fingerprint, scoped_tree, workspace_path
-from repository_ledger import RepositoryError, missing_change_evidence
+from repository_ledger import ARTIFACT_PATHS, RepositoryError, missing_change_evidence
 
 DISCOVERY = {'list_repositories', 'open_repository'}
 FILES = {'read_file', 'list_files', 'grep'}
@@ -45,6 +46,10 @@ def allowed(phase):
 
 def active_version():
     return not workflow.in_workflow() or workflow.patched('local-repository-workflow-v1')
+
+
+def completion_authority_version():
+    return not workflow.in_workflow() or workflow.patched('local-repository-completion-authority-v1')
 
 
 def scope_of(ctx):
@@ -106,6 +111,34 @@ class RepositoryWorkflow(AbstractCapability):
     def get_toolset(self):
         return self.registered_tools
 
+    @durable_operation('completion_message')
+    async def completion_message(self, session: str, authority: str, turn: str) -> str | None:
+        task=self.backend.ledger.status(session,authority)
+        if (not task or task['phase']!='completed' or task.get('completion_turn')!=turn or task.get('pending')
+                or not task.get('verified_tree') or not task.get('receipts')
+                or task['receipts'][-1].get('state')!='passed'
+                or task['receipts'][-1].get('tree_hash')!=task['verified_tree']
+                or set(task.get('artifacts',{}))!=set(ARTIFACT_PATHS)
+                or set(task.get('files',{}))!=set(ARTIFACT_PATHS)):
+            return None
+        files=task['files']
+        if any(not files[p].get('id') or files[p].get('sha256')!=task['artifacts'][p] for p in ARTIFACT_PATHS):
+            return None
+        from urllib.parse import quote
+        links='\n'.join(f"- [{p.split('/')[-1]}](/api/files/{quote(files[p]['id'],safe='')})" for p in ARTIFACT_PATHS)
+        return 'Repository task completed. Trusted checks passed on the delivered tree.\n\n'+links
+
+    async def wrap_model_request(self, ctx, *, request_context, handler):
+        if (active_version() and ctx.run_id==ctx.deps.root_run_id
+                and (not workflow.in_workflow() or workflow.patched('local-repository-completion-v1'))):
+            if message:=await self.completion_message(*scope_of(ctx),ctx.deps.turn_id):
+                if completion_authority_version():
+                    # The wrapper skips the SDK's inner lifecycle. Preserve all native
+                    # authorization/checkpoint hooks; only our inference budget is skipped.
+                    await ctx.root_capability.before_model_request(ctx,request_context)
+                return ModelResponse(parts=[TextPart(message)],finish_reason='stop',provider_name='local-controller')
+        return await handler(request_context)
+
     @durable_operation('phase')
     async def phase(self, session: str, authority: str) -> str | None:
         task = self.backend.ledger.status(session, authority)
@@ -121,6 +154,9 @@ class RepositoryWorkflow(AbstractCapability):
 
     async def before_model_request(self, ctx, request_context):
         if active_version():
+            if (completion_authority_version() and ctx.run_id==ctx.deps.root_run_id
+                    and await self.completion_message(*scope_of(ctx),ctx.deps.turn_id)):
+                return request_context
             reason = await self.model_budget(*scope_of(ctx), identity(ctx, str(ctx.run_step)))
             if reason:
                 raise UsageLimitExceeded(reason)

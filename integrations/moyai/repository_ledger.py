@@ -413,13 +413,15 @@ class Ledger:
             task['files'][path] = record
             self._save(db, task)
 
-    def complete(self, session, authority, tree):
+    def complete(self, session, authority, tree, *, turn=None):
         with self._transaction() as db:
             task = self._task(db, session, authority)
             self._active(db, task)
             if (task['phase'] != 'delivering' or tree != task['verified_tree']
                     or set(task['files']) != set(ARTIFACT_PATHS)):
                 raise RepositoryError('All verified artifacts must be available through native Files.')
+            if turn is not None:
+                task['completion_turn']=turn
             self._save(db, task, 'completed')
 
 
