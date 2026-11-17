@@ -28,3 +28,4 @@ node_modules/
 
 # Also ignore the local-runtime symlink used by isolated checkouts.
 .local
+docs/demo-runbook.md
