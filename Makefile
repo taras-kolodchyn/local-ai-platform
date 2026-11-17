@@ -67,6 +67,14 @@ reindex: ## Delete and rebuild the selected REPO=/absolute/path snapshot
 	@test -n "$(REPO)" || { echo "Usage: make reindex REPO=/absolute/path" >&2; exit 2; }
 	@INDEX_REPO_PATH="$(abspath $(REPO))" $(COMPOSE) --profile tools run --rm ingestion reindex /workspace --repository "$(notdir $(abspath $(REPO)))"
 
+.PHONY: repository-add repository-smoke
+repository-add: ## Register an immutable REPO snapshot for local Moyai tasks
+	@test -n "$(REPO)" || { echo "Usage: make repository-add REPO=/absolute/path" >&2; exit 2; }
+	@python3 scripts/prepare-repository.py --repo "$(abspath $(REPO))" --profile rust-retry
+
+repository-smoke: ## Verify a real repository repair through local Moyai
+	@python3 scripts/repository-smoke.py $(if $(filter 1,$(RESTART)),--restart,)
+
 benchmark: ## Record local chat and retrieval latency without prompt bodies
 	@bash scripts/benchmark.sh
 

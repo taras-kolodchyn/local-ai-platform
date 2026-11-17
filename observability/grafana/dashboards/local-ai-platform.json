@@ -112,12 +112,39 @@
     },
     {
       "datasource": {"type": "loki", "uid": "loki"},
-      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 32},
+      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 40},
       "id": 13,
       "options": {"showTime": true, "wrapLogMessage": true},
       "targets": [{"expr": "{job=\"local-ai-platform\"}", "refId": "A"}],
       "title": "Metadata-only platform logs",
       "type": "logs"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "short"}},
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 32},
+      "id": 14,
+      "targets": [{"expr": "local_repository_tasks", "legendFormat": "{{phase}}", "refId": "A"}],
+      "title": "Repository task phases",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "s"}},
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 32},
+      "id": 15,
+      "targets": [{"expr": "local_repository_phase_duration_seconds_sum / clamp_min(local_repository_phase_duration_seconds_count, 1)", "legendFormat": "{{phase}} mean", "refId": "A"}],
+      "title": "Repository phase duration",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "short"}},
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 32},
+      "id": 16,
+      "targets": [{"expr": "sum by (outcome) (local_repository_context_requests_total)", "legendFormat": "context {{outcome}}", "refId": "A"}, {"expr": "local_repository_task_metrics_up", "legendFormat": "task metrics available", "refId": "B"}],
+      "title": "Repository context and telemetry",
+      "type": "stat"
     }
   ],
   "refresh": "10s",
@@ -128,5 +155,5 @@
   "timezone": "browser",
   "title": "Local AI Platform",
   "uid": "local-ai-platform",
-  "version": 2
+  "version": 3
 }

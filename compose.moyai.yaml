@@ -22,10 +22,12 @@ services:
       - ./.local/moyai/runtime-config.json:/run/moyai-config.json:ro
       - ./.local/moyai/ssh/id_ed25519:/run/ssh-seed/id_ed25519:ro
       - ./.local/moyai/ssh/known_hosts:/run/ssh-seed/known_hosts:ro
+      - ./.local/repositories:/run/local-repositories:ro
     networks: [private, sandbox]
     depends_on:
       moyai-sandbox: {condition: service_healthy}
       moyai-temporal: {condition: service_healthy}
+      repository-context: {condition: service_healthy}
     healthcheck:
       test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8787/health', timeout=3)"]
       interval: 5s
@@ -39,8 +41,8 @@ services:
 
   moyai-sandbox:
     build:
-      context: ./integrations/moyai
-      dockerfile: Dockerfile.sandbox
+      context: .
+      dockerfile: integrations/moyai/Dockerfile.sandbox
     image: local-ai-moyai-sandbox:0.1.0
     restart: unless-stopped
     security_opt: [no-new-privileges:true]
@@ -78,6 +80,30 @@ services:
       resources:
         limits: {memory: 1G, cpus: '2'}
 
+  repository-context:
+    image: local-ai-platform/retrieval:0.1.0
+    restart: unless-stopped
+    entrypoint: [python, /app/context_bridge.py]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: [/tmp]
+    volumes:
+      - ./integrations/moyai/context_bridge.py:/app/context_bridge.py:ro
+      - ./.local/repositories:/run/local-repositories:ro
+    secrets:
+      - context_token
+      - context_gateway_key
+    networks: [private, gateway, observability]
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 5s
+      timeout: 4s
+      retries: 30
+    deploy:
+      resources:
+        limits: {memory: 256M, cpus: '0.5'}
+
   moyai-volume-init:
     image: python:3.14.10-slim-bookworm@sha256:3fe1a0b6c2d6b2ebb572906cdabeca75aeb558c0c17db5ffefbcf8094871c32b
     restart: 'no'
@@ -109,8 +135,17 @@ networks:
   gateway:
     external: true
     name: local-ai-platform_gateway
+  observability:
+    external: true
+    name: local-ai-platform_observability
 
 volumes:
   moyai_data:
   moyai_workspace:
   moyai_temporal:
+
+secrets:
+  context_token:
+    file: ./.local/moyai/context-token
+  context_gateway_key:
+    file: ./.local/moyai/context-gateway-key

@@ -7,7 +7,7 @@ from pathlib import Path
 import uvicorn
 
 from .config import Settings
-from .ingestion import index_repository
+from .ingestion import index_repository, index_snapshot
 from .logging_config import configure_logging
 
 
@@ -23,6 +23,10 @@ def parser() -> argparse.ArgumentParser:
         ingest = commands.add_parser(name, help=f"{name} a repository")
         ingest.add_argument("path", type=Path)
         ingest.add_argument("--repository")
+    snapshot = commands.add_parser("index-snapshot", help="Atomically index a prepared immutable snapshot")
+    snapshot.add_argument("manifest", type=Path)
+    snapshot.add_argument("--embedding-artifact-id", required=True)
+    snapshot.add_argument("--force", action="store_true")
     return root
 
 
@@ -40,6 +44,10 @@ def main() -> None:
         )
         return
 
+    if args.command == "index-snapshot":
+        print(json.dumps(index_snapshot(args.manifest, settings,
+            embedding_artifact_id=args.embedding_artifact_id, force=args.force), sort_keys=True))
+        return
     result = index_repository(
         args.path,
         settings,

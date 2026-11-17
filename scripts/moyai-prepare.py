@@ -5,6 +5,7 @@ import json
 import hashlib
 import os
 from pathlib import Path
+import runpy
 import secrets
 import subprocess
 import sys
@@ -15,7 +16,7 @@ from urllib.request import ProxyHandler, Request, build_opener
 ROOT = Path(__file__).resolve().parents[1]
 LOCAL = ROOT / '.local/moyai'
 sys.path.insert(0, str(ROOT / 'integrations/moyai'))
-from local_config import valid_scoped_key
+from local_config import INFERENCE_ROUTES, valid_scoped_key
 
 
 class ProvisionError(Exception):
@@ -76,10 +77,30 @@ def connect_ui(key):
 def new_key_payload():
     return {
         'key_alias': 'moyai-local-mvp-' + uuid.uuid4().hex, 'models': ['local-qwen'],
-        'allowed_routes': ['openai_routes', '/model/info'],
+        'allowed_routes': list(INFERENCE_ROUTES),
         'rpm_limit': 60, 'max_parallel_requests': 2,
         'object_permission': {'mcp_servers': [], 'vector_stores': []},
     }
+
+
+def prepare_key(master, key):
+    info = {}
+    if key and key != master:
+        try:
+            info = request(master, '/key/info?key=' + hashlib.sha256(key.encode()).hexdigest())['info']
+        except (HTTPError, URLError, OSError):
+            pass
+    if valid_scoped_key(key,master,info):
+        return key
+    # Reconcile only the exact previously supported, verifiably platform-owned scope.
+    if (set(info.get('allowed_routes') or []) == {'openai_routes','/model/info'}
+            and valid_scoped_key(key,master,info | {'allowed_routes':list(INFERENCE_ROUTES)})):
+        request(master,'/key/update',{'key':key,'allowed_routes':list(INFERENCE_ROUTES)})
+        updated = request(master,'/key/info?key='+hashlib.sha256(key.encode()).hexdigest())['info']
+        if not valid_scoped_key(key,master,updated):
+            raise ProvisionError('The owned inference key route restriction was not applied')
+        return key
+    return request(master, '/key/generate', new_key_payload())['key']
 
 
 def main():
@@ -92,18 +113,13 @@ def main():
     key_file = LOCAL / 'litellm-key'
     key = key_file.read_text().strip() if key_file.exists() else ''
     master = (ROOT / '.local/litellm-master-key').read_text().strip()
-    valid = False
-    if key and key != master:
-        try:
-            info = request(master, '/key/info?key=' + hashlib.sha256(key.encode()).hexdigest())['info']
-            valid = valid_scoped_key(key, master, info)
-        except (HTTPError, URLError, OSError):
-            pass
-    if not valid:
-        response = request(master, '/key/generate', new_key_payload())
-        key = response['key']
-        private_write(key_file, key + '\n')
-    changed = private_write(LOCAL / 'runtime-config.json', json.dumps({'password': password, 'api_key': key}) + '\n')
+    key = prepare_key(master,key)
+    private_write(key_file, key + '\n')
+    context = runpy.run_path(str(ROOT / 'scripts/provision-repository-context.py'))
+    context_token = context['provision_context'](
+        lambda method, route, body=None: request(master, route, body, method=method), ROOT)
+    changed = private_write(LOCAL / 'runtime-config.json', json.dumps({
+        'password': password, 'api_key': key, 'repository_context_token': context_token}) + '\n')
 
     ssh = LOCAL / 'ssh'
     ssh.mkdir(exist_ok=True, mode=0o700)

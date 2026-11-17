@@ -3,6 +3,8 @@ import hashlib
 import json
 import re
 
+INFERENCE_ROUTES = ('/v1/responses', '/model/info')
+
 
 def workspace_directory(session_id, authority_key):
     if not session_id or not authority_key:
@@ -23,7 +25,7 @@ def valid_scoped_key(candidate, master, info):
         return False
     if (not re.fullmatch(r'moyai-local-mvp(?:-[0-9a-f]{32})?', info.get('key_alias') or '')
             or info.get('models') != ['local-qwen']
-            or set(info.get('allowed_routes') or []) != {'openai_routes', '/model/info'}
+            or set(info.get('allowed_routes') or []) != set(INFERENCE_ROUTES)
             or info.get('status') != 'active' or info.get('blocked')
             or info.get('team_id') or info.get('organization_id') or info.get('access_group_ids')):
         return False

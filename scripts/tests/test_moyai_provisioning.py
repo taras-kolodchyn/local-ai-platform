@@ -26,7 +26,26 @@ class MoyaiProvisioningTests(unittest.TestCase):
         for payload in (first, second):
             self.assertRegex(payload['key_alias'], r'^moyai-local-mvp-[0-9a-f]{32}$')
             self.assertEqual(payload['models'], ['local-qwen'])
+            self.assertEqual(payload['allowed_routes'], ['/v1/responses','/model/info'])
             self.assertEqual(payload['object_permission'], {'mcp_servers': [], 'vector_stores': []})
+
+    def test_owned_legacy_inference_key_is_narrowed_in_place_and_verified(self):
+        module = self.preparer()
+        self.assertTrue(hasattr(module,'prepare_key'),'Inference route migration is missing')
+        state = {'key_alias':'moyai-local-mvp', 'models':['local-qwen'],
+                 'allowed_routes':['openai_routes','/model/info'], 'status':'active',
+                 'object_permission':{'mcp_servers':[],'vector_stores':[]}}
+        updates=[]
+        def gateway(master,route,body=None,**_):
+            if route.startswith('/key/info?'): return {'info':dict(state)}
+            self.assertEqual(route,'/key/update')
+            self.assertEqual(body['key'],'fixture-owned')
+            updates.append(body); state.update({k:v for k,v in body.items() if k!='key'})
+            return {}
+        module.request=gateway
+        self.assertEqual(module.prepare_key('fixture-master','fixture-owned'),'fixture-owned')
+        self.assertEqual(len(updates),1)
+        self.assertEqual(state['allowed_routes'],['/v1/responses','/model/info'])
 
     def test_missing_password_is_recovered_without_changing_existing_account(self):
         module = self.preparer()

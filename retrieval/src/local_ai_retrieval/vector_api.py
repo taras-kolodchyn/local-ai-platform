@@ -28,13 +28,13 @@ def _filters(value, scope, depth=0):
     if set(value) != {'type', 'key', 'value'} or value['type'] != 'eq':
         raise ValueError('Unsupported filter')
     key, expected = value['key'], value['value']
-    if key not in ('repository', 'branch', 'path') or not isinstance(expected, str):
+    if key not in ('repository', 'branch', 'snapshot_id', 'generation_id', 'path') or not isinstance(expected, str):
         raise ValueError('Unsupported filter')
     if not expected or len(expected) > 1000:
         raise ValueError('Invalid filter value')
     if key == 'path':
         return expected
-    if expected != scope[key]:
+    if expected != scope.get(key):
         raise ValueError('Filter conflicts with store scope')
     return None
 
@@ -44,7 +44,7 @@ def _store(record):
             'created_at': int(record.get('created_at', 0)), 'status': 'completed',
             'usage_bytes': 0, 'file_counts': {'in_progress': 0, 'completed': 0,
             'failed': 0, 'cancelled': 0, 'total': 0},
-            'metadata': {'repository': record['repository'], 'branch': record['branch']}}
+            'metadata': {k: record[k] for k in ('repository', 'branch', 'snapshot_id', 'generation_id') if record.get(k) is not None}}
 
 
 def vector_routes(key_file: Path, list_records, search_records):
@@ -129,6 +129,10 @@ def vector_routes(key_file: Path, list_records, search_records):
                     'attributes': {k: row[k] for k in ('repository', 'branch',
                         'commit_hash', 'start_line', 'end_line')} | {
                         'chunk_id': row['id'], 'score_kind': 'hybrid_rrf',
+                        **{k: row[k] for k in ('snapshot_id', 'generation_id') if k in row},
+                        **({'dirty': row['metadata']['git']['dirty'],
+                            'subtree': row['metadata']['git']['subtree']}
+                           if row.get('metadata', {}).get('git') else {}),
                         'rrf_relevance': float(row['relevance']),
                         'cosine_similarity': float(row['similarity'])}})
             return JSONResponse({'object': 'vector_store.search_results.page',

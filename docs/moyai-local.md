@@ -5,6 +5,10 @@ dispatcher and Temporal workflow with the platform's `local-qwen` alias. Agent
 commands execute over SSH in a separate local Linux container. Inference remains
 behind LiteLLM and Docker Model Runner's existing macOS Metal boundary.
 
+For cited context, controlled repository edits and independently verified patch
+delivery, see [repository tasks](repository-workflow.md). Unattached conversations
+retain the file/shell behavior documented here.
+
 ## Start and sign in
 
 ```sh
@@ -98,8 +102,10 @@ HTTPS-or-loopback gateway policy without exposing another host port.
 The served web index uses local assets and system font fallbacks; upstream's
 external Fontshare preconnect/stylesheet links are removed during image build.
 
-Moyai uses a separate LiteLLM virtual key restricted to `local-qwen`, with no MCP
-or vector-store grants. The model profile explicitly sets `parallel_tool_calls=false` and `temperature=0`,
+Moyai uses a separate LiteLLM virtual key restricted to `local-qwen` and the
+`/v1/responses` and `/model/info` routes. Live vector-search and MCP requests with
+that key are denied. Repository context uses a distinct search-only credential
+behind the internal bridge. The model profile explicitly sets `parallel_tool_calls=false` and `temperature=0`,
 matching the local alias's declared capabilities. An initial default-profile run
 returned textual tool markup; the sequential profile produced actual native tool
 receipts and successful file/test/artifact results. The local adapter logs only

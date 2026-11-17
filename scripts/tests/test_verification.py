@@ -12,7 +12,7 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[2]
-PHASES = ['lint', 'test', 'up', 'status', 'smoke-test', 'moyai-smoke']
+PHASES = ['lint', 'test', 'up', 'status', 'smoke-test', 'moyai-smoke', 'repository-smoke']
 PRIVATE_OUTPUT = 'fixture request body and generated credential must stay private'
 
 DRIVER = r'''import json, os, signal, subprocess, sys, time
@@ -130,7 +130,7 @@ class VerificationTests(unittest.TestCase):
         docker.chmod(0o755)
         (scripts / 'moyai.sh').write_text(
             '#!/bin/sh\nexec "$TASK_PYTHON" "$TASK_DRIVER" moyai "$@"\n')
-        for phase in PHASES[:-1]:
+        for phase in PHASES[:-2]:
             (scripts / (phase + '.sh')).write_text(
                 '#!/bin/sh\nexec "$TASK_PYTHON" "$TASK_DRIVER" phase ' + phase + ' "$@"\n')
         (scripts / 'status.sh').write_text(
@@ -139,6 +139,10 @@ class VerificationTests(unittest.TestCase):
             'import os, sys\nos.execv(os.environ["TASK_PYTHON"], '
             '[os.environ["TASK_PYTHON"], os.environ["TASK_DRIVER"], '
             '"phase", "moyai-smoke", *sys.argv[1:]])\n')
+        (scripts / 'repository-smoke.py').write_text(
+            'import os, sys\nos.execv(os.environ["TASK_PYTHON"], '
+            '[os.environ["TASK_PYTHON"], os.environ["TASK_DRIVER"], '
+            '"phase", "repository-smoke", *sys.argv[1:]])\n')
         self.env = os.environ | {
             'PATH': str(binaries) + os.pathsep + os.environ['PATH'],
             'TASK_PYTHON': sys.executable, 'TASK_DRIVER': str(self.driver),
@@ -181,9 +185,11 @@ class VerificationTests(unittest.TestCase):
         calls = self.calls()
         self.assertEqual([call[1] for call in calls if call[0] == 'phase'], PHASES)
         self.assertIn(['phase', 'moyai-smoke', '--restart'], calls)
+        self.assertIn(['phase', 'repository-smoke', '--restart'], calls)
         self.assertIn(['phase', 'status', 'json'], calls)
         down = calls.index(['moyai', 'down'])
         self.assertLess(calls.index(['phase', 'moyai-smoke', '--restart']), down)
+        self.assertLess(calls.index(['phase', 'repository-smoke', '--restart']), down)
         self.assertGreater(calls.index(['docker', 'model', 'ps'], down + 1), down)
         self.assert_stopped()
         path, report = self.result()

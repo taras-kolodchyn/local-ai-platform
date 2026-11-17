@@ -1,0 +1,14 @@
+**
+!examples/
+!examples/rust-service/
+!examples/rust-service/Cargo.toml
+!examples/rust-service/Cargo.lock
+!examples/rust-service/src/
+!examples/rust-service/src/**
+!integrations/
+!integrations/moyai/
+!integrations/moyai/oracles/
+!integrations/moyai/oracles/**
+!integrations/moyai/repository_guest.py
+!integrations/moyai/sshd_config
+!integrations/moyai/sandbox-entrypoint.sh

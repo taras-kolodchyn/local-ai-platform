@@ -1,12 +1,44 @@
 FROM ghcr.io/berriai/moyai@sha256:05e9b95fdd96507b39784b9d8531758efdf2db30f0bceb03c161e2bd46b43419 AS upstream
-FROM python:3.14.10-slim-bookworm@sha256:3fe1a0b6c2d6b2ebb572906cdabeca75aeb558c0c17db5ffefbcf8094871c32b
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Prepared while connected. Runtime never fetches toolchains or dependencies.
+FROM rust:1.100.0-slim-bookworm@sha256:7c7d4eb4d05b7781187a327809466cfddf29753f6defdc3d19a0e291951b7a37 AS rust-assets
+COPY examples/rust-service/Cargo.toml examples/rust-service/Cargo.lock /prepare/source/
+COPY examples/rust-service/src /prepare/source/src
+COPY integrations/moyai/oracles/retry_policy.rs /prepare/retry_policy.rs
+WORKDIR /prepare/source
+RUN cargo vendor --locked --versioned-dirs /opt/rust-vendor \
+    && mkdir -p /opt/rust-cargo /prepare/verifier \
+    && printf '[source.crates-io]\nreplace-with="vendored-sources"\n[source.vendored-sources]\ndirectory="/opt/rust-vendor"\n[net]\noffline=true\n' > /opt/rust-cargo/config.toml \
+    && printf '[package]\nname="repository-oracle"\nversion="0.0.0"\nedition="2024"\n[dependencies]\nlocal-ai-rust-service={path="../source"}\n[[test]]\nname="retry_policy"\npath="/prepare/retry_policy.rs"\n' > /prepare/verifier/Cargo.toml \
+    && CARGO_HOME=/opt/rust-cargo cargo generate-lockfile --offline --manifest-path /prepare/verifier/Cargo.toml \
+    && cp -a /prepare/verifier /prepare/probe \
+    && sed -i 's/repository-oracle/repository-baseline/g;s/retry_policy/legacy_policy/g' /prepare/probe/Cargo.toml \
+    && CARGO_HOME=/opt/rust-cargo cargo generate-lockfile --offline --manifest-path /prepare/probe/Cargo.toml \
+    && cp -a "$(rustc --print sysroot)" /opt/rust
+FROM python:3.14.10-slim-bookworm@sha256:3fe1a0b6c2d6b2ebb572906cdabeca75aeb558c0c17db5ffefbcf8094871c32b AS python-runtime
+# The immutable Rust image already contains the linker, binutils, libc and headers.
+# Hold every inherited package so online SSH tooling installation cannot upgrade
+# the pinned compiler or its runtime/development dependency closure.
+FROM rust:1.100.0-slim-bookworm@sha256:7c7d4eb4d05b7781187a327809466cfddf29753f6defdc3d19a0e291951b7a37
+RUN mkdir -p /opt/local-repository \
+    && dpkg-query -W -f='${binary:Package}=${Version}\n' > /opt/local-repository/toolchain-packages.txt \
+    && apt-mark hold $(dpkg-query -W -f='${db:Status-Abbrev} ${binary:Package}\n' | awk '$1 == "ii" {print $2}') \
+    && test "$(gcc -dumpfullversion)" = 12.2.0 \
+    && ln -s "$(rustc --print sysroot)" /opt/rust
+COPY --from=python-runtime /usr/local /usr/local
+RUN ldconfig && apt-get update && apt-get install -y --no-install-recommends \
     openssh-server git ripgrep bash curl jq \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --uid 10001 --create-home --shell /bin/bash agent \
     && usermod --password x agent \
     && python -m pip install --no-cache-dir pytest==9.2.0
 COPY --from=upstream /app/native/skills /opt/moyai/skills
-COPY sshd_config /etc/ssh/sshd_config
-COPY sandbox-entrypoint.sh /usr/local/bin/moyai-sandbox
+COPY --from=rust-assets /opt/rust-vendor /opt/rust-vendor
+COPY --from=rust-assets /opt/rust-cargo /opt/rust-cargo
+COPY --from=rust-assets /prepare/verifier/Cargo.lock /opt/local-repository/oracles/Verifier.lock
+COPY --from=rust-assets /prepare/probe/Cargo.lock /opt/local-repository/oracles/Baseline.lock
+COPY integrations/moyai/oracles /opt/local-repository/oracles
+COPY integrations/moyai/repository_guest.py /opt/local-repository/guest.py
+COPY integrations/moyai/sshd_config /etc/ssh/sshd_config
+COPY integrations/moyai/sandbox-entrypoint.sh /usr/local/bin/moyai-sandbox
+ENV PATH="/opt/rust/bin:${PATH}" CARGO_HOME=/opt/rust-cargo CARGO_NET_OFFLINE=true
 ENTRYPOINT ["/bin/bash", "/usr/local/bin/moyai-sandbox"]

@@ -43,13 +43,16 @@ def migrate(settings: Settings) -> None:
         connection.execute(sql)
         connection.execute((sql_path.parent / "002_vector_registry.sql").read_text())
         connection.execute((sql_path.parent / "003_hybrid_search.sql").read_text())
+        connection.execute((sql_path.parent / "004_repository_snapshots.sql").read_text())
 
 
-def existing_hashes(settings: Settings, repository: str, branch: str) -> dict[tuple[str, int], str]:
+def existing_hashes(settings: Settings, repository: str, branch: str, fingerprint: str | None = None) -> dict[tuple[str, int], str]:
+    if not fingerprint:
+        return {}
     with psycopg.connect(settings.database_url) as connection:
         rows = connection.execute(
-            "SELECT path, chunk_index, chunk_hash FROM source_chunks WHERE repository = %s AND branch = %s",
-            (repository, branch),
+            "SELECT path, chunk_index, chunk_hash FROM source_chunks WHERE repository = %s AND branch = %s AND generation_id = 'legacy' AND metadata->>'embedding_fingerprint' = %s",
+            (repository, branch, fingerprint),
         ).fetchall()
     return {(row[0], row[1]): row[2] for row in rows}
 
@@ -110,7 +113,7 @@ def apply_snapshot(
                     ) VALUES (
                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::vector
                     )
-                    ON CONFLICT (repository, branch, path, chunk_index) DO UPDATE SET
+                    ON CONFLICT (repository, branch, generation_id, path, chunk_index) DO UPDATE SET
                         commit_hash = EXCLUDED.commit_hash,
                         language = EXCLUDED.language,
                         symbol_name = EXCLUDED.symbol_name,
@@ -143,7 +146,7 @@ def apply_snapshot(
             deleted = connection.execute(
                 """
                 DELETE FROM source_chunks AS chunks
-                WHERE repository = %s AND branch = %s
+                WHERE repository = %s AND branch = %s AND generation_id = 'legacy'
                   AND NOT EXISTS (
                     SELECT 1 FROM live_chunk_keys AS live
                     WHERE live.path = chunks.path AND live.chunk_index = chunks.chunk_index
@@ -152,7 +155,7 @@ def apply_snapshot(
                 (repository, branch),
             ).rowcount
             connection.execute(
-                "UPDATE source_chunks SET commit_hash = %s WHERE repository = %s AND branch = %s",
+                "UPDATE source_chunks SET commit_hash = %s WHERE repository = %s AND branch = %s AND generation_id = 'legacy'",
                 (commit_hash, repository, branch),
             )
     return int(deleted or 0)
@@ -161,7 +164,7 @@ def apply_snapshot(
 def delete_snapshot(settings: Settings, repository: str, branch: str) -> int:
     with psycopg.connect(settings.database_url) as connection:
         deleted = connection.execute(
-            "DELETE FROM source_chunks WHERE repository = %s AND branch = %s",
+            "DELETE FROM source_chunks WHERE repository = %s AND branch = %s AND generation_id = 'legacy'",
             (repository, branch),
         ).rowcount
         connection.commit()
@@ -176,6 +179,9 @@ def search_chunks(
     query_mode: str = "hybrid",
     repository: str | None = None,
     branch: str | None = None,
+    snapshot_id: str | None = None,
+    generation_id: str | None = None,
+    compatible_fingerprint: str | None = None,
     path_prefix: str | None = None,
     exact_path: str | None = None,
     limit: int | None = None,
@@ -188,6 +194,9 @@ def search_chunks(
     semantic-only mode is a diagnostic baseline, using the same scopes/bounds.
     PostgreSQL's plain-text query constructor treats keyword input as data.
     """
+    if compatible_fingerprint is None and settings.embedding_artifact_id:
+        from .ingestion import embedding_fingerprint
+        compatible_fingerprint = embedding_fingerprint(settings, settings.embedding_artifact_id)
     if query_mode not in {"hybrid", "semantic"}:
         raise ValueError("Unsupported retrieval query mode")
     if not isinstance(query, str) or len(query) > 4000:
@@ -201,6 +210,21 @@ def search_chunks(
     candidate_limit = max(20, bounded_limit * 4)
     filters: list[str] = []
     values: list[Any] = [vector_literal(embedding), query]
+    if generation_id:
+        filters.append("generation_id = %s")
+        values.append(generation_id)
+    else:
+        filters.append("""(EXISTS (SELECT 1 FROM repository_generations g
+            WHERE g.id = source_chunks.generation_id AND g.active)
+            OR (generation_id = 'legacy' AND NOT EXISTS
+                (SELECT 1 FROM repository_generations g WHERE g.repository = source_chunks.repository
+                 AND g.branch = source_chunks.branch AND g.active)))""")
+    if snapshot_id:
+        filters.append("snapshot_id = %s")
+        values.append(snapshot_id)
+    if compatible_fingerprint is not None:
+        filters.append("metadata->>'embedding_fingerprint' = %s")
+        values.append(compatible_fingerprint)
     if repository:
         filters.append("repository = %s")
         values.append(repository)
@@ -249,7 +273,7 @@ def search_chunks(
                    coalesce(1.0 / (%s + lexical.position), 0) AS relevance
             FROM semantic FULL OUTER JOIN lexical USING (id)
         )
-        SELECT scoped.id, repository, branch, commit_hash, path, language, symbol_name,
+        SELECT scoped.id, repository, branch, commit_hash, snapshot_id, generation_id, metadata, path, language, symbol_name,
                chunk_index, start_line, end_line, content,
                1 - (embedding <=> (SELECT embedding FROM search_input)) AS similarity,
                relevance
@@ -287,7 +311,7 @@ def get_chunk(settings: Settings, chunk_id: int) -> dict[str, Any] | None:
     with psycopg.connect(settings.database_url, row_factory=dict_row) as connection:
         row = connection.execute(
             """
-            SELECT id, repository, branch, commit_hash, path, language, symbol_name,
+            SELECT id, repository, branch, commit_hash, snapshot_id, generation_id, metadata, path, language, symbol_name,
                    chunk_index, start_line, end_line, content
             FROM source_chunks WHERE id = %s
             """,
@@ -321,3 +345,81 @@ def observability_snapshot(settings: Settings) -> dict[str, float]:
     for key, value in dict(latest or {}).items():
         values[f"last_{key}"] = float(value or 0)
     return values
+
+
+def find_generation(settings: Settings, snapshot_id: str, fingerprint: str) -> dict | None:
+    with psycopg.connect(settings.database_url, row_factory=dict_row) as connection:
+        row = connection.execute('''SELECT g.id AS generation_id, s.id AS store_id,
+            g.repository AS repository_id, g.snapshot_id FROM repository_generations g
+            JOIN workspace_vector_stores s ON s.generation_id=g.id
+            WHERE g.snapshot_id=%s AND g.embedding_fingerprint=%s ORDER BY g.created_at DESC LIMIT 1''',
+            (snapshot_id, fingerprint)).fetchone()
+    return dict(row) if row else None
+
+
+def publish_generation(settings: Settings, manifest: dict, fingerprint: str,
+                       records: list[ChunkRecord]) -> dict:
+    """Commit all source rows, scope registration and current selection together."""
+    from uuid import uuid4
+    generation_id = 'gen_' + uuid4().hex
+    store_id = 'vs_' + uuid4().hex
+    repository, branch = manifest['repository_id'], manifest['git']['branch']
+    with psycopg.connect(settings.database_url) as connection:
+        with connection.transaction():
+            connection.execute('SELECT pg_advisory_xact_lock(hashtext(%s))', (json.dumps([repository, branch]),))
+            connection.execute('''INSERT INTO repository_generations
+                (id,repository,branch,snapshot_id,embedding_fingerprint,manifest)
+                VALUES (%s,%s,%s,%s,%s,%s::jsonb)''',
+                (generation_id, repository, branch, manifest['snapshot_id'], fingerprint, json.dumps(manifest)))
+            for record in records:
+                connection.execute('''INSERT INTO source_chunks
+                    (repository,branch,commit_hash,path,language,symbol_name,chunk_index,
+                     start_line,end_line,chunk_hash,content,metadata,embedding,snapshot_id,generation_id)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s::vector,%s,%s)''',
+                    (repository, branch, record.commit_hash, record.path, record.language,
+                     record.symbol_name, record.chunk_index, record.start_line, record.end_line,
+                     record.chunk_hash, record.content, json.dumps(record.metadata),
+                     vector_literal(record.embedding), manifest['snapshot_id'], generation_id))
+            connection.execute('''INSERT INTO workspace_vector_stores
+                (id,repository,branch,snapshot_id,generation_id) VALUES (%s,%s,%s,%s,%s)''',
+                (store_id, repository, branch, manifest['snapshot_id'], generation_id))
+            connection.execute('UPDATE repository_generations SET active=false WHERE repository=%s AND branch=%s AND active',
+                               (repository, branch))
+            connection.execute('UPDATE repository_generations SET active=true WHERE id=%s', (generation_id,))
+    return {'repository_id': repository, 'snapshot_id': manifest['snapshot_id'],
+            'generation_id': generation_id, 'store_id': store_id}
+
+
+def activate_generation(settings: Settings, generation_id: str) -> None:
+    with psycopg.connect(settings.database_url) as connection:
+        with connection.transaction():
+            row = connection.execute('SELECT repository, branch FROM repository_generations WHERE id=%s', (generation_id,)).fetchone()
+            if row is None:
+                raise ValueError('Unknown repository generation')
+            connection.execute('SELECT pg_advisory_xact_lock(hashtext(%s))', (json.dumps(list(row)),))
+            connection.execute('UPDATE repository_generations SET active=false WHERE repository=%s AND branch=%s AND active', row)
+            connection.execute('UPDATE repository_generations SET active=true WHERE id=%s', (generation_id,))
+
+
+def compatible_scope_exists(settings: Settings, fingerprint: str, *, repository=None, branch=None, generation_id=None) -> bool:
+    # Unknown legacy provenance is intentionally excluded from inference-backed
+    # searches. Direct vector SQL diagnostics can still inspect legacy fixtures.
+    filters = ["metadata->>'embedding_fingerprint' = %s"]
+    values = [fingerprint]
+    if generation_id:
+        filters.append('generation_id = %s')
+        values.append(generation_id)
+    else:
+        filters.append("""(EXISTS (SELECT 1 FROM repository_generations g
+            WHERE g.id=source_chunks.generation_id AND g.active)
+            OR (generation_id='legacy' AND NOT EXISTS
+                (SELECT 1 FROM repository_generations g WHERE g.repository=source_chunks.repository
+                 AND g.branch=source_chunks.branch AND g.active)))""")
+    for field, value in [('repository', repository), ('branch', branch)]:
+        if value is not None:
+            filters.append(field + ' = %s')
+            values.append(value)
+    with psycopg.connect(settings.database_url) as connection:
+        connection.execute("SET LOCAL statement_timeout = '5s'")
+        return bool(connection.execute('SELECT EXISTS(SELECT 1 FROM source_chunks WHERE ' +
+            ' AND '.join(filters) + ')', values).fetchone()[0])

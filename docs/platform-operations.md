@@ -61,7 +61,9 @@ make verify
 ```
 
 The ordered phases are lint, required unit/DB/Rust tests, supported startup,
-JSON status, endpoint smoke and real Moyai acceptance with a service restart.
+JSON status, endpoint smoke, plain Moyai acceptance, and repeated real-model
+repository acceptance with service restarts. See [repository tasks](repository-workflow.md)
+for source registration, the first Rust profile and private evidence.
 The finalizer always attempts shutdown and independently checks owned project
 containers and configured resident models. Failures, cleanup failures and
 unavailable inventories are unsuccessful results. Unrelated Docker projects or

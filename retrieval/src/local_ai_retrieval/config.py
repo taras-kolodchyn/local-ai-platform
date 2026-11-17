@@ -23,6 +23,7 @@ class Settings:
     max_limit: int
     max_context_chars: int
     log_level: str
+    embedding_artifact_id: str = ''
     vector_key_file: Path = Path("/run/secrets/vector_backend_key")
 
     @classmethod
@@ -39,6 +40,7 @@ class Settings:
             max_limit=_int_env("RETRIEVAL_MAX_LIMIT", 12),
             max_context_chars=_int_env("RETRIEVAL_MAX_CONTEXT_CHARS", 24000),
             log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
+            embedding_artifact_id=os.getenv("EMBEDDING_ARTIFACT_ID", ""),
         )
 
     def api_key(self) -> str:
