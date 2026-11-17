@@ -132,5 +132,6 @@ Compatibility sources: [Cargo offline and locked execution](https://doc.rust-lan
 [LiteLLM virtual key permissions](https://docs.litellm.ai/docs/proxy/virtual_keys),
 [pinned LiteLLM route checks](https://github.com/BerriAI/litellm/blob/v1.109.1/litellm/proxy/auth/route_checks.py).
 See the [approved design](superpowers/specs/2026-11-17-repository-workflow-design.md)
-for the implementation boundaries. Actual versioned acceptance results are
-recorded separately after integrated verification.
+for the implementation boundaries and the
+[2026-11-17 verified results](results/repository-workflow-2026-11-17.md) for
+three actual local-model cycles, lifecycle checks, measurements and limits.
