@@ -24,8 +24,14 @@
 - [x] Explain `tests/*.rs` discovery in native instructions and attached profile metadata. Return an actionable next step after failed or passed checks.
 - [x] Reuse only the latest settled repair receipt after checking the actual tree; preserve receipt bytes and identify reuse explicitly. Do not consume another validation attempt or run Cargo on an unchanged retry.
 - [x] Run focused tests, image SDK tests and required `make lint`, `make test`, `make smoke-test`.
-- [ ] Submit an ordinary Rust task through Moyai in one new conversation, with no integration-file hint or follow-up. Independently validate its delivered patch and source preservation.
-- [ ] Retest the actual download button with per-operation and total deadlines, verify bytes against the controller hash, and record timing and the bounded procedure.
+- [x] Submit an ordinary Rust task through Moyai in one new conversation, with no integration-file hint or follow-up. Independently validate its delivered patch and source preservation.
+- [x] Retest the actual download button with per-operation and total deadlines, verify bytes against the controller hash, and record timing and the bounded procedure.
+
+Final evidence: [reliability results](../../results/repository-reliability-2026-11-17.md).
+One native turn completed in 202.713 s; UI patch download completed in 275 ms
+with matching controller and Files hashes. Completion fixes also cover native
+authorization/checkpoint hooks, durable model-scope separation and Temporal's
+runtime import boundary.
 
 ## Download diagnosis before changes
 

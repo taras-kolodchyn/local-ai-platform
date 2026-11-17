@@ -104,3 +104,7 @@ do not justify changing the functioning native download endpoint.
 Private evidence: `.local/verification/download-diagnosis-20261117.json` and
 the browser observations recorded with the repair acceptance results. Generated
 source, downloaded artifacts and request bodies remain outside Git.
+
+The [2026-11-17 reliability results](results/repository-reliability-2026-11-17.md)
+record final one-task UI acceptance, independent artifact validation and the
+275-ms download on the final controller.
