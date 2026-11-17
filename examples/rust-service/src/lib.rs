@@ -32,9 +32,14 @@ async fn reports(Query(filter): Query<ReportFilter>) -> impl IntoResponse {
     (StatusCode::OK, Json(ReportResponse { query }))
 }
 
+/// Shared retry backoff policy: start at 100ms, double per attempt, cap at 30,000ms
+pub fn bounded_backoff_ms(attempt: u32) -> u64 {
+    100_u64.saturating_mul(2_u64.saturating_pow(attempt)).min(30_000)
+}
+
 #[deprecated(note = "replace with the shared bounded_backoff_ms policy")]
 pub fn legacy_retry_delay_ms(attempt: u32) -> u64 {
-    100_u64.saturating_mul(2_u64.saturating_pow(attempt)).min(60_000)
+    bounded_backoff_ms(attempt)
 }
 
 pub fn app() -> Router {
