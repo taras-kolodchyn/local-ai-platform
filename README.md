@@ -250,6 +250,7 @@ Docker Model Runner uses llama.cpp with automatic Metal acceleration on Apple Si
 - [Native VS Code workflow](docs/vscode.md)
 - [Local Moyai coding MVP](docs/moyai-local.md)
 - [Opt-in connected mode](docs/connected.md)
+- [GitHub issue to a verified Moyai draft PR](docs/moyai-github-issues.md)
 - [Troubleshooting](docs/troubleshooting.md)
 - [Benchmark method](docs/benchmarking.md)
 - [Measured results and agent validation](docs/results/agent-validation-2026-07-19.md)

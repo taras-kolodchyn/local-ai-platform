@@ -1,0 +1,5 @@
+services:
+  moyai:
+    volumes:
+      - ./.local/github-issues/exchange:/run/moyai-github-issues:ro
+      - ./.local/github-issues/exchange/requests:/run/moyai-github-issues/requests

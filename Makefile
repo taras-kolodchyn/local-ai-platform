@@ -136,3 +136,8 @@ moyai-smoke: ## Verify real Moyai file, shell, test and artifact workflows
 .PHONY: purge-legacy-agents
 purge-legacy-agents: ## Delete retired workspace profile data and keys; requires the running gateway/database
 	@bash -c 'source scripts/lib.sh; load_env; python3 scripts/reconcile-agents.py --purge-data'
+
+.PHONY: github-issues
+github-issues: export MOYAI_OPERATOR_ISSUE := $(value ISSUE)
+github-issues: ## Run the opt-in Moyai issue publisher (ISSUE=N limits host gh authorization to one issue)
+	@python3 scripts/github-issues.py

@@ -96,17 +96,19 @@ class Ledger:
                 raise RepositoryError('No repository task belongs to this account.')
             return task
 
-    def attach(self, session, authority, binding, actor_id=None):
+    def attach(self, session, authority, binding, actor_id=None, github_issue=None):
         with self._transaction() as db:
             task = self._task(db, session, authority, optional=True)
             if task:
-                if task['binding']['repository_id'] != binding['repository_id']:
+                if task['binding']['repository_id'] != binding['repository_id'] or task.get('github_issue') != github_issue:
                     raise RepositoryError('This conversation already has a pinned repository.')
                 return task
             now = self.clock()
             task = dict(session_id=session, task_id=uuid.uuid4().hex, binding=binding, phase='preparing',
                         created=now, attached_actor_id=actor_id, deadline=now+self.lifetime, attempts=0, tool_calls=0, model_calls=0,
                         citations=[], plan=[], receipts=[], artifacts={}, pending=None, verified_tree=None)
+            if github_issue is not None:
+                task['github_issue'] = github_issue
             db.execute('INSERT INTO tasks VALUES (?,?,?,?,?,?,?,?)',
                        (session, authority, task['task_id'], 'preparing', now, now, task['deadline'], json.dumps(task)))
             db.execute('INSERT INTO events VALUES (?,?,?)', (session, 'preparing', now))

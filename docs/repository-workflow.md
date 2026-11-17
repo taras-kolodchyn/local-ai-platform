@@ -140,3 +140,5 @@ See the [approved design](superpowers/specs/2026-11-17-repository-workflow-desig
 for the implementation boundaries and the
 [2026-11-17 verified results](results/repository-workflow-2026-11-17.md) for
 three actual local-model cycles, lifecycle checks, measurements and limits.
+
+The opt-in host publisher can run this Rust profile from an issue URL and open a draft PR. See the [Moyai GitHub issue workflow](moyai-github-issues.md).

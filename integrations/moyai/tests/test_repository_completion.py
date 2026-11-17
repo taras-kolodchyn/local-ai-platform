@@ -14,6 +14,25 @@ from repository_workflow import RepositoryWorkflow
 
 
 class RepositoryCompletionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_issue_url_dispatches_exact_tool_once_and_obeys_authority(self):
+        from github_issue import ISSUES
+        from pydantic_ai.messages import ModelRequest, ToolReturnPart
+        cap, ctx = self.setup_capability(None)
+        ctx.prompt = ISSUES + '6'
+        ctx.deps.surface, ctx.deps.visibility = 'web', 'private'
+        request = SimpleNamespace(messages=[])
+        handler = AsyncMock()
+        response = await cap.wrap_model_request(ctx, request_context=request, handler=handler)
+        call = response.parts[0]
+        self.assertEqual((call.tool_name, call.args), ('open_github_issue', {'issue_url':ctx.prompt}))
+        request.messages = [ModelRequest(parts=[ToolReturnPart(call.tool_name, 'unavailable', tool_call_id=call.tool_call_id)])]
+        response = await cap.wrap_model_request(ctx, request_context=request, handler=handler)
+        self.assertIn('intake did not complete', response.parts[0].content)
+        ctx.capabilities['moyai_authority'].before_model_request.side_effect = PermissionError('revoked')
+        with self.assertRaises(PermissionError):
+            await cap.wrap_model_request(ctx, request_context=request, handler=handler)
+        handler.assert_not_awaited()
+
     async def test_completion_native_import_respects_temporal_runtime_restrictions(self):
         from temporalio import workflow
         from temporalio.worker.workflow_sandbox import SandboxRestrictions

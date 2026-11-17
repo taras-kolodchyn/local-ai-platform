@@ -367,15 +367,19 @@ class RepositoryBackend:
         request = {'op':op, 'conversation_id':Path(workspace_directory(session, authority)).name, **fields}
         return await ssh_json(GUEST, request, fields.get('timeout_seconds', 20) + 10)
 
-    async def open(self, scope, repository_id, actor_id=None):
+    async def open(self, scope, repository_id, actor_id=None, *, github_issue=None, expected_binding=None):
         task = self.ledger.status(*scope)
         if task and task['binding']['repository_id'] != repository_id:
             raise RepositoryError('The conversation is already bound to a different repository.')
+        if task and github_issue is not None and (task.get('github_issue') != github_issue or task['binding'] != expected_binding):
+            raise RepositoryError('Issue intake requires its own pinned conversation.')
         if not task:
             binding = next((r for r in await asyncio.to_thread(self.available) if r['repository_id'] == repository_id), None)
             if not binding:
                 raise RepositoryError('Choose an ID returned by list_repositories.')
-            task = self.ledger.attach(*scope, binding, actor_id)
+            if expected_binding is not None and binding != expected_binding:
+                raise RepositoryError('The registered GitHub base changed before attachment.')
+            task = self.ledger.attach(*scope, binding, actor_id, github_issue)
         if task['phase'] == 'preparing':
             manifest, directory = await asyncio.to_thread(self.snapshot, task['binding'])
             original = await asyncio.to_thread(self.originals, manifest, directory)
@@ -397,7 +401,7 @@ class RepositoryBackend:
             return {'attached':False}
         result = {key:task.get(key) for key in ('task_id','phase','binding','baseline_failed','attempts',
                                               'verified_tree','artifacts','files','deadline','model_calls','tool_calls',
-                                              'pending','write_outcome','check_observation')}
+                                              'pending','write_outcome','check_observation','github_issue')}
         if task['binding'].get('verification_profile') == 'rust-retry':
             result['verification_contract'] = RUST_RETRY_CONTRACT
         if task.get('receipts'):
