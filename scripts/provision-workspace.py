@@ -98,9 +98,14 @@ def owner_request(admin):
                                  'models': ['local-qwen', 'local-embeddings']})
     registry_path = LOCAL / 'workspace-registry.json'
     registry = json.loads(registry_path.read_text()) if registry_path.exists() else {}
-    admin('POST', '/team/update', {'team_id': TEAM, 'object_permission': {
-        'mcp_servers': ['local_retrieval', 'local_tools'],
-        'agents': list(registry.get('routes', {}).values())}})
+    existing_team = next((team for team in teams if team.get('team_id') == TEAM), {})
+    permissions = {key: value for key, value in (existing_team.get('object_permission') or {}).items()
+                   if key != 'object_permission_id'}
+    permissions['mcp_servers'] = list(dict.fromkeys(
+        (permissions.get('mcp_servers') or []) + ['local_retrieval', 'local_tools']))
+    permissions['agents'] = list(dict.fromkeys(
+        (permissions.get('agents') or []) + list(registry.get('routes', {}).values())))
+    admin('POST', '/team/update', {'team_id': TEAM, 'object_permission': permissions})
     user_id = 'workspace-provisioning'
     try:
         admin('GET', '/user/info?user_id=' + user_id)

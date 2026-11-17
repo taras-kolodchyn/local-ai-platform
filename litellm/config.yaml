@@ -1,7 +1,10 @@
+# Template rendered by scripts/model-config.py during make bootstrap.
+# Active references, context and English descriptions come from .env.
+# Keep local-qwen and local-embeddings stable for every client.
 model_list:
   - model_name: local-qwen
     litellm_params:
-      model: openai/ai/qwen3-coder:30B-A3B-UD-Q4_K_XL
+      model: __QWEN_MODEL__
       api_base: os.environ/INFERENCE_BASE_URL
       api_key: os.environ/INFERENCE_API_KEY
       use_chat_completions_api: true
@@ -10,6 +13,8 @@ model_list:
       input_cost_per_token: 0
       output_cost_per_token: 0
     model_info:
+      description: __QWEN_DESCRIPTION__
+      max_input_tokens: __QWEN_CONTEXT_SIZE__
       mode: chat
       supports_function_calling: true
       supports_parallel_function_calling: false
@@ -17,11 +22,12 @@ model_list:
 
   - model_name: local-embeddings
     litellm_params:
-      model: openai/ai/qwen3-embedding:0.6B-F16
+      model: __EMBEDDING_MODEL__
       api_base: os.environ/INFERENCE_BASE_URL
       api_key: os.environ/INFERENCE_API_KEY
       input_cost_per_token: 0
     model_info:
+      description: __EMBEDDING_DESCRIPTION__
       mode: embedding
 
 litellm_settings:

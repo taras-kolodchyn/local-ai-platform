@@ -38,13 +38,24 @@ cd local-ai-platform
 make up
 ```
 
-`make up` diagnoses the host, creates a local `.env`, enables Docker Model Runner, pulls pinned Qwen model artifacts, starts the core services, persistent execution profiles and local Moyai agent, waits for health checks, verifies the gateway and cache, and writes client configuration examples under `.local/`.
+`make up` diagnoses the host, creates a local `.env`, renders the effective model
+configuration, enables Docker Model Runner, pulls pinned model artifacts, and
+starts the core services and local Moyai as the single default agent. It retires
+the old workspace A2A registrations, verifies health, gateway, cache and scoped
+knowledge access, and writes optional Codex/Hermes client examples under `.local/`.
+Those client examples do not register or start additional agents in LiteLLM.
 
 `make down` stops Moyai, then all platform containers (including previously
 enabled profiles), then unloads the configured coding and embedding models from
 Model Runner memory. Volumes, conversations and downloaded model artifacts stay
 on disk. `make restart` performs this same stop/start cycle. `make status` shows
 both service groups and distinguishes resident models from downloaded artifacts.
+
+The former development/review/research workspace runtimes are retired from the
+default Compose stack. Moyai keeps its existing files and conversations. The
+separate, destructive `make purge-legacy-agents` migration removes only the
+retired profiles' volumes, memory database, local state and dedicated keys; it
+requires the gateway and database to be running. See [platform operations](docs/platform-operations.md).
 
 Moyai keeps its isolated Compose definition and existing data volumes, while the
 public commands manage it as part of the complete stack. The shutdown order
@@ -98,6 +109,7 @@ make vscode
 make vscode-check
 make vscode-smoke
 make smoke-test
+make verify
 make index REPO=/absolute/path/to/repository
 make hermes-smoke
 make connected-up
@@ -119,6 +131,12 @@ This requires a running Docker engine, but no `.env`, models, or running platfor
 stack. Database startup or provisioning failures fail the test instead of
 skipping it. GitHub CI runs the same fixture automatically.
 
+`make verify` runs lint, the full required test suite, startup, JSON status,
+endpoint smoke checks and real Moyai file/shell/pytest/artifact acceptance with a
+restart. It always attempts `make down` and checks the final owned-container and
+resident-model inventories, including after failures or interruption. Private
+phase logs and a result receipt are written under `.local/verification/`.
+
 For an explicitly provisioned disposable database, `MEMORY_TEST_DSN` can still
 be supplied to use that database instead. The default generates temporary
 credentials and exports the DSN only inside pytest.
@@ -138,6 +156,30 @@ All host-facing services bind to loopback by default.
 | Moyai agent | `http://127.0.0.1:8787` |
 
 Client-facing aliases are `local-qwen` and `local-embeddings`. The Docker Model Runner artifact names are internal implementation details.
+
+The checked-in [`litellm/config.yaml`](litellm/config.yaml) is a template.
+`make bootstrap` renders `.local/litellm/config.yaml` from the same `.env` model
+references and context used to pull and unload models. Each entry includes an
+English `model_info.description` identifying the actual model and its purpose.
+Known artifact metadata is attached only to its matching model reference;
+overriding the reference cannot retain the old model's label. All LiteLLM
+comments and descriptions remain English.
+These descriptions are deployment metadata exposed by LiteLLM's `/model/info`
+management API, as documented in [model management](https://docs.litellm.ai/docs/proxy/ui_store_model_db_setting).
+Metadata preservation was verified on 2026-11-17 with LiteLLM 1.109.1.
+
+`make status` and `make status FORMAT=json` report resolved aliases, model
+references, artifact digests/size, resident models and measured host/process
+memory when available, without starting services. Artifact context metadata is
+separate from the requested context; it does not prove the live engine's context.
+Process RSS and artifact size are not reported as Metal memory allocations.
+
+Retrieval now combines pgvector cosine search with PostgreSQL full-text search
+over source, symbol names and paths, using reciprocal rank fusion. HTTP, MCP and
+scoped vector-store searches share the same scope filters and context bounds.
+Raw cosine similarity remains available separately. Vector-store `score` and
+`score_threshold` use normalized hybrid relevance rather than cosine similarity;
+they are ranking signals, not calibrated probabilities. See [platform operations](docs/platform-operations.md).
 
 ## Shared dashboard login (optional)
 
@@ -225,4 +267,6 @@ See [SECURITY.md](SECURITY.md) for reporting vulnerabilities.
 
 Apache-2.0. See [LICENSE](LICENSE).
 
-See [local knowledge and persistent profiles](docs/workspace-memory.md) for vector stores, skills, execution, and semantic memory.
+See [current platform operations](docs/platform-operations.md) for models,
+verification, hybrid search and the single-agent stack. The previous
+[workspace profile design](docs/workspace-memory.md) is retained as historical documentation.

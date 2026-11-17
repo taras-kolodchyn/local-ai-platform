@@ -3,6 +3,7 @@
 source "$(dirname "$0")/lib.sh"
 
 require_command openssl
+require_command python3
 
 generate_hex() {
   openssl rand -hex "$1"
@@ -84,4 +85,6 @@ if [[ ! -s .local/vector-backend-key ]]; then
 fi
 chmod 600 .local/vector-backend-key
 
-ok "Local directories and secret files are ready"
+python3 scripts/model-config.py render >/dev/null
+
+ok "Local directories, secret files and resolved model configuration are ready"

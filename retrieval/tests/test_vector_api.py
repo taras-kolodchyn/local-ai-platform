@@ -18,7 +18,9 @@ def client(tmp_path):
             raise TimeoutError('private database details')
         if query == 'empty':
             return []
-        return [{'id': 1, 'path': 'docs/policy.md', 'similarity': 0.9,
+        return [{'id': 1, 'path': 'docs/policy.md',
+                 'similarity': -1.0 if query == 'lexical' else 0.9,
+                 'relevance': 1 / 61 if query == 'lexical' else 2 / 61,
                  'repository': 'fixture', 'branch': 'main', 'commit_hash': 'abc',
                  'start_line': 3, 'end_line': 5, 'content': 'Fixture policy.'}]
 
@@ -44,7 +46,22 @@ def test_search_returns_citable_results(client):
     assert item['file_id'] == 'chunk_1'
     assert item['content'] == [{'type': 'text', 'text': 'Fixture policy.'}]
     assert item['attributes']['start_line'] == 3
-    assert item['score'] == 0.9
+    assert item['score'] == pytest.approx(1)
+    assert item['attributes']['cosine_similarity'] == 0.9
+    assert item['attributes']['score_kind'] == 'hybrid_rrf'
+
+
+def test_hybrid_threshold_uses_normalized_fusion_score_and_retains_raw_cosine(client):
+    url = '/v1/vector_stores/vs_test/search'
+    response = client.post(url, headers=AUTH, json={
+        'query': 'lexical', 'ranking_options': {'score_threshold': 0.49}})
+    item = response.json()['data'][0]
+    assert item['score'] == pytest.approx(0.5)
+    assert item['attributes']['cosine_similarity'] == -1
+    assert item['attributes']['rrf_relevance'] == pytest.approx(1 / 61)
+    response = client.post(url, headers=AUTH, json={
+        'query': 'lexical', 'ranking_options': {'score_threshold': 0.51}})
+    assert response.json()['data'] == []
 
 
 @pytest.mark.parametrize('body', [

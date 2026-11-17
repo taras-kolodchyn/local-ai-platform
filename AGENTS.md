@@ -11,6 +11,7 @@ This repository builds a localhost-only AI platform for Apple Silicon Macs.
 - Do not mount the Docker socket or enable write-capable external MCP tools by default.
 - Never commit `.env`, generated API keys, indexed source, model files, or request bodies.
 - Preserve the offline profile as the default.
+- Use English for all LiteLLM comments and model descriptions.
 
 ## Verification
 

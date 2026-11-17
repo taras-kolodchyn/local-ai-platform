@@ -9,6 +9,8 @@ from starlette.concurrency import run_in_threadpool
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
+from .db import RRF_K
+
 
 def _filters(value, scope, depth=0):
     if value is None:
@@ -114,7 +116,10 @@ def vector_routes(key_file: Path, list_records, search_records):
             rows = await run_in_threadpool(search_records, scope, query, path, limit)
             result, remaining = [], 24000
             for row in rows[:limit]:
-                score = min(1.0, max(0.0, float(row['similarity'])))
+                # Normalize against the theoretical two-channel RRF maximum.
+                # score_threshold applies to this relevance, not cosine or a
+                # probability: a rank-one hit in only one channel scores 0.5.
+                score = min(1.0, max(0.0, float(row['relevance']) * (RRF_K + 1) / 2))
                 if score < threshold or remaining <= 0:
                     continue
                 content = row['content'][:remaining]
@@ -122,7 +127,10 @@ def vector_routes(key_file: Path, list_records, search_records):
                 result.append({'file_id': f"chunk_{row['id']}", 'filename': row['path'],
                     'score': score, 'content': [{'type': 'text', 'text': content}],
                     'attributes': {k: row[k] for k in ('repository', 'branch',
-                        'commit_hash', 'start_line', 'end_line')} | {'chunk_id': row['id']}})
+                        'commit_hash', 'start_line', 'end_line')} | {
+                        'chunk_id': row['id'], 'score_kind': 'hybrid_rrf',
+                        'rrf_relevance': float(row['relevance']),
+                        'cosine_similarity': float(row['similarity'])}})
             return JSONResponse({'object': 'vector_store.search_results.page',
                 'search_query': query, 'data': result, 'has_more': False, 'next_page': None})
         except (ValueError, TypeError, UnicodeError):

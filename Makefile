@@ -4,7 +4,7 @@ SHELL := /bin/bash
 COMPOSE := docker compose --project-name local-ai-platform --file compose.yaml
 REPO ?=
 
-.PHONY: help doctor bootstrap pull-model up down restart logs status smoke-test test lint index reindex benchmark hermes-smoke vscode-install vscode-check vscode-smoke vscode connected-up connected-smoke connected-down clean reset configure-codex configure-hermes
+.PHONY: help doctor bootstrap pull-model up down restart logs status smoke-test test lint verify index reindex benchmark hermes-smoke vscode-install vscode-check vscode-smoke vscode connected-up connected-smoke connected-down clean reset configure-codex configure-hermes
 
 help: ## Show available commands
 	@awk 'BEGIN {FS = ":.*## "; printf "Local AI Platform\n\n"} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-18s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -32,7 +32,7 @@ logs: ## Follow service logs (metadata-only policy)
 	@$(COMPOSE) logs --follow --tail=200
 
 status: ## Show containers, DMR models, and endpoints
-	@bash scripts/status.sh
+	@FORMAT="$(FORMAT)" bash scripts/status.sh
 
 vscode-install: ## Install or update the official Codex extension for VS Code
 	@bash scripts/vscode.sh install
@@ -54,6 +54,9 @@ test: ## Run unit, contract, isolated PostgreSQL, and required Rust tests
 
 lint: ## Validate shell, Python, YAML/Compose, and configuration invariants
 	@bash scripts/lint.sh
+
+verify: ## Run all required checks and real Moyai acceptance, then verify complete shutdown
+	@python3 scripts/verify.py
 
 index: ## Incrementally index REPO=/absolute/path through local embeddings
 	@test -n "$(REPO)" || { echo "Usage: make index REPO=/absolute/path" >&2; exit 2; }
@@ -97,17 +100,17 @@ reset: ## Delete local containers and volumes (requires CONFIRM_RESET=yes)
 vector-smoke: ## Verify registered vector search and access boundaries
 	@python3 scripts/vector-smoke.py
 
-memory-smoke: ## Verify persistent semantic memory and profile isolation
+memory-smoke: ## Historical workspace-profile check (retired from the default stack)
 	@python3 scripts/memory-smoke.py
 
-runtime-smoke: ## Verify Mem0 activation and tools in each real agent runtime
+runtime-smoke: ## Historical workspace-runtime check (retired from the default stack)
 	@python3 scripts/runtime-smoke.py
 
-workspace-smoke: ## Verify real profile execution through the gateway
+workspace-smoke: ## Historical workspace A2A check (retired from the default stack)
 	@python3 scripts/workspace-smoke.py
 
 .PHONY: workspace
-workspace: ## Run PROFILE=development|review|research with a task from stdin
+workspace: ## Historical A2A client (profiles retired; use Moyai for current execution)
 	@python3 scripts/workspace.py "$(PROFILE)"
 
 .PHONY: moyai-up moyai-down moyai-status moyai-smoke
@@ -121,3 +124,7 @@ moyai-status: ## Show the local Moyai services
 
 moyai-smoke: ## Verify real Moyai file, shell, test and artifact workflows
 	@python3 scripts/moyai-smoke.py $(if $(filter 1,$(RESTART)),--restart,)
+
+.PHONY: purge-legacy-agents
+purge-legacy-agents: ## Delete retired workspace profile data and keys; requires the running gateway/database
+	@bash -c 'source scripts/lib.sh; load_env; python3 scripts/reconcile-agents.py --purge-data'

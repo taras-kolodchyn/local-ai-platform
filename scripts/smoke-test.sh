@@ -31,6 +31,12 @@ curl --fail --silent --show-error \
   --header "Authorization: Bearer $key" "$base/v1/models" \
   | jq -e '[.data[].id] | index("local-qwen") != null and index("local-embeddings") != null' >/dev/null
 ok "Gateway and retrieval health checks passed"
+python3 scripts/check-model-bindings.py
+
+curl --fail --silent --show-error --max-time 10 http://127.0.0.1:8787/health >/dev/null
+python3 scripts/moyai-prepare.py --ui check
+python3 scripts/reconcile-agents.py --check
+ok "Local Moyai is healthy and legacy workspace agent registrations are absent"
 
 for port in 3000 4000 8000 8001 9090 12434; do
   listeners=$(lsof -nP -iTCP:"$port" -sTCP:LISTEN 2>/dev/null || true)
@@ -115,6 +121,10 @@ curl --fail --silent --show-error --max-time 300 \
   http://127.0.0.1:8000/search > "$smoke/search.json"
 jq -e '.count >= 1 and any(.results[]; .path == "docs/architecture-rules.md" or .path == "src/lib.rs")' "$smoke/search.json" >/dev/null
 ok "Incremental pgvector ingestion and retrieval passed"
+
+# Knowledge registration remains available without starting legacy agent runtimes.
+python3 scripts/provision-workspace.py vectors
+python3 scripts/vector-smoke.py
 
 mcp_request=$(jq -cn '{jsonrpc:"2.0",id:1,method:"tools/list",params:{}}')
 curl --fail --silent --show-error --max-time 60 \

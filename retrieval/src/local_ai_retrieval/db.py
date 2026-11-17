@@ -10,6 +10,8 @@ from psycopg.rows import dict_row
 
 from .config import Settings
 
+RRF_K = 60
+
 
 @dataclass(frozen=True)
 class ChunkRecord:
@@ -35,11 +37,12 @@ def vector_literal(values: Iterable[float]) -> str:
 def migrate(settings: Settings) -> None:
     sql_path = Path("/app/migrations/001_knowledge.sql")
     if not sql_path.exists():
-        sql_path = Path(__file__).resolve().parents[3] / "migrations" / "001_knowledge.sql"
+        sql_path = Path(__file__).resolve().parents[2] / "migrations" / "001_knowledge.sql"
     sql = sql_path.read_text(encoding="utf-8")
     with psycopg.connect(settings.database_url, autocommit=True) as connection:
         connection.execute(sql)
         connection.execute((sql_path.parent / "002_vector_registry.sql").read_text())
+        connection.execute((sql_path.parent / "003_hybrid_search.sql").read_text())
 
 
 def existing_hashes(settings: Settings, repository: str, branch: str) -> dict[tuple[str, int], str]:
@@ -169,6 +172,8 @@ def search_chunks(
     settings: Settings,
     embedding: list[float],
     *,
+    query: str = "",
+    query_mode: str = "hybrid",
     repository: str | None = None,
     branch: str | None = None,
     path_prefix: str | None = None,
@@ -176,10 +181,26 @@ def search_chunks(
     limit: int | None = None,
     max_chars: int | None = None,
 ) -> list[dict[str, Any]]:
+    """Fuse scoped, bounded cosine/keyword candidates; content is untrusted data.
+
+    ``similarity`` stays raw cosine similarity [-1, 1]. ``relevance`` is reciprocal
+    rank fusion, at most 2 / (RRF_K + 1), and is not a cosine similarity. The
+    semantic-only mode is a diagnostic baseline, using the same scopes/bounds.
+    PostgreSQL's plain-text query constructor treats keyword input as data.
+    """
+    if query_mode not in {"hybrid", "semantic"}:
+        raise ValueError("Unsupported retrieval query mode")
+    if not isinstance(query, str) or len(query) > 4000:
+        raise ValueError("Query must be at most 4000 characters")
+    if limit is not None and limit < 1:
+        raise ValueError("Result limit must be positive")
+    if max_chars is not None and max_chars < 1:
+        raise ValueError("Context limit must be positive")
     bounded_limit = min(limit or settings.default_limit, settings.max_limit)
     bounded_chars = min(max_chars or settings.max_context_chars, settings.max_context_chars)
+    candidate_limit = max(20, bounded_limit * 4)
     filters: list[str] = []
-    values: list[Any] = [vector_literal(embedding)]
+    values: list[Any] = [vector_literal(embedding), query]
     if repository:
         filters.append("repository = %s")
         values.append(repository)
@@ -188,20 +209,53 @@ def search_chunks(
         values.append(branch)
     if path_prefix:
         filters.append("path LIKE %s")
-        values.append(path_prefix.replace("%", "\\%").replace("_", "\\_") + "%")
+        values.append(path_prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%")
     if exact_path is not None:
         filters.append("path = %s")
         values.append(exact_path)
     where = "WHERE " + " AND ".join(filters) if filters else ""
-    values.extend([vector_literal(embedding), bounded_limit])
+    values.extend([candidate_limit, query_mode == "hybrid", candidate_limit,
+                   RRF_K, RRF_K, bounded_limit])
 
-    query = f"""
-        SELECT id, repository, branch, commit_hash, path, language, symbol_name,
+    sql = f"""
+        WITH search_input AS (
+            SELECT %s::vector AS embedding, plainto_tsquery('simple', %s) AS keywords
+        ), scoped AS NOT MATERIALIZED (
+            SELECT * FROM source_chunks {where}
+        ), semantic_candidates AS MATERIALIZED (
+            SELECT id, embedding <=> (SELECT embedding FROM search_input) AS distance
+            FROM scoped
+            -- Keep the index-ordered pool distance-only. A secondary id sort
+            -- here can consume unbounded equal-distance groups before LIMIT.
+            ORDER BY embedding <=> (SELECT embedding FROM search_input)
+            LIMIT %s
+        ), semantic AS (
+            -- Deterministic ties apply only after candidate materialization.
+            SELECT id, row_number() OVER (ORDER BY distance, id) AS position
+            FROM semantic_candidates
+        ), lexical_candidates AS MATERIALIZED (
+            SELECT id, ts_rank_cd(search_vector, (SELECT keywords FROM search_input)) AS rank
+            FROM scoped
+            WHERE %s AND search_vector @@ (SELECT keywords FROM search_input)
+            ORDER BY rank DESC, id
+            LIMIT %s
+        ), lexical AS (
+            SELECT id, row_number() OVER (ORDER BY rank DESC, id) AS position
+            FROM lexical_candidates
+        ), fused AS (
+            SELECT coalesce(semantic.id, lexical.id) AS id,
+                   semantic.position AS semantic_rank, lexical.position AS lexical_rank,
+                   coalesce(1.0 / (%s + semantic.position), 0) +
+                   coalesce(1.0 / (%s + lexical.position), 0) AS relevance
+            FROM semantic FULL OUTER JOIN lexical USING (id)
+        )
+        SELECT scoped.id, repository, branch, commit_hash, path, language, symbol_name,
                chunk_index, start_line, end_line, content,
-               1 - (embedding <=> %s::vector) AS similarity
-        FROM source_chunks
-        {where}
-        ORDER BY embedding <=> %s::vector
+               1 - (embedding <=> (SELECT embedding FROM search_input)) AS similarity,
+               relevance
+        FROM fused JOIN scoped USING (id)
+        ORDER BY relevance DESC, lexical_rank ASC NULLS LAST,
+                 semantic_rank ASC NULLS LAST, scoped.id
         LIMIT %s
     """
     with psycopg.connect(settings.database_url, row_factory=dict_row) as connection:
@@ -209,7 +263,7 @@ def search_chunks(
             connection.execute("SET LOCAL statement_timeout = '5s'")
             connection.execute("SET LOCAL hnsw.iterative_scan = strict_order")
             connection.execute("SET LOCAL hnsw.ef_search = 100")
-            rows = connection.execute(query, values).fetchall()
+            rows = connection.execute(sql, values).fetchall()
 
     results: list[dict[str, Any]] = []
     consumed = 0
@@ -223,6 +277,7 @@ def search_chunks(
         item = dict(row)
         item["content"] = content
         item["similarity"] = float(item["similarity"])
+        item["relevance"] = float(item["relevance"])
         results.append(item)
         consumed += len(content)
     return results

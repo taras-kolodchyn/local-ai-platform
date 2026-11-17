@@ -1,5 +1,12 @@
 # Local knowledge and persistent profiles
 
+> Historical profile design and verification. Since 2026-11-17, the default
+> stack uses only local Moyai; development/review/research A2A runtimes and
+> registrations are retired. Their data can be deleted using the explicit
+> migration in [platform operations](platform-operations.md). The old commands
+> below describe the former setup, not the current `make up` behavior. Core
+> knowledge indexing and scoped retrieval remain active.
+
 Implementation versions: LiteLLM 1.109.1, Hermes image v0.23.1, Mem0 SDK 2.2.1
 and external provider 1.3.0, PostgreSQL 17.12, pgvector 0.8.7.
 Verification date: 2026-11-16.

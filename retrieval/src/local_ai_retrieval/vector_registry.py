@@ -27,7 +27,7 @@ def list_stores(settings) -> list[dict]:
 def scoped_search(settings, scope: dict, query: str, path: str | None, limit: int) -> list[dict]:
     vector = embed_texts([query], settings, timeout=30)[0]
     try:
-        return search_chunks(settings, vector, repository=scope['repository'],
+        return search_chunks(settings, vector, query=query, repository=scope['repository'],
             branch=scope['branch'], exact_path=path, limit=limit)
     except psycopg.errors.QueryCanceled as exc:
         raise TimeoutError('Search deadline exceeded') from exc

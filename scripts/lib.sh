@@ -40,6 +40,13 @@ configure_compose_scope
 load_env() {
   [[ -f .env ]] || die ".env is missing; run make bootstrap"
   set -a
+  # Fill absent settings from repository defaults before applying .env. This
+  # matches model-config.py and prevents inherited model overrides from routing
+  # startup and shutdown to a different reference than the generated gateway.
+  if [[ -f .env.example ]]; then
+    # shellcheck disable=SC1091
+    source .env.example
+  fi
   # shellcheck disable=SC1091
   source .env
   set +a

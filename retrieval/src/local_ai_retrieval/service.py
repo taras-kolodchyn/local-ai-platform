@@ -63,6 +63,7 @@ def perform_search(request: SearchRequest) -> list[dict[str, Any]]:
             results = search_chunks(
                 SETTINGS,
                 vector,
+                query=request.query,
                 repository=request.repository,
                 branch=request.branch,
                 path_prefix=request.path_prefix,
