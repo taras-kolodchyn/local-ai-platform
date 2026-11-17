@@ -3,6 +3,7 @@
 source "$(dirname "$0")/lib.sh"
 
 bash scripts/bootstrap.sh
+load_env
 bash scripts/ensure-docker.sh
 bash scripts/pull-model.sh
 bash scripts/doctor.sh
@@ -22,9 +23,11 @@ docker compose up --detach --wait --wait-timeout 120 retrieval >/dev/null
 
 bash scripts/smoke-test.sh
 bash scripts/workspace-up.sh
+bash scripts/moyai.sh up
 
 printf '\nLiteLLM: http://127.0.0.1:4000\n'
 printf 'Grafana: http://127.0.0.1:3000\n'
 printf 'Retrieval: http://127.0.0.1:8000\n'
+printf 'Moyai: http://127.0.0.1:8787\n'
 printf 'Codex config: %s/.local/codex/config.toml\n' "$ROOT_DIR"
 printf 'Hermes config: %s/.local/hermes/config.yaml\n' "$ROOT_DIR"

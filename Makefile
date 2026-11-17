@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 .DEFAULT_GOAL := help
 
-COMPOSE := docker compose
+COMPOSE := docker compose --project-name local-ai-platform --file compose.yaml
 REPO ?=
 
 .PHONY: help doctor bootstrap pull-model up down restart logs status smoke-test test lint index reindex benchmark hermes-smoke vscode-install vscode-check vscode-smoke vscode connected-up connected-smoke connected-down clean reset configure-codex configure-hermes
@@ -21,11 +21,12 @@ pull-model: bootstrap ## Enable DMR and pull pinned Qwen artifacts
 up: ## Start the complete local stack and run smoke checks
 	@bash scripts/up.sh
 
-down: ## Stop containers without deleting data or models
-	@$(COMPOSE) down --remove-orphans
+down: ## Stop the complete stack and unload its models; preserve data and artifacts
+	@bash scripts/down.sh
 
-restart: ## Restart the container stack
-	@$(COMPOSE) restart
+restart: ## Stop and start the complete stack, including Moyai and inference
+	@$(MAKE) down
+	@$(MAKE) up
 
 logs: ## Follow service logs (metadata-only policy)
 	@$(COMPOSE) logs --follow --tail=200
@@ -108,3 +109,15 @@ workspace-smoke: ## Verify real profile execution through the gateway
 .PHONY: workspace
 workspace: ## Run PROFILE=development|review|research with a task from stdin
 	@python3 scripts/workspace.py "$(PROFILE)"
+
+.PHONY: moyai-up moyai-down moyai-status moyai-smoke
+moyai-up: up ## Compatibility alias for the complete stack startup
+
+moyai-down: ## Stop local Moyai without removing its files or history
+	@bash scripts/moyai.sh down
+
+moyai-status: ## Show the local Moyai services
+	@bash scripts/moyai.sh status
+
+moyai-smoke: ## Verify real Moyai file, shell, test and artifact workflows
+	@python3 scripts/moyai-smoke.py $(if $(filter 1,$(RESTART)),--restart,)

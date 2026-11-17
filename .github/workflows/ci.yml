@@ -33,3 +33,4 @@ jobs:
       - run: cargo test --locked --manifest-path examples/rust-service/Cargo.toml
       - run: bash -n scripts/*.sh
       - run: docker compose --env-file .env.example config --quiet
+      - run: docker compose -f compose.moyai.yaml config --quiet

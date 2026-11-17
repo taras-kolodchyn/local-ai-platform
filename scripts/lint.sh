@@ -19,7 +19,7 @@ else
   warn "shellcheck is unavailable; syntax checks still ran"
 fi
 
-python3 -m compileall -q retrieval/src retrieval/tests mcp/offline/src mcp/offline/tests execution/src execution/tests scripts/*.py
+python3 -m compileall -q retrieval/src retrieval/tests mcp/offline/src mcp/offline/tests execution/src execution/tests integrations/moyai scripts/*.py
 python3 -m json.tool observability/grafana/dashboards/local-ai-platform.json >/dev/null
 python3 -m json.tool .vscode/extensions.json >/dev/null
 python3 -m json.tool .vscode/tasks.json >/dev/null
@@ -33,6 +33,7 @@ grep -Fq 'web_search = "disabled"' .local/codex/config.toml
 grep -Fq 'enabled = false' .local/codex/config.toml
 grep -Fq 'plugins = false' .local/codex/config.toml
 docker compose config --quiet
+docker compose -f compose.moyai.yaml config --quiet
 ok "Generated Codex and Compose configuration valid"
 
 if rg -n --hidden --glob '!LICENSE' --glob '!.git/**' \

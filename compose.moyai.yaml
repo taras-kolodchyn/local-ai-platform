@@ -1,0 +1,116 @@
+name: local-ai-moyai
+
+services:
+  moyai:
+    build: ./integrations/moyai
+    image: local-ai-moyai:0.1.0
+    init: true
+    restart: unless-stopped
+    security_opt: [no-new-privileges:true]
+    read_only: true
+    tmpfs: [/tmp, /run/moyai-ssh]
+    environment:
+      DATA_DIR: /data
+      LITELLM_API_BASE: http://127.0.0.1:4000/v1
+      AGENT_MODEL: local-qwen
+      MOYAI_MODELS: local-qwen
+      MOYAI_PUBLIC_URL: http://127.0.0.1:8787
+      MOYAI_MODEL_TIMEOUT: "180"
+      TEMPORAL_ADDRESS: moyai-temporal:7233
+    volumes:
+      - moyai_data:/data
+      - ./.local/moyai/runtime-config.json:/run/moyai-config.json:ro
+      - ./.local/moyai/ssh/id_ed25519:/run/ssh-seed/id_ed25519:ro
+      - ./.local/moyai/ssh/known_hosts:/run/ssh-seed/known_hosts:ro
+    networks: [private, sandbox]
+    depends_on:
+      moyai-sandbox: {condition: service_healthy}
+      moyai-temporal: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8787/health', timeout=3)"]
+      interval: 5s
+      timeout: 4s
+      retries: 60
+      start_period: 20s
+    stop_grace_period: 40s
+    deploy:
+      resources:
+        limits: {memory: 2G, cpus: '2'}
+
+  moyai-sandbox:
+    build:
+      context: ./integrations/moyai
+      dockerfile: Dockerfile.sandbox
+    image: local-ai-moyai-sandbox:0.1.0
+    restart: unless-stopped
+    security_opt: [no-new-privileges:true]
+    read_only: true
+    tmpfs: [/tmp, /run]
+    volumes:
+      - moyai_workspace:/workspace
+      - ./.local/moyai/ssh/host_ed25519:/run/ssh-seed/host_ed25519:ro
+      - ./.local/moyai/ssh/id_ed25519.pub:/run/ssh-seed/id_ed25519.pub:ro
+    networks: [sandbox]
+    healthcheck:
+      test: [CMD, /usr/sbin/sshd, -t]
+      interval: 5s
+      timeout: 4s
+      retries: 20
+    deploy:
+      resources:
+        limits: {memory: 1G, cpus: '2'}
+
+  moyai-temporal:
+    image: temporalio/temporal:1.10.1@sha256:b228dadf9cdb6c7c02a1394b89dd76f827aac9760e458fce42f0899a10141225
+    restart: unless-stopped
+    command: [server, start-dev, --ip, 0.0.0.0, --headless, --db-filename, /data/temporal.db, --log-level, error]
+    security_opt: [no-new-privileges:true]
+    volumes: [moyai_temporal:/data]
+    networks: [private]
+    depends_on:
+      moyai-volume-init: {condition: service_completed_successfully}
+    healthcheck:
+      test: [CMD, temporal, operator, cluster, health, --address, '127.0.0.1:7233']
+      interval: 5s
+      timeout: 4s
+      retries: 30
+    deploy:
+      resources:
+        limits: {memory: 1G, cpus: '2'}
+
+  moyai-volume-init:
+    image: python:3.14.10-slim-bookworm@sha256:3fe1a0b6c2d6b2ebb572906cdabeca75aeb558c0c17db5ffefbcf8094871c32b
+    restart: 'no'
+    network_mode: none
+    read_only: true
+    command: [python, -c, "import os; os.chown('/data', 1000, 1000)"]
+    volumes: [moyai_temporal:/data]
+
+  moyai-bridge:
+    image: python:3.14.10-slim-bookworm@sha256:3fe1a0b6c2d6b2ebb572906cdabeca75aeb558c0c17db5ffefbcf8094871c32b
+    restart: unless-stopped
+    command: [python, /relay.py]
+    user: '65532:65532'
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    volumes: [./integrations/moyai/relay.py:/relay.py:ro]
+    ports: ['127.0.0.1:8787:8787']
+    networks: [private, gateway]
+    deploy:
+      resources:
+        limits: {memory: 128M, cpus: '0.5'}
+
+networks:
+  private:
+    internal: true
+  sandbox:
+    internal: true
+  gateway:
+    external: true
+    name: local-ai-platform_gateway
+
+volumes:
+  moyai_data:
+  moyai_workspace:
+  moyai_temporal:
