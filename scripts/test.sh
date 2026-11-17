@@ -2,6 +2,9 @@
 
 source "$(dirname "$0")/lib.sh"
 
+require_command cargo
+cargo --version >/dev/null || die "Cargo is unusable; install or repair the Rust toolchain"
+
 test_python=$(bash scripts/test-python.sh)
 
 venv=.local/test-venv
@@ -19,10 +22,7 @@ info "Running execution tests, including required PostgreSQL memory isolation...
 "$venv/bin/python" -m pytest execution/tests -ra
 "$venv/bin/python" -m unittest discover -s scripts/tests
 
-if command -v cargo >/dev/null 2>&1; then
-  cargo test --locked --quiet --manifest-path examples/rust-service/Cargo.toml
-else
-  warn "cargo is unavailable; Rust demo test skipped"
-fi
+info "Running required Rust demo tests..."
+cargo test --locked --quiet --manifest-path examples/rust-service/Cargo.toml
 
 ok "Unit tests passed"

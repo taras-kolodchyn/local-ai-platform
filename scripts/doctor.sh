@@ -40,9 +40,13 @@ else
   failures=$((failures + 1))
 fi
 
-for command in docker curl jq git make openssl; do
+for command in docker curl jq git make openssl cargo; do
   check "$command available" command -v "$command"
 done
+
+if command -v cargo >/dev/null 2>&1; then
+  check "Cargo usable" cargo --version
+fi
 
 if command -v docker >/dev/null 2>&1; then
   check "Docker daemon reachable" docker info
