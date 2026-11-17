@@ -18,13 +18,15 @@ class RustRequirementsTests(unittest.TestCase):
         self.root = Path(temporary.name)
         (self.root / 'scripts').mkdir()
         shutil.copy(ROOT / 'Makefile', self.root / 'Makefile')
-        for name in ('lib.sh', 'doctor.sh', 'test.sh'):
+        for name in ('lib.sh', 'doctor.sh', 'test.sh', 'model-config.py'):
             shutil.copy(ROOT / 'scripts' / name, self.root / 'scripts' / name)
+        shutil.copy(ROOT / '.env.example', self.root / '.env.example')
         self.binaries = self.root / 'bin'
         self.binaries.mkdir()
         # Exclude the host PATH so installed Cargo cannot hide a missing-tool bug.
         for name in ('awk', 'bash', 'dirname', 'make'):
             (self.binaries / name).symlink_to(shutil.which(name))
+        (self.binaries / 'python3').symlink_to(sys.executable)
         self.events = self.root / 'events.jsonl'
         self.env = os.environ | {'PATH': str(self.binaries), 'TASK_EVENTS': str(self.events)}
         self.write_executable('bin/uname', 'case "$1" in -s) printf "Darwin\\n";; '

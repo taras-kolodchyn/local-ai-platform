@@ -9,6 +9,11 @@ The platform gives local coding agents a stable OpenAI-compatible endpoint while
 
 The platform does not grant a Linux container direct Metal access. Docker Model Runner executes llama.cpp through Docker Desktop's macOS host integration and exposes it to the Compose network.
 
+Current operational changes (2026-11-17): Moyai is the single default active
+agent; Codex/Hermes remain optional clients. The former workspace A2A profiles
+are retired. Model routing is generated from resolved `.env` settings and
+retrieval combines vector and full-text search. See [platform operations](platform-operations.md).
+
 ## Component view
 
 ```mermaid
@@ -24,6 +29,7 @@ flowchart TB
 
     subgraph Compose["Docker Compose - isolated Linux networks"]
         LiteLLM["LiteLLM AI Gateway\n127.0.0.1:4000"]
+        Moyai["Local Moyai\ndefault agent + SSH sandbox + Temporal"]
         Redis["Redis response cache"]
         Postgres["PostgreSQL + pgvector"]
         Ingestion["Ingestion CLI/worker"]
@@ -36,6 +42,7 @@ flowchart TB
         Grafana["Grafana"]
 
         LiteLLM --> Redis
+        Moyai --> LiteLLM
         LiteLLM --> Postgres
         Ingestion --> LiteLLM
         Ingestion --> Postgres
@@ -82,7 +89,7 @@ sequenceDiagram
             L->>Q: OpenAI-compatible embeddings request
             Q-->>L: 1024-dimensional vector
             L-->>R: vector
-            R->>P: HNSW cosine search with metadata filters
+            R->>P: Bounded vector + full-text search with scope filters and rank fusion
             P-->>R: bounded chunks
             R-->>M: paths, metadata, excerpts
             M-->>L: tool result
@@ -103,7 +110,7 @@ flowchart LR
     Chunk --> Hash["Content + metadata hash"]
     Hash --> Embed["local-embeddings alias"]
     Embed --> Store["pgvector + metadata"]
-    Store --> Search["HNSW cosine search"]
+    Store --> Search["HNSW + full-text candidates\nreciprocal rank fusion"]
     Search --> Limit["Top-k + total-character budget"]
     Limit --> MCP["read-only retrieval MCP tool"]
 ```
@@ -160,7 +167,10 @@ working sequence.
 
 ## Extensibility
 
-Clients only know `local-qwen`, `local-embeddings`, and LiteLLM. A future Ollama or MLX-LM backend can replace DMR by changing the gateway configuration. LiteLLM also has an A2A Agent Gateway; it is deliberately deferred until an end-to-end local A2A agent is tested and protocol version 1.0 is pinned.
+Clients only know `local-qwen`, `local-embeddings`, and LiteLLM. A future Ollama
+or MLX-LM backend can replace DMR by changing the gateway configuration. Legacy
+A2A workspace registrations have been retired; future management of Moyai
+through LiteLLM requires a separately verified integration.
 
 ## Registered knowledge search
 

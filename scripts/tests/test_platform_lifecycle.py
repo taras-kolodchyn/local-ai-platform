@@ -27,9 +27,14 @@ if component == 'moyai':
 elif component == 'dependency':
     if args == ['workspace-up.sh']:
         state['workspace'] = True
+    elif args == ['scripts/reconcile-agents.py', '--stop-runtimes']:
+        state['workspace'] = False
 elif component == 'docker' and args[0] == 'compose':
     if os.getenv('COMPOSE_PROJECT_NAME', 'local-ai-platform') != 'local-ai-platform' or os.getenv('COMPOSE_FILE', '').endswith('unrelated.yaml'):
         state['unrelated_project'] = 'down' not in args
+    elif 'stop' in args:
+        if 'workspace-development' in args and 'workspace-review' in args and 'workspace-research' in args:
+            state['workspace'] = False
     elif 'down' in args:
         if os.getenv('FAIL_CORE'):
             error = 7
@@ -86,6 +91,9 @@ class PlatformLifecycleTests(unittest.TestCase):
         docker = binaries / 'docker'
         docker.write_text('#!/bin/sh\nexec "$TASK_PYTHON" "$TASK_DRIVER" docker "$@"\n')
         docker.chmod(0o755)
+        python = binaries / 'python3'
+        python.write_text('#!/bin/sh\nexec "$TASK_PYTHON" "$TASK_DRIVER" dependency "$@"\n')
+        python.chmod(0o755)
         (self.scripts / 'moyai.sh').write_text('#!/bin/sh\nexec "$TASK_PYTHON" "$TASK_DRIVER" moyai "$@"\n')
         for name in ('bootstrap.sh', 'ensure-docker.sh', 'pull-model.sh', 'doctor.sh',
                      'provision-client-key.sh', 'configure-codex.sh', 'configure-hermes.sh',
@@ -103,7 +111,7 @@ class PlatformLifecycleTests(unittest.TestCase):
     def calls(self):
         return [json.loads(line) for line in self.events.read_text().splitlines()]
 
-    def test_up_and_compatibility_alias_start_moyai_once_after_the_workspace(self):
+    def test_up_and_compatibility_alias_start_only_moyai_then_verify_the_complete_stack(self):
         for target in ('up', 'moyai-up'):
             with self.subTest(target=target):
                 self.events.write_text('')
@@ -114,10 +122,21 @@ class PlatformLifecycleTests(unittest.TestCase):
                 self.assertTrue(state['core'] and state['moyai'])
                 calls = self.calls()
                 self.assertEqual(calls.count(['moyai', 'up']), 1)
-                self.assertLess(calls.index(['dependency', 'workspace-up.sh']), calls.index(['moyai', 'up']))
+                self.assertNotIn(['dependency', 'workspace-up.sh'], calls)
+                self.assertFalse(state['workspace'])
+                self.assertLess(calls.index(['moyai', 'up']), calls.index(['dependency', 'smoke-test.sh']))
 
     def test_up_fails_when_the_required_moyai_start_fails(self):
         self.assertNotEqual(self.run_make('up', FAIL_MOYAI='1').returncode, 0)
+
+    def test_up_refreshes_gateway_configuration_even_when_its_model_environment_is_unchanged(self):
+        result = self.run_make('up')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        reloads = [call for call in self.calls() if call[:3] == ['docker', 'compose', 'up']
+                   and 'litellm' in call and '--force-recreate' in call and '--no-deps' in call]
+        self.assertEqual(len(reloads), 1)
+        self.assertLess(self.calls().index(reloads[0]),
+                        self.calls().index(['dependency', 'provision-client-key.sh']))
 
     def test_restart_uses_the_same_ordered_shutdown_and_complete_startup(self):
         result = self.run_make('restart')

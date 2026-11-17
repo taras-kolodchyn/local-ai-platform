@@ -2,6 +2,10 @@
 
 source "$(dirname "$0")/lib.sh"
 
+require_command python3
+model_configuration=$(python3 scripts/model-config.py resolve --format json)
+qwen_model=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["models"][0]["reference"])' <<< "$model_configuration")
+
 failures=0
 
 check() {
@@ -40,7 +44,7 @@ else
   failures=$((failures + 1))
 fi
 
-for command in docker curl jq git make openssl cargo; do
+for command in docker curl jq git make openssl cargo python3; do
   check "$command available" command -v "$command"
 done
 
@@ -58,7 +62,7 @@ fi
 free_kib=$(df -Pk . | awk 'NR == 2 {print $4}')
 free_gib=$((free_kib / 1024 / 1024))
 required_free_gib=30
-if docker model inspect ai/qwen3-coder:30B-A3B-UD-Q4_K_XL >/dev/null 2>&1; then
+if docker model inspect "$qwen_model" >/dev/null 2>&1; then
   # Once the large artifact exists, reserve space for images, volumes, indexes,
   # and normal Docker Desktop copy-on-write growth rather than its download.
   required_free_gib=12

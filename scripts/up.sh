@@ -12,6 +12,10 @@ info "Building and starting pinned Compose services..."
 docker compose up --detach --build --wait --wait-timeout 420
 ok "Container health checks passed"
 
+# Rendered file changes do not change Compose's service hash. Recreate the
+# gateway so context/description-only edits and replaced bind files are loaded.
+docker compose up --detach --force-recreate --no-deps --wait --wait-timeout 120 litellm
+
 bash scripts/provision-client-key.sh
 bash scripts/configure-codex.sh
 bash scripts/configure-hermes.sh
@@ -21,9 +25,11 @@ bash scripts/configure-hermes.sh
 docker compose restart retrieval >/dev/null
 docker compose up --detach --wait --wait-timeout 120 retrieval >/dev/null
 
-bash scripts/smoke-test.sh
-bash scripts/workspace-up.sh
+# Stop old profile containers and retire their routes. Data removal is a separate
+# explicit migration; ordinary startup keeps Moyai as the single default agent.
+python3 scripts/reconcile-agents.py --stop-runtimes
 bash scripts/moyai.sh up
+bash scripts/smoke-test.sh
 
 printf '\nLiteLLM: http://127.0.0.1:4000\n'
 printf 'Grafana: http://127.0.0.1:3000\n'

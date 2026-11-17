@@ -9,6 +9,28 @@ spec.loader.exec_module(module)
 
 
 class ProvisioningTest(unittest.TestCase):
+    def test_knowledge_refresh_preserves_unrelated_agent_grants_after_retirement(self):
+        import json
+        from unittest.mock import patch
+        updates = []
+        def request(method, route, body=None):
+            if route == '/team/list':
+                return [{'team_id': module.TEAM, 'object_permission': {
+                    'agents': ['unrelated-agent'], 'vector_stores': ['retained-store'],
+                    'mcp_servers': ['custom-readonly']}}]
+            if route == '/team/update':
+                updates.append(body['object_permission'])
+            return {}
+        with tempfile.TemporaryDirectory() as directory:
+            local = Path(directory)
+            (local / 'workspace-registry.json').write_text(json.dumps({'routes': {}, 'stores': {}}))
+            (local / 'workspace-owner-key').write_text('fixture-owner')
+            with patch.object(module, 'LOCAL', local), patch.object(module, 'gateway', return_value=request):
+                module.owner_request(request)
+        self.assertEqual(updates[0]['agents'], ['unrelated-agent'])
+        self.assertEqual(updates[0]['vector_stores'], ['retained-store'])
+        self.assertIn('custom-readonly', updates[0]['mcp_servers'])
+
     def test_reconcile_twice_keeps_ids_and_existing_records(self):
         records = []
         def request(method, route, body=None):

@@ -12,7 +12,8 @@ make up
 ```
 
 The complete platform startup prepares private local credentials, then builds and
-starts Moyai after the gateway and persistent execution profiles are ready. Its
+starts Moyai after the gateway is ready. It is the single default active agent;
+the former development/review/research A2A profiles are retired. Its
 `local-ai-moyai` Compose project remains isolated for networking and storage, but
 the public `make up` / `make down` commands manage both projects together. Existing
 conversations and volumes need no migration. Initial image/package builds require
@@ -135,6 +136,10 @@ including the required PostgreSQL memory test. The local Rust demo check was
 skipped because Cargo was unavailable. Controlled replacement of a blocked Moyai
 key verified its restricted replacement scope and controller reload; repeating
 startup without changes preserved the running controller.
+
+That Cargo skip describes the 2026-11-16 run only. Cargo is now required by
+`make doctor` and `make test`; `make verify` includes the Rust tests and the
+complete Moyai acceptance/shutdown cycle. See [current operations](platform-operations.md).
 
 Upstream references: [Moyai runtime injection](https://github.com/BerriAI/moyai/blob/c375632aea66f6695b66158b5edf6ee4983dad72/native/src/moyai/runtime.py#L124),
 [native local-workspace tests](https://github.com/BerriAI/moyai/blob/c375632aea66f6695b66158b5edf6ee4983dad72/native/tests/conftest.py#L53),

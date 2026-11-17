@@ -1,5 +1,9 @@
 # Workspace verification
 
+This is historical verification of the retired development/review/research
+profiles. The current single-Moyai stack and full verification command are
+documented in [platform operations](platform-operations.md).
+
 Current Hermes v0.23.1 / Mem0 SDK 2.2.1 / provider 1.3.0 migration and verification:
 [2026-11-16 dependency report](dependency-update-2026-11-16.md#hermes-migration-verification--2026-11-16).
 The September results below remain the historical baseline.

@@ -15,7 +15,6 @@ network-level denial is required.
 make pull-model
 docker compose pull
 docker compose build retrieval
-docker compose --profile workspace build workspace-development
 docker compose -f compose.moyai.yaml pull --ignore-buildable
 docker compose -f compose.moyai.yaml build
 make vscode-install
@@ -37,8 +36,9 @@ For an auditable offline transfer, record image and model digests on the connect
 ## Offline limitations
 
 - The first model/image pull and dependency installation require connectivity.
-- Building the Hermes runtime fetches the checksum-pinned Mem0 plugin archive;
-  the installed image includes it and performs no runtime plugin installation.
+- The optional standalone Hermes client image fetches a checksum-pinned Mem0
+  plugin archive during its build. That client and the retired workspace
+  runtimes are not started by the default Moyai stack.
 - Installing or updating the VS Code Codex extension requires connectivity; selecting its Cloud execution path is not an offline run.
 - The GitHub Actions workflow is a connected CI check; it does not run the Metal-backed integration suite.
 - Connected MCP, web search, package lookup, and repository hosting are unavailable.
