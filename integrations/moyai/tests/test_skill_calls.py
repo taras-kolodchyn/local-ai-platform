@@ -80,10 +80,25 @@ class SkillCallTests(unittest.IsolatedAsyncioTestCase):
         self.workspace.phase.return_value = 'analyzing'
         request = await self.workspace.before_model_request(self.ctx, self.request)
         self.assertIn('Check both APIs', str(request.messages))
-        self.request.messages.append(ModelRequest(parts=[ToolReturnPart(SELECT_SKILLS, {'skills':[SKILL]})], run_id='root'))
-        self.assertEqual(step(), SKILL)
-        self.ctx.active_capability_ids.add(SKILL)
-        self.assertIsNone(step())
+        self.assertNotIn('maxItems', request.model_request_parameters.function_tools[0].parameters_json_schema['properties']['skills'])
+        self.ctx.messages = self.request.messages
+        self.workspace.admit_issue_skill = AsyncMock(return_value=True)
+        chosen = [SKILL, 'documentation-and-adrs']
+        selector = request.model_request_parameters.function_tools[0]
+        self.request.model_request_parameters.deferred_capability_ids.update(chosen)
+        for selection in ([], chosen):
+            args = {'skills': selection}
+            call = ToolCallPart(SELECT_SKILLS, args)
+            self.assertEqual(await self.workspace.before_tool_execute(self.ctx, call=call, tool_def=selector, args=args), args)
+            self.ctx.messages.append(ModelRequest(parts=[ToolReturnPart(SELECT_SKILLS, args)], run_id='root'))
+            for name in selection:
+                self.assertEqual(step(), name)
+                loading = await self.workspace.before_model_request(self.ctx, self.request)
+                self.assertEqual(loading.model_settings['tool_choice'], ['load_capability'])
+                self.assertEqual(loading.model_request_parameters.function_tools[0].parameters_json_schema['properties']['id']['enum'], [name])
+                self.ctx.active_capability_ids.add(name)
+            self.assertIsNone(step())
+            self.ctx.messages.pop()
 
     async def test_batch_uses_only_offered_inactive_skills_from_this_turn(self):
         self.request.messages = [ModelRequest(parts=[ToolReturnPart(SELECT_SKILLS, {'skills': [SKILL]})], run_id='root')]
