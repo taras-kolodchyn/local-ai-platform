@@ -425,6 +425,9 @@ class RepositoryBackend:
         if task['binding'].get('verification_profile') == 'rust-retry-tests':
             result['verification_contract'] = ('Add a new tests/*.rs integration target covering the issue requirements. '
                 'Preserve every original file. New tests must pass the correct implementation and detect the old ceiling.')
+            if (task.get('github_issue') or {}).get('retry_contract') == 'interleaved-extremes':
+                result['verification_contract'] += (' Check both call orders with u32::MAX on one entry point '
+                    'followed by exact small delays on the other.')
         elif task['binding'].get('verification_profile') == 'rust-retry':
             result['verification_contract'] = RUST_RETRY_CONTRACT
         if task.get('receipts'):
@@ -485,9 +488,11 @@ class RepositoryBackend:
         remaining = max(1, min(CHECK_TIMEOUT, int(task['deadline'] - time.time())))
         if not decision['dispatch']:
             return await self.status(scope)
+        contract = (task.get('github_issue') or {}).get('retry_contract')
+        options = {'retry_contract':contract} if contract else {}
         try:
             receipt = await self.guest(scope, 'check', task_id=task['task_id'], operation_id=operation,
-                                       profile=manifest['verification_profile'], timeout_seconds=remaining,
+                                       profile=manifest['verification_profile'], timeout_seconds=remaining, **options,
                                        receipt_key=self.ledger.check_key(*scope, operation))
             await self.settle(scope, operation, receipt, manifest)
         except asyncio.CancelledError:
@@ -506,7 +511,7 @@ class RepositoryBackend:
         failure_cause = None
         for command in receipt.get('commands', []):
             item = {'kind':command['kind'], 'exit_code':command['exit_code']}
-            if command['exit_code'] and command['kind'] != 'regression_counterexample' and remaining > 0:
+            if command['exit_code'] and command['kind'] not in ('regression_counterexample', 'interleaving_test') and remaining > 0:
                 diagnostics = command.get('diagnostics', [])
                 limit = min(remaining, 3000)
                 tail_clipped = False
@@ -549,6 +554,8 @@ class RepositoryBackend:
         if receipt['state'] == 'passed':
             summary['next_action'] = ('Run review_repository_documentation on this checked tree.' if github_issue else
                                       'Trusted checks passed on this tree. Call finish_repository_task now to deliver the verified patch and reports; no further check is needed without edits.')
+        elif receipt.get('failure_code') == 'extreme_interleaving':
+            summary['next_action'] = receipt['error'] + ' Update the new integration tests, then rerun checks.'
         elif clean_coverage_baseline(receipt):
             summary['next_action'] = 'The original retry policy passes. Add the requested coverage in a new tests/*.rs file.'
         elif receipt['state'] == 'failed' and checks.get('oracle_passed'):

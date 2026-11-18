@@ -368,7 +368,7 @@ class Ledger:
             if outcome in {'passed','failed'} and not (outcome == 'failed' and no_launch):
                 if receipt.get('profile') != task['binding'].get('verification_profile', 'rust-retry'):
                     raise RepositoryError('Verification profile differs from the task binding.')
-                validate_checks(receipt)
+                validate_checks(receipt, retry_contract=(task.get('github_issue') or {}).get('retry_contract'))
             elif outcome not in {'cancelled','timeout','failed'} or not (no_launch or commands_stopped(receipt)):
                 raise RepositoryError('Verification has no authenticated stopped outcome.')
             self._settle(db, task, operation)
@@ -571,7 +571,7 @@ def commands_stopped(receipt):
                     for cmd in commands))
 
 
-def validate_checks(receipt):
+def validate_checks(receipt, *, retry_contract=None):
     checks = receipt.get('checks', {})
     commands = receipt.get('commands', [])
     if (receipt.get('profile') not in ('rust-retry', 'rust-retry-tests') or checks.get('protected_unchanged') is not True
@@ -581,6 +581,16 @@ def validate_checks(receipt):
                    or type(cmd.get('exit_code')) is not int for cmd in commands)):
         raise RepositoryError('Trusted verification commands or protected-tree evidence missing.')
     if receipt['state'] == 'passed':
+        if retry_contract == 'interleaved-extremes' or 'extreme_interleaving_detected' in checks:
+            triggers = {'bounded_backoff_ms','legacy_retry_delay_ms'}
+            added = {(p['path'],p['test_name']) for p in checks.get('regression_proofs', [])}
+            builds = {c.get('trigger') for c in commands if c.get('kind') == 'interleaving_build' and c['exit_code'] == 0}
+            seen = {c.get('trigger') for c in commands if c.get('kind') == 'interleaving_test' and c['exit_code'] == 101
+                    and c.get('native_completed') is True and len(c.get('test_names', [])) == 1
+                    and (c.get('test_path'),c['test_names'][0]) in added
+                    and native_test_record(c.get('output',''),c['test_names'][0],101)}
+            if seen != triggers or builds != triggers or set(checks.get('extreme_interleaving_detected',[])) != triggers:
+                raise RepositoryError('Passing interleaving checks require executed regression evidence in both directions.')
         counts = ('oracle_tests_run', 'project_tests_run', 'regression_tests_added', 'regression_tests_run')
         if (receipt.get('ok') is not True or checks.get('oracle_passed') is not True
                 or checks.get('regression_counterexample_passed') is not True
@@ -594,12 +604,12 @@ def validate_checks(receipt):
 
 
 def passing_command(cmd):
-    builds = {'oracle_build','baseline_build','project_build','counterexample_build'}
+    builds = {'oracle_build','baseline_build','project_build','counterexample_build','interleaving_build'}
     if cmd.get('process_group_stopped') is not True:
         return False
     if cmd.get('kind') not in builds and cmd.get('output_truncated') is not False:
         return False
-    if cmd.get('kind') == 'regression_counterexample':
+    if cmd.get('kind') in ('regression_counterexample','interleaving_test'):
         return (type(cmd.get('exit_code')) is int and cmd['exit_code'] in (0,101)
                 and cmd.get('expected_exit_code') == cmd['exit_code']
                 and cmd.get('state') == ('failed' if cmd['exit_code'] else 'passed')
@@ -647,11 +657,14 @@ def regression_evidence_valid(checks, commands):
                     or run.get('expected_exit_code')!=expected or run.get('native_completed') is not True
                     or run.get('state')!=('failed' if expected else 'passed')):
                 return False
-            output = run.get('output','')
-            records = re.findall(r'^test ([^\n]+?) \.\.\. ([^\n]+)$',output,re.MULTILINE)
-            summaries = re.findall(r'^test result: (ok|FAILED)\. (\d+) passed; (\d+) failed; (\d+) ignored; (\d+) measured; (\d+) filtered out;',output,re.MULTILINE)
-            wanted = ('FAILED','0','1','0','0') if expected else ('ok','1','0','0','0')
-            if records != [(name,wanted[0])] or len(summaries)!=1 or summaries[0][:5]!=wanted:
+            if not native_test_record(run.get('output',''), name, expected):
                 return False
     return (detecting and all(sum(cmd.get('kind')==kind for cmd in commands)==len(proofs)
                              for kind in ('regression','regression_counterexample')))
+
+
+def native_test_record(output, name, expected):
+    records = re.findall(r'^test ([^\n]+?) \.\.\. ([^\n]+)$',output,re.MULTILINE)
+    summaries = re.findall(r'^test result: (ok|FAILED)\. (\d+) passed; (\d+) failed; (\d+) ignored; (\d+) measured; (\d+) filtered out;',output,re.MULTILINE)
+    wanted = ('FAILED','0','1','0','0') if expected else ('ok','1','0','0','0')
+    return records == [(name,wanted[0])] and len(summaries) == 1 and summaries[0][:5] == wanted

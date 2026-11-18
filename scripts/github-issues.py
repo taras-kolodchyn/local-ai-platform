@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'integrations/moyai'))
 from github_app import AppError, Installation, request as app_request
 from client import MoyaiClient
-from github_issue import ISSUES, REPO, atomic_json, issue_number
+from github_issue import ISSUES, REPO, atomic_json, issue_number, issue_scope
 from repository_backend import bounded_read, canonical, coverage_path, editable
 from repository_ledger import ARTIFACT_PATHS, approved_review, baseline_established, clean_coverage_baseline, validate_checks, verify_artifact
 
@@ -126,9 +126,12 @@ def verify_documentation_review(task, report, patch):
 def verified_patch(client, job):
     session = job['session']
     task = client.request(f'/api/sessions/{session}/repository-task')
+    scope = issue_scope(job['number'], job['turn'], job['issue'], job['binding'])
+    if job.get('pr') and 'retry_contract' not in (task.get('github_issue') or {}):
+        scope.pop('retry_contract', None)  # Read-only recovery of a previously published draft.
     require(task['phase'] == 'completed' and not task['pending'] and baseline_established(task)
             and task['binding'] == job['binding']
-            and task['github_issue'] == {'number':job['number'], 'turn':job['turn']},
+            and task['github_issue'] == scope,
             'The finished native task does not match this issue and pinned source.')
     bodies = []
     for path in ARTIFACT_PATHS:
@@ -157,7 +160,7 @@ def verified_patch(client, job):
                 'Tests-only publication requires a verified clean original implementation.')
     if task.get('documentation_reviews') or not job.get('pr'):
         verify_documentation_review(task, report, patch)
-    validate_checks(receipt)
+    validate_checks(receipt, retry_contract=scope.get('retry_contract'))
     return patch, result['verified_tree'], receipt['checks']
 
 
