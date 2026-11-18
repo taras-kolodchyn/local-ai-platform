@@ -118,6 +118,7 @@ class GuestTests(unittest.TestCase):
         result = self.runner.run_process([sys.executable, '-c', 'print("ok")'], self.temp_path,
                                          dict(os.environ), 1, state, settle=False)
         self.assertEqual(result['state'], 'passed')
+        self.assertEqual(result['descendants_stopped'], sys.platform == 'linux')
         self.assertEqual(json.loads(state.read_text())['state'], 'running')
 
     def test_cancel_before_process_start_is_recorded(self):
@@ -416,6 +417,11 @@ class GuestTests(unittest.TestCase):
             return argv,dict(os.environ)
         with mock.patch.object(self.runner,'command',side_effect=command):
             reply=self.request('check',operation_id='later-launch-error',task_id='task',profile='rust-retry',timeout_seconds=2,receipt_key='e'*64)
+        if sys.platform != 'linux':
+            self.assertEqual(reply['state'], 'unknown')
+            self.assertFalse(reply['processes_stopped'])
+            self.assertEqual(len(calls), 1)
+            return
         self.assertEqual(reply['state'],'failed')
         self.assertFalse(reply['no_process_started'])
         self.assertTrue(reply['processes_stopped'])
@@ -465,8 +471,8 @@ class GuestTests(unittest.TestCase):
                 ledger.imported('session','authority',tree)
                 ledger.start_check('session','authority','baseline',tree)
                 task=ledger.status('session','authority')['task_id']
-                baseline={'ok':False,'state':'failed','task_id':task,'operation_id':'baseline','tree_hash':tree,'profile':'rust-retry',
-                          'commands':[{'kind':'baseline_probe','argv':['/operator/probe'],'exit_code':101,'process_group_stopped':True,'pipe_drained':True,
+                baseline={'ok':False,'state':'failed','task_id':task,'operation_id':'baseline','tree_hash':tree,'profile':'rust-retry','processes_stopped':True,
+                          'commands':[{'kind':'baseline_probe','argv':['/operator/probe'],'exit_code':101,'process_group_stopped':True,'descendants_stopped':True,'pipe_drained':True,
                                        'output':'legacy_large_attempt_obeys_documented_ceiling ... FAILED\nleft: 60000\nright: 30000'}],
                           'checks':{'protected_unchanged':True,'tree_unchanged':True,'verification_inputs_unchanged':True,'baseline_policy_violation':True}}
                 baseline=self.guest.sign_receipt(baseline,ledger.check_key('session','authority','baseline'))
@@ -483,6 +489,11 @@ class GuestTests(unittest.TestCase):
                 with mock.patch.object(self.runner,'command',side_effect=command):
                     receipt=self.request('check',operation_id=operation,task_id=task,profile='rust-retry',timeout_seconds=2,
                                          receipt_key=ledger.check_key('session','authority',operation))
+                if prior and sys.platform != 'linux':
+                    self.assertEqual(receipt['state'], 'unknown')
+                    self.assertFalse(receipt['processes_stopped'])
+                    self.assertEqual(len(calls), 1)
+                    continue
                 self.assertEqual(receipt['state'],'failed')
                 self.assertEqual(len(receipt['commands']),int(prior))
                 self.assertEqual(len(receipt['launch_errors']),1)
@@ -607,21 +618,141 @@ class GuestTests(unittest.TestCase):
         path.unlink(); path.write_bytes(b'x'*21)
         with self.assertRaises(ValueError): self.guest.read_regular(path, 20)
 
-    def test_held_pipe_cleanup_has_independent_deadline(self):
+    def test_missing_output_eof_has_independent_deadline(self):
         state = self.temp_path/'held.json'
         state.write_text(json.dumps({'state':'running'}))
-        pidfile = self.temp_path/'child.pid'
-        code = 'import os,time; child=os.fork(); '+repr(str(pidfile))+''
-        code = "import os,time\nchild=os.fork()\nif child==0:\n os.setsid(); time.sleep(3)\nelse:\n open("+repr(str(pidfile))+",'w').write(str(child)); time.sleep(20)"
         start = time.monotonic()
-        reply = self.runner.run_process([sys.executable,'-c',code], self.temp_path, dict(os.environ), .1, state)
-        try:
-            self.assertLess(time.monotonic()-start, 1.5)
-            self.assertEqual(reply['state'], 'unknown')
-        finally:
-            if pidfile.exists():
-                try: os.kill(int(pidfile.read_text()), signal.SIGKILL)
-                except ProcessLookupError: pass
+        selector = self.guest.selectors.DefaultSelector()
+        def no_events(delay):
+            time.sleep(delay)
+            return []
+        with mock.patch.object(selector, 'select', side_effect=no_events), mock.patch.object(self.guest.selectors, 'DefaultSelector', return_value=selector):
+            reply = self.runner.run_process([sys.executable,'-c','pass'], self.temp_path, dict(os.environ), .1, state)
+        self.assertLess(time.monotonic()-start, 1.6)
+        self.assertEqual(reply['state'], 'unknown')
+        self.assertFalse(reply['pipe_drained'])
+
+    @unittest.skipUnless(sys.platform == 'linux', 'requires Linux subreaper and pidfd')
+    def test_command_scope_reaps_worker_and_leaves_concurrent_command_running(self):
+        from concurrent.futures import ThreadPoolExecutor
+        ready = self.temp_path/'ready'
+        release = self.temp_path/'release'
+        waiting = ('import pathlib,sys,time\nready,release=map(pathlib.Path,sys.argv[1:])\n'
+                   'ready.touch()\nwhile not release.exists(): time.sleep(.01)\nprint("finished")')
+        state_a = self.temp_path/'a.json'
+        state_b = self.temp_path/'b.json'
+        for state in (state_a, state_b):
+            state.write_text('{"state":"running"}')
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            concurrent = executor.submit(self.runner.run_process, [sys.executable,'-c',waiting,str(ready),str(release)],
+                                         self.temp_path, dict(os.environ), 5, state_b)
+            deadline = time.monotonic() + 2
+            while not ready.exists() and time.monotonic() < deadline:
+                time.sleep(.01)
+            self.assertTrue(ready.exists())
+            try:
+                launch_worker = 'import subprocess; print(subprocess.Popen(["/bin/sleep","4"]).pid)'
+                result = self.runner.run_process([sys.executable, '-c', launch_worker], self.temp_path,
+                                                 dict(os.environ), 3, state_a)
+                self.assertEqual(result['state'], 'passed')
+                self.assertTrue(self.guest.command_stopped(result))
+                self.assertFalse(Path('/proc', result['output'].strip()).exists())
+                self.assertFalse(concurrent.done())
+            finally:
+                release.touch()
+            other = concurrent.result(timeout=2)
+            self.assertTrue(self.guest.command_stopped(other))
+            self.assertEqual(other['output'].strip(), 'finished')
+
+    @unittest.skipUnless(sys.platform == 'linux', 'requires Linux subreaper and pidfd')
+    def test_timeout_and_cancel_reap_real_workers_before_return(self):
+        from concurrent.futures import ThreadPoolExecutor
+        import select
+        launch = ('import pathlib,subprocess,sys\n'
+                  'worker=subprocess.Popen(["/bin/sleep","6"])\n'
+                  'pathlib.Path(sys.argv[1]).write_text(str(worker.pid))\nworker.wait()')
+        for reason in ('timeout', 'cancelled'):
+            with self.subTest(reason=reason), ThreadPoolExecutor(max_workers=1) as executor:
+                state = self.temp_path/(reason+'.json')
+                state.write_text('{"state":"running"}')
+                worker = self.temp_path/(reason+'.pid')
+                future = executor.submit(self.runner.run_process, [sys.executable, '-c', launch, str(worker)],
+                                         self.temp_path, dict(os.environ), 1.5 if reason == 'timeout' else 5, state)
+                deadline = time.monotonic() + 1
+                while (not worker.exists() or not worker.stat().st_size) and time.monotonic() < deadline:
+                    time.sleep(.01)
+                pid = int(worker.read_text())
+                descriptor = os.pidfd_open(pid)
+                self.addCleanup(os.close, descriptor)
+                if reason == 'cancelled':
+                    state.with_suffix('.cancel').touch()
+                result = future.result(timeout=3)
+                self.assertEqual(result['state'], reason)
+                self.assertTrue(self.guest.command_stopped(result))
+                self.assertTrue(select.select([descriptor], [], [], 0)[0])
+                self.assertFalse(Path('/proc', str(pid)).exists())
+
+    @unittest.skipUnless(sys.platform == 'linux', 'requires Linux subreaper and pidfd')
+    def test_loss_of_guest_owner_stops_its_worker(self):
+        import select
+        state = self.temp_path/'owner.json'
+        state.write_text('{"state":"running"}')
+        worker_file = self.temp_path/'worker.pid'
+        run = ('import os,sys\nfrom pathlib import Path\nsys.path.insert(0,sys.argv[1])\n'
+               'from repository_guest import Guest\n'
+               'Guest().run_process([sys.executable,"-c",sys.argv[2],sys.argv[3]],Path.cwd(),dict(os.environ),8,Path(sys.argv[4]))')
+        worker = ('import os,sys,time\nfrom pathlib import Path\n'
+                  'Path(sys.argv[1]).write_text(str(os.getpid()))\ntime.sleep(6)')
+        with subprocess.Popen([sys.executable,'-B','-c',run,str(GUEST.parent),worker,str(worker_file),str(state)]) as owner:
+            try:
+                deadline = time.monotonic() + 2
+                while not worker_file.exists() and time.monotonic() < deadline:
+                    time.sleep(.01)
+                self.assertTrue(worker_file.exists())
+                worker_pid = int(worker_file.read_text())
+                worker_fd = os.pidfd_open(worker_pid)
+                self.addCleanup(os.close, worker_fd)
+            finally:
+                owner.kill()
+            owner.wait(timeout=1)
+            self.assertTrue(select.select([worker_fd], [], [], 2)[0])
+        self.assertFalse(json.loads(state.read_text())['processes_stopped'])
+
+    @unittest.skipUnless(sys.platform == 'linux', 'requires Linux command supervisor')
+    def test_missing_supervisor_report_fences_operation_and_scratch(self):
+        import shutil
+        self.imported()
+        oracles = self.temp_path/'oracles'
+        shutil.copytree(ROOT/'integrations/moyai/oracles', oracles)
+        for name in ('Verifier.lock','Baseline.lock'):
+            (oracles/name).write_text('test-only lock')
+        self.runner.oracles = oracles
+        self.guest.TRUSTED_CWD = self.temp_path
+        with mock.patch.object(self.guest, '__file__', str(self.temp_path/'missing'/'guest.py')):
+            reply = self.request('check', operation_id='lost-supervisor', task_id='task',
+                                 profile='rust-retry', timeout_seconds=2, receipt_key='e'*64)
+        self.assertEqual(reply['state'], 'unknown')
+        self.assertFalse(reply['no_process_started'])
+        self.assertFalse(reply['processes_stopped'])
+        self.assertEqual(reply['commands'], [])
+        directory = self.temp_path/CONVERSATION
+        self.assertTrue((directory/'.repository-state/builds/lost-supervisor').is_dir())
+        with self.assertRaises(ValueError):
+            self.runner.recover_scratch(directory)
+
+    @unittest.skipUnless(sys.platform == 'linux', 'requires Linux wait flags')
+    def test_empty_or_unreadable_child_listing_cannot_certify_cleanup(self):
+        spec = importlib.util.spec_from_file_location('supervisor', GUEST.with_name('command_supervisor.py'))
+        supervisor = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(supervisor)
+        command = mock.Mock()
+        listing = mock.Mock()
+        listing.read_bytes.side_effect = [OSError('temporary read error'), b'', b'', b'']
+        with mock.patch.object(supervisor, 'CLEANUP_SECONDS', 1), mock.patch.object(supervisor, 'CHILDREN', listing), \
+             mock.patch.object(supervisor.time, 'monotonic', side_effect=[0, .1, .5, 1.1]), \
+             mock.patch.object(supervisor.os, 'waitpid', return_value=(0, 0)):
+            self.assertFalse(supervisor.stop_children(command))
+        self.assertEqual(listing.read_bytes.call_count, 2)
 
     def test_check_rejects_protected_metadata_change_before_execution(self):
         project = self.imported()

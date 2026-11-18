@@ -171,6 +171,26 @@ def delete_snapshot(settings: Settings, repository: str, branch: str) -> int:
     return int(deleted or 0)
 
 
+def _chunk_scope(
+    fingerprint: str | None, generation_id: str | None = None,
+) -> tuple[list[str], list[str]]:
+    if generation_id:
+        filters = ["generation_id = %s"]
+        values = [generation_id]
+    else:
+        filters = ["""(EXISTS (SELECT 1 FROM repository_generations g
+            WHERE g.id = source_chunks.generation_id AND g.active)
+            OR (generation_id = 'legacy' AND NOT EXISTS
+                (SELECT 1 FROM repository_generations g WHERE g.repository = source_chunks.repository
+                 AND g.branch = source_chunks.branch AND g.active)))"""]
+        values = []
+    # Offline SQL diagnostics can search without a configured embedding identity.
+    if fingerprint is not None:
+        filters.append("metadata->>'embedding_fingerprint' = %s")
+        values.append(fingerprint)
+    return filters, values
+
+
 def search_chunks(
     settings: Settings,
     embedding: list[float],
@@ -208,23 +228,11 @@ def search_chunks(
     bounded_limit = min(limit or settings.default_limit, settings.max_limit)
     bounded_chars = min(max_chars or settings.max_context_chars, settings.max_context_chars)
     candidate_limit = max(20, bounded_limit * 4)
-    filters: list[str] = []
-    values: list[Any] = [vector_literal(embedding), query]
-    if generation_id:
-        filters.append("generation_id = %s")
-        values.append(generation_id)
-    else:
-        filters.append("""(EXISTS (SELECT 1 FROM repository_generations g
-            WHERE g.id = source_chunks.generation_id AND g.active)
-            OR (generation_id = 'legacy' AND NOT EXISTS
-                (SELECT 1 FROM repository_generations g WHERE g.repository = source_chunks.repository
-                 AND g.branch = source_chunks.branch AND g.active)))""")
+    filters, scope_values = _chunk_scope(compatible_fingerprint, generation_id)
+    values: list[Any] = [vector_literal(embedding), query, *scope_values]
     if snapshot_id:
         filters.append("snapshot_id = %s")
         values.append(snapshot_id)
-    if compatible_fingerprint is not None:
-        filters.append("metadata->>'embedding_fingerprint' = %s")
-        values.append(compatible_fingerprint)
     if repository:
         filters.append("repository = %s")
         values.append(repository)
@@ -237,7 +245,7 @@ def search_chunks(
     if exact_path is not None:
         filters.append("path = %s")
         values.append(exact_path)
-    where = "WHERE " + " AND ".join(filters) if filters else ""
+    where = "WHERE " + " AND ".join(filters)
     values.extend([candidate_limit, query_mode == "hybrid", candidate_limit,
                    RRF_K, RRF_K, bounded_limit])
 
@@ -308,14 +316,18 @@ def search_chunks(
 
 
 def get_chunk(settings: Settings, chunk_id: int) -> dict[str, Any] | None:
+    from .ingestion import embedding_fingerprint
+
+    fingerprint = embedding_fingerprint(settings, settings.embedding_artifact_id)
+    filters, values = _chunk_scope(fingerprint)
     with psycopg.connect(settings.database_url, row_factory=dict_row) as connection:
         row = connection.execute(
-            """
+            f"""
             SELECT id, repository, branch, commit_hash, snapshot_id, generation_id, metadata, path, language, symbol_name,
                    chunk_index, start_line, end_line, content
-            FROM source_chunks WHERE id = %s
+            FROM source_chunks WHERE id = %s AND {' AND '.join(filters)}
             """,
-            (chunk_id,),
+            [chunk_id, *values],
         ).fetchone()
     return dict(row) if row else None
 
@@ -402,19 +414,9 @@ def activate_generation(settings: Settings, generation_id: str) -> None:
 
 
 def compatible_scope_exists(settings: Settings, fingerprint: str, *, repository=None, branch=None, generation_id=None) -> bool:
-    # Unknown legacy provenance is intentionally excluded from inference-backed
-    # searches. Direct vector SQL diagnostics can still inspect legacy fixtures.
-    filters = ["metadata->>'embedding_fingerprint' = %s"]
-    values = [fingerprint]
-    if generation_id:
-        filters.append('generation_id = %s')
-        values.append(generation_id)
-    else:
-        filters.append("""(EXISTS (SELECT 1 FROM repository_generations g
-            WHERE g.id=source_chunks.generation_id AND g.active)
-            OR (generation_id='legacy' AND NOT EXISTS
-                (SELECT 1 FROM repository_generations g WHERE g.repository=source_chunks.repository
-                 AND g.branch=source_chunks.branch AND g.active)))""")
+    if not fingerprint:
+        return False
+    filters, values = _chunk_scope(fingerprint, generation_id)
     for field, value in [('repository', repository), ('branch', branch)]:
         if value is not None:
             filters.append(field + ' = %s')

@@ -14,7 +14,9 @@ def test_mounted_transport_lists_and_calls_tools(monkeypatch):
     with TestClient(service.app, base_url="http://127.0.0.1:8000", headers=headers) as client:
         response = client.post("/mcp/", json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
         assert response.status_code == 200
-        assert {tool["name"] for tool in response.json()["result"]["tools"]} == {"search_code", "get_chunk"}
+        schemas = {tool["name"]: tool["inputSchema"] for tool in response.json()["result"]["tools"]}
+        assert set(schemas) == {"search_code", "get_chunk"}
+        assert set(schemas["get_chunk"]["properties"]) == {"chunk_id"}
         response = client.post("/mcp/", json={
             "jsonrpc": "2.0", "id": 2, "method": "tools/call",
             "params": {"name": "get_chunk", "arguments": {"chunk_id": 1}},

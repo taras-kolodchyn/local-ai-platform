@@ -19,6 +19,7 @@ import re
 import selectors
 import shutil
 import signal
+import socket
 import stat
 import subprocess
 import sys
@@ -483,6 +484,88 @@ def test_count(output):
     return sum(int(n) for n in re.findall(r'test result: ok\. (\d+) passed;', output))
 
 
+def command_stopped(result):
+    return isinstance(result, dict) and all(
+        result.get(key) is True for key in ('process_group_stopped', 'descendants_stopped', 'pipe_drained'))
+
+
+class CommandScope:
+    """The production guest delegates lifetime ownership to a distinct Linux process."""
+
+    def __init__(self, argv, cwd, env):
+        self.argv = argv
+        self.channel = None
+        self.launched = None
+        self.exit_code = None
+        self.launch_error = None
+        self.descendants_stopped = False
+        self.group_stopped = False
+        options = dict(cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                       stdin=subprocess.DEVNULL, start_new_session=True)
+        if sys.platform == 'linux':
+            channel, peer = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+            try:
+                supervisor = Path(__file__).resolve().with_name('command_supervisor.py')
+                self.process = subprocess.Popen([sys.executable, '-I', supervisor, str(peer.fileno()), *argv],
+                                                pass_fds=(peer.fileno(),), **options)
+                self.channel = channel
+            except BaseException:
+                channel.close()
+                raise
+            finally:
+                peer.close()
+        else:
+            # Host-side output/diagnostic tests use macOS. Process groups
+            # there provide no equivalent descendant-absence attestation.
+            self.process = subprocess.Popen(argv, **options)
+            self.launched = True
+
+    def stop(self, identity):
+        if self.channel is not None:
+            try:
+                self.channel.shutdown(socket.SHUT_WR)
+            except OSError:
+                pass  # finish() still requires a complete supervisor report.
+        elif same_incarnation(identity):
+            try:
+                os.killpg(self.process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+    def finish(self, identity):
+        self.stop(identity)
+        try:
+            status = self.process.wait(timeout=1)
+            if self.channel is None:
+                self.exit_code = status
+                deadline = time.monotonic() + .3
+                while Guest._alive(self.process.pid) and time.monotonic() < deadline:
+                    time.sleep(.01)
+                self.group_stopped = not Guest._alive(self.process.pid)
+                return
+            if status != 0:
+                return
+            self.channel.setblocking(False)
+            report = json.loads(self.channel.recv(4096))
+            if isinstance(report, dict) and isinstance(report.get('launch_error'), str):
+                self.launch_error = {'argv': self.argv, 'error': report['launch_error'], 'error_type': report['error_type']}
+                self.launched = False
+                self.group_stopped = True
+                return
+            if isinstance(report, dict) and type(report.get('exit_code')) is int:
+                self.launched = True
+                self.exit_code = report['exit_code']
+                self.descendants_stopped = report.get('descendants_stopped') is True
+                self.group_stopped = self.descendants_stopped
+        except (OSError, ValueError, KeyError, subprocess.TimeoutExpired):
+            # An inconclusive launch or cleanup keeps the operation fenced.
+            pass
+        finally:
+            if self.channel is not None:
+                self.channel.close()
+            self.process.stdout.close()
+
+
 class Guest:
     def __init__(self, workspace=Path('/workspace'), oracles=Path('/opt/local-repository/oracles')):
         self.workspace = Path(workspace)
@@ -683,7 +766,7 @@ class Guest:
 
     def run_process(self, argv, cwd, env, timeout, state_path, settle=True):
         started = time.monotonic()
-        process = None
+        scope = None
         reader = selectors.DefaultSelector()
         output = bytearray()
         seen = 0
@@ -693,7 +776,6 @@ class Guest:
         launch_error = None
         cleanup_deadline = None
         eof = False
-        group_stopped = False
         identity = None
         state = load_json(state_path)
         try:
@@ -701,8 +783,8 @@ class Guest:
             # before/after spawn. Only terminal settlement attests no live work.
             state.update(processes_stopped=False,launch_pending=True)
             save_json(state_path,state)
-            process = subprocess.Popen(argv, cwd=cwd, env=env, stdout=subprocess.PIPE,
-                                       stderr=subprocess.STDOUT, start_new_session=True)
+            scope = CommandScope(argv, cwd, env)
+            process = scope.process
             identity = incarnation(process.pid)
             if identity is None:
                 raise ValueError('unable to establish child process incarnation')
@@ -716,21 +798,11 @@ class Guest:
                 elif now-started >= timeout and outcome is None:
                     outcome = 'timeout'
                 # Start a cleanup clock independent of descriptor EOF.
-                if sys.platform=='linux':
-                    try:
-                        direct_done=os.waitid(os.P_PID,process.pid,os.WEXITED|os.WNOHANG|os.WNOWAIT) is not None
-                    except ChildProcessError:
-                        direct_done=True
-                else:
-                    direct_done=process.poll() is not None
+                direct_done = process.poll() is not None
                 if outcome is not None or direct_done:
                     if cleanup_deadline is None:
-                        cleanup_deadline = now + .5
-                    if same_incarnation(identity):
-                        try:
-                            os.killpg(process.pid, signal.SIGKILL)
-                        except ProcessLookupError:
-                            pass
+                        cleanup_deadline = now + 1
+                        scope.stop(identity)
                 for key, _ in reader.select(.02):
                     chunk = os.read(key.fileobj.fileno(), 8192)
                     if not chunk:
@@ -748,29 +820,19 @@ class Guest:
                     outcome = 'unknown'
                     break
         except (OSError, ValueError) as exc:
-            outcome = 'unknown' if process is not None else 'failed'
-            if process is None:
+            outcome = 'unknown' if scope is not None else 'failed'
+            if scope is None:
                 launch_error={'argv':argv,'error':str(exc)[:256],'error_type':type(exc).__name__}
             encoded = str(exc).encode()[:MAX_OUTPUT]
             output.extend(encoded[:max(0, MAX_OUTPUT-len(output))])
         finally:
-            if process is not None:
-                if same_incarnation(identity):
-                    try:
-                        os.killpg(process.pid, signal.SIGKILL)
-                    except ProcessLookupError:
-                        pass
-                try:
-                    process.wait(timeout=.5)
-                except subprocess.TimeoutExpired:
+            if scope is not None:
+                scope.finish(identity)
+                if scope.launched is False:
+                    launch_error = scope.launch_error
+                    outcome = 'failed'
+                elif not scope.group_stopped or not eof:
                     outcome = 'unknown'
-                stop_deadline = time.monotonic()+.3
-                while self._alive(process.pid) and time.monotonic()<stop_deadline:
-                    time.sleep(.01)
-                group_stopped = not self._alive(process.pid)
-                if not group_stopped or not eof:
-                    outcome = 'unknown'
-                process.stdout.close()
             reader.close()
         if state_path.with_suffix('.cancel').exists() and outcome != 'unknown':
             outcome = 'cancelled'
@@ -780,17 +842,23 @@ class Guest:
         tail_text = encoded_tail[-MAX_TAIL:].decode('utf-8', errors='ignore')
         tail_cut = len(encoded_tail) > MAX_TAIL
         encoded_output = output.decode('utf-8', errors='replace').encode()
-        result = {'argv': argv, 'exit_code': process.returncode if process else None,
-                  'state': outcome or ('passed' if process.returncode == 0 else 'failed'),
+        launched = scope.launched if scope else False
+        exit_code = scope.exit_code if scope else None
+        result = {'argv': argv, 'exit_code': exit_code,
+                  'state': outcome or ('passed' if exit_code == 0 else 'failed'),
                   'output': encoded_output[:MAX_OUTPUT].decode(errors='ignore'),
                   'output_truncated': seen>MAX_OUTPUT or len(encoded_output)>MAX_OUTPUT,
                   'output_tail': tail_text, 'output_tail_truncated': seen>MAX_TAIL or tail_cut,
                   'diagnostics': cargo.diagnostics if cargo is not None else [],
                   'diagnostics_truncated': cargo.truncated if cargo is not None else False,
                   'elapsed_seconds': round(time.monotonic()-started,6),
-                  'process_group': process.pid if process else None, 'process_identity': identity,
-                  'process_group_stopped': group_stopped if process else True, 'pipe_drained': eof if process else True, 'artifacts': cargo.artifacts if cargo is not None else [], 'launched':process is not None, 'launch_error':launch_error}
-        state.update(result if settle else {'state':'running','last_command':result, 'process_identity':None, 'process_group':None,'launch_pending':False,'processes_stopped':group_stopped and eof if process else True})
+                  'process_group': scope.process.pid if scope and launched is not False else None, 'process_identity': identity,
+                  'process_group_stopped': scope.group_stopped if scope else True,
+                  'descendants_stopped': scope.descendants_stopped if scope else False,
+                  'pipe_drained': eof if scope else True, 'artifacts': cargo.artifacts if cargo is not None else [],
+                  'launched': launched, 'launch_error': launch_error}
+        state.update(result if settle else {'state':'running','last_command':result, 'process_identity':None, 'process_group':None,
+                                            'launch_pending':False,'processes_stopped':launched is False or command_stopped(result)})
         save_json(state_path,state)
         return result
 
@@ -837,7 +905,10 @@ class Guest:
             receipt = load_json(operation) if operation.exists() else {}
             old_owner = receipt.get('owner_identity')
             different_run = verified_run_turnover(old_owner,current)
-            if (receipt.get('state') in {'passed','failed','timeout','cancelled'} and receipt.get('processes_stopped') is True) or different_run:
+            commands = receipt.get('commands')
+            stopped = (receipt.get('no_process_started') is True and commands == []
+                       or isinstance(commands, list) and bool(commands) and all(command_stopped(row) for row in commands))
+            if (receipt.get('state') in {'passed','failed','timeout','cancelled'} and receipt.get('processes_stopped') is True and stopped) or different_run:
                 shutil.rmtree(child)
             else:
                 # Do not accumulate unconfirmed abandoned work across retries.
@@ -897,16 +968,24 @@ class Guest:
                 raise TimeoutError('check deadline reached')
             if argv[0] in executable_hashes and hashlib.sha256(read_regular(Path(argv[0]),128*1024*1024,allow_links=True)).hexdigest()!=executable_hashes[argv[0]]:
                 raise ValueError('compiled test executable changed')
+            # A tracking or final-write error after dispatch cannot prove that
+            # nothing started, even when all earlier commands were stopped.
+            receipt.update(no_process_started=False, processes_stopped=False)
             result = self.run_process(argv,cwd,env,remaining,state_path,settle=False)
             result['kind'] = kind
-            if not result['launched']:
+            if result['launched'] is None:
+                receipt['state'] = 'unknown'
+                raise InterruptedError('command supervisor did not confirm execution and cleanup')
+            if result['launched'] is False:
                 receipt['launch_errors'].append(result['launch_error'] | {'kind':kind})
-                receipt['processes_stopped']=all(row['process_group_stopped'] and row['pipe_drained'] for row in commands)
+                receipt['no_process_started'] = not commands
+                receipt['processes_stopped'] = all(command_stopped(row) for row in commands)
                 raise ValueError('command did not start')
             commands.append(result)
-            if result['process_group'] is not None:
-                receipt['no_process_started'] = False
-            receipt['processes_stopped'] = all(row['process_group_stopped'] and row['pipe_drained'] for row in commands)
+            receipt['processes_stopped'] = all(command_stopped(row) for row in commands)
+            if not receipt['processes_stopped']:
+                receipt['state'] = 'unknown'
+                raise InterruptedError('command cleanup is unconfirmed')
             if result['state'] in {'timeout','cancelled','unknown'}:
                 receipt['state'] = result['state']
                 raise InterruptedError(result['state'])

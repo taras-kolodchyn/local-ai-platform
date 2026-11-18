@@ -13,6 +13,7 @@ os.environ.setdefault('DATABASE_URL', 'postgresql://unused:unused@127.0.0.1/unus
 
 from local_ai_retrieval import service, vector_registry
 from local_ai_retrieval.db import migrate, search_chunks, vector_literal
+from local_ai_retrieval.ingestion import embedding_fingerprint
 from local_ai_retrieval.vector_api import vector_routes
 
 QUERY_VECTOR = [1.0] + [0.0] * 1023
@@ -20,16 +21,18 @@ OPPOSITE_VECTOR = [-1.0] + [0.0] * 1023
 
 
 def add_chunk(settings, *, path='src/policy.py', symbol='policy', content='policy text',
-              embedding=None, repository='fixture', branch='main', chunk_index=0):
+              embedding=None, repository='fixture', branch='main', chunk_index=0,
+              generation='legacy', fingerprint=None):
     with psycopg.connect(settings.database_url) as connection:
         return connection.execute(
             '''INSERT INTO source_chunks
                (repository, branch, commit_hash, path, language, symbol_name,
-                chunk_index, start_line, end_line, chunk_hash, content, embedding)
-               VALUES (%s,%s,'abc',%s,'python',%s,%s,3,5,'hash',%s,%s::vector)
+                chunk_index, start_line, end_line, chunk_hash, content, embedding, generation_id, metadata)
+               VALUES (%s,%s,'abc',%s,'python',%s,%s,3,5,'hash',%s,%s::vector,%s,%s::jsonb)
                RETURNING id''',
             (repository, branch, path, symbol, chunk_index, content,
-             vector_literal(QUERY_VECTOR if embedding is None else embedding)),
+             vector_literal(QUERY_VECTOR if embedding is None else embedding), generation,
+             json.dumps({'embedding_fingerprint': fingerprint} if fingerprint is not None else {})),
         ).fetchone()[0]
 
 
@@ -182,19 +185,77 @@ def test_migration_indexes_existing_chunks_and_tracks_content_updates(db_setting
     assert search_chunks(db_settings, QUERY_VECTOR, query='original_marker', limit=1)[0]['id'] != target
 
 
-def test_http_mcp_and_scoped_vector_store_use_the_real_hybrid_search(db_settings, monkeypatch, tmp_path):
+@pytest.fixture
+def transport():
     # The SDK's session manager can start only once. Load a separate service
     # instance so this transport test cannot consume another test's lifespan.
     spec = importlib.util.spec_from_file_location('local_ai_retrieval.hybrid_service', service.__file__)
     transport = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(transport)
+    return transport
+
+
+def test_mcp_get_chunk_only_returns_chunks_visible_to_unpinned_search(db_settings, monkeypatch, transport):
+    settings = replace(db_settings, embedding_artifact_id='sha256:fixture')
+    fingerprint = embedding_fingerprint(settings, settings.embedding_artifact_id)
+    other = embedding_fingerprint(settings, 'sha256:other')
+    with psycopg.connect(settings.database_url) as connection:
+        with connection.cursor() as cursor:
+            cursor.executemany(
+                """INSERT INTO repository_generations
+                   (id, repository, branch, snapshot_id, embedding_fingerprint, manifest, active)
+                   VALUES (%s,%s,'main','snapshot',%s,'{}'::jsonb,%s)""",
+                [('current', 'fixture', fingerprint, True), ('old', 'fixture', fingerprint, False),
+                 ('incompatible', 'second', other, True)],
+            )
+
+    current = add_chunk(settings, generation='current', fingerprint=fingerprint)
+    legacy = add_chunk(settings, branch='other', fingerprint=fingerprint)
+    hidden = [
+        add_chunk(settings, generation='old', fingerprint=fingerprint),
+        add_chunk(settings, generation='unregistered', fingerprint=fingerprint),
+        add_chunk(settings, repository='second', generation='incompatible', fingerprint=other),
+        add_chunk(settings, fingerprint=fingerprint),  # Legacy row shadowed on fixture/main.
+        add_chunk(settings, repository='unknown-provenance'),
+        add_chunk(settings, repository='other-model', fingerprint=other),
+    ]
+    assert {row['id'] for row in search_chunks(settings, QUERY_VECTOR)} == {current, legacy}
+
+    monkeypatch.setattr(transport, 'SETTINGS', settings)
+    headers = {'Accept': 'application/json, text/event-stream', 'MCP-Protocol-Version': '2025-11-25'}
+    with TestClient(transport.app, base_url='http://127.0.0.1:8000', headers=headers) as client:
+        def lookup(chunk_id):
+            response = client.post('/mcp/', json={
+                'jsonrpc': '2.0', 'id': 1, 'method': 'tools/call',
+                'params': {'name': 'get_chunk', 'arguments': {'chunk_id': chunk_id}},
+            })
+            assert response.status_code == 200
+            return response.json()['result']
+
+        for chunk_id in (current, legacy):
+            result = lookup(chunk_id)
+            assert result['isError'] is False
+            row = json.loads(result['structuredContent']['result'])
+            assert (row['id'], row['content']) == (chunk_id, 'policy text')
+
+        missing = lookup(max(hidden) + 1)
+        assert missing['isError'] is True
+        for chunk_id in hidden:
+            assert lookup(chunk_id) == missing
+
+        monkeypatch.setattr(transport, 'SETTINGS', replace(settings, embedding_artifact_id=''))
+        unavailable = lookup(current)
+        assert unavailable['isError'] is True
+        assert 'policy text' not in json.dumps(unavailable)
+
+
+def test_http_mcp_and_scoped_vector_store_use_the_real_hybrid_search(db_settings, monkeypatch, tmp_path, transport):
     add_semantic_distractors(db_settings)
     target = add_chunk(db_settings, path='auth.py', symbol='resolveAccessToken',
                        content='return token', embedding=OPPOSITE_VECTOR)
     key = tmp_path / 'key'
     key.write_text('backend-test')
     settings = replace(db_settings, vector_key_file=key, embedding_artifact_id='sha256:fixture')
-    from local_ai_retrieval.ingestion import embedding_fingerprint
     with psycopg.connect(settings.database_url) as connection:
         connection.execute("UPDATE source_chunks SET metadata=jsonb_build_object('embedding_fingerprint', %s::text)",
             (embedding_fingerprint(settings, settings.embedding_artifact_id),))

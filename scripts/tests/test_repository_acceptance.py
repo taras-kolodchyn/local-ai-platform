@@ -16,12 +16,12 @@ def add_regression(receipt, name='added', counter_exit=101, path='tests/added.rs
     checks['regression_tests_added'] = checks['regression_tests_run'] = len(checks['regression_proofs'])
     if not any(c.get('kind')=='counterexample_build' and c.get('test_path')==path for c in receipt['commands']):
         receipt['commands'].append({'kind':'counterexample_build','test_path':path,'argv':['cargo','test','--no-run'],
-                                    'exit_code':0,'state':'passed','output_truncated':False,'process_group_stopped':True})
+                                    'exit_code':0,'state':'passed','output_truncated':False,'pipe_drained':True,'descendants_stopped':True,'process_group_stopped':True})
     for kind, code in (('regression',0),('regression_counterexample',counter_exit)):
         state='FAILED' if code else 'ok'
         receipt['commands'].append({'kind':kind,'test_path':path,'test_names':[name], 'argv':['/native/test','--exact',name],
                                     'exit_code':code,'expected_exit_code':code,'state':'failed' if code else 'passed',
-                                    'native_completed':True,'output_truncated':False,'process_group_stopped':True,
+                                    'native_completed':True,'output_truncated':False,'pipe_drained':True,'descendants_stopped':True,'process_group_stopped':True,
                                     'output':f'test {name} ... {state}\n\ntest result: {state}. {int(not code)} passed; {int(bool(code))} failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n'})
 
 
@@ -37,20 +37,20 @@ class RepositoryAcceptanceTests(unittest.TestCase):
     def evidence(self):
         binding = {'repository_id': 'repo_fixture', 'snapshot_id': 'snapshot', 'generation_id': 'generation'}
         baseline = {'state': 'failed', 'tree_hash': 'original', 'operation_id': 'baseline',
-                    'checks': {'baseline_policy_violation': True},
-                    'commands': [{'kind': 'baseline_probe', 'exit_code': 101,
+                    'processes_stopped': True, 'checks': {'baseline_policy_violation': True},
+                    'commands': [{'kind': 'baseline_probe', 'exit_code': 101, 'process_group_stopped': True, 'pipe_drained': True, 'descendants_stopped': True,
                                   'output': 'legacy_large_attempt_obeys_documented_ceiling ... FAILED\nleft: 60000\nright: 30000'}]}
-        final = {'state': 'passed', 'tree_hash': 'verified', 'operation_id': 'final',
+        final = {'state': 'passed', 'tree_hash': 'verified', 'operation_id': 'final', 'processes_stopped': True,
                  'checks': {'protected_unchanged': True, 'tree_unchanged': True,
                             'verification_inputs_unchanged': True, 'oracle_passed': True,
                             'regression_counterexample_passed': True,
                             'regression_proofs': []},
                  'commands': [{'kind': kind, 'exit_code': 0, 'output_truncated': False,
-                               'process_group_stopped': True}
+                               'pipe_drained': True, 'descendants_stopped': True, 'process_group_stopped': True}
                               for kind in ('oracle', 'project', 'baseline_probe')]}
         add_regression(final)
         final['commands'].append({'kind': 'project_build', 'exit_code': 0,
-                                  'output_truncated': True, 'process_group_stopped': True})
+                                  'output_truncated': True, 'pipe_drained': True, 'descendants_stopped': True, 'process_group_stopped': True})
         task = {'task_id':'task_fixture','phase': 'completed', 'binding': binding, 'original_tree': 'original',
                 'verified_tree': 'verified', 'pending': None, 'receipts': [baseline, final],
                 'citations': [{'path': 'docs/architecture-rules.md', 'start_line': 5, 'end_line': 10}],
@@ -69,6 +69,14 @@ class RepositoryAcceptanceTests(unittest.TestCase):
 
     def test_requires_real_baseline_and_current_authenticated_result(self):
         self.validator()(*self.evidence())
+
+    def test_descendant_cleanup_must_be_attested_for_every_command(self):
+        for index in (0, -1):
+            with self.subTest(receipt=index):
+                evidence = self.evidence()
+                del evidence[0]['receipts'][index]['commands'][0]['descendants_stopped']
+                with self.assertRaises(ValueError):
+                    self.validator()(*evidence)
 
     def test_github_task_requires_its_own_completed_intake_tool(self):
         evidence = self.evidence()

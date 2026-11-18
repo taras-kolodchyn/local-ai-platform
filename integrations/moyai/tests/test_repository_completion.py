@@ -14,6 +14,21 @@ from repository_workflow import RepositoryWorkflow
 
 
 class RepositoryCompletionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_verified_issue_rechecks_legacy_receipt_before_delivery(self):
+        from github_issue import ISSUES
+        command = {'process_group_stopped': True, 'pipe_drained': True}
+        task = {'phase':'verified', 'github_issue':{'number':6},
+                'receipts':[{'processes_stopped':True, 'commands':[command]}]}
+        cap, ctx = self.setup_capability(task)
+        ctx.prompt = ISSUES + '6'
+        ctx.deps.surface, ctx.deps.visibility = 'web', 'private'
+        request = SimpleNamespace(messages=[])
+        response = await cap.wrap_model_request(ctx, request_context=request, handler=AsyncMock())
+        self.assertEqual(response.parts[0].tool_name, 'run_repository_checks')
+        command['descendants_stopped'] = True
+        response = await cap.wrap_model_request(ctx, request_context=request, handler=AsyncMock())
+        self.assertEqual(response.parts[0].tool_name, 'finish_repository_task')
+
     async def test_implementing_issue_retries_premature_final_answer_with_native_limit(self):
         from github_issue import ISSUES
         from pydantic_ai.exceptions import UnexpectedModelBehavior
