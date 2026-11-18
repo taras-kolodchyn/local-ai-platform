@@ -45,6 +45,42 @@ the old workspace A2A registrations, verifies health, gateway, cache and scoped
 knowledge access, and writes optional Codex/Hermes client examples under `.local/`.
 Those client examples do not register or start additional agents in LiteLLM.
 
+`make up` registers all 25 workflows from Addy Osmani's catalog in the **Skills**
+section of the [local LiteLLM dashboard](http://127.0.0.1:4000/ui). Registration
+uses the checked-in manifest and works offline. Each catalog entry points to its
+skill directory at the [pinned MIT-licensed upstream revision](https://github.com/addyosmani/agent-skills/tree/39b723ceebf81474d0557c1fecd01eddab585563/skills).
+Installing an upstream entry from the marketplace requires access to GitHub.
+The Addy Osmani version of test-driven development appears as
+`addyosmani-test-driven-development` alongside the existing Superpowers entry.
+Moyai packages [local adaptations](integrations/moyai/skills) for planning
+(`planning-and-task-breakdown`), refactoring (`code-simplification`), and
+architecture decisions (`documentation-and-adrs`). In a new ordinary Moyai
+chat, try “Use code-simplification to review this function” and paste the
+function. The agent can load the instructions on demand without GitHub access.
+Registered repository tasks retain their phase-specific tool restrictions.
+An ordinary web chat uses one local model request to select relevant engineering
+workflows from their descriptions. Qwen loads each selected skill with a separate
+native call before answering the original request. It can select an empty list.
+
+Choose **local-qwen-analysis** in Moyai's model picker for chat-only analysis.
+It uses the same local Qwen through LiteLLM. The profile permits reading and
+listing existing files and loading the three packaged skills. The workspace
+refuses commands and file changes. Plans, proposed code and ADRs go in the
+chat. For a shortcut, start a web message with `/analysis` or end it with
+“без змін у файлах”. Moyai records the analysis profile on the turn and as the
+chat's selected model. Choose **local-qwen** to resume editing on a later turn.
+The local integration uses Pydantic AI 2.55.0's
+[read-only workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/#read-only-access).
+
+With the platform running, `python3 scripts/moyai-skills-smoke.py` sends one
+Rust design task to a new private chat and prints its URL. It checks that Qwen
+received all three packaged skills through native calls, answered in the chat,
+and left the sandbox directory and Files panel empty.
+Marketplace registration and native chat loading were checked on 2026-11-18
+with LiteLLM 1.109.1 and Pydantic AI 2.55.0. See the
+[LiteLLM marketplace API](https://docs.litellm.ai/docs/tutorials/claude_code_plugin_marketplace)
+and [Pydantic AI tool choice](https://ai.pydantic.dev/tools-advanced/#tool-choice).
+
 `make down` stops Moyai, then all platform containers (including previously
 enabled profiles), then unloads the configured coding and embedding models from
 Model Runner memory. Volumes, conversations and downloaded model artifacts stay

@@ -13,7 +13,7 @@ services:
       DATA_DIR: /data
       LITELLM_API_BASE: http://127.0.0.1:4000/v1
       AGENT_MODEL: local-qwen
-      MOYAI_MODELS: local-qwen
+      MOYAI_MODELS: local-qwen,local-qwen-analysis
       MOYAI_PUBLIC_URL: http://127.0.0.1:8787
       MOYAI_MODEL_TIMEOUT: "180"
       TEMPORAL_ADDRESS: moyai-temporal:7233

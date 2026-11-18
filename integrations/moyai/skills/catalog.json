@@ -1,0 +1,110 @@
+{
+  "source": "https://github.com/addyosmani/agent-skills",
+  "commit": "39b723ceebf81474d0557c1fecd01eddab585563",
+  "author": "Addy Osmani",
+  "skills": [
+    {
+      "name": "planning-and-task-breakdown",
+      "description": "Break a change into ordered, independently verifiable tasks."
+    },
+    {
+      "name": "code-simplification",
+      "description": "Simplify working code while preserving observable behavior."
+    },
+    {
+      "name": "documentation-and-adrs",
+      "description": "Record architecture decisions and check documentation against the implementation."
+    }
+  ],
+  "marketplace_only": [
+    {
+      "name": "api-and-interface-design",
+      "description": "Design public interfaces, type contracts and API boundaries."
+    },
+    {
+      "name": "browser-testing-with-devtools",
+      "description": "Inspect UI behavior, rendering and network activity with Chrome DevTools MCP."
+    },
+    {
+      "name": "ci-cd-and-automation",
+      "description": "Design CI pipelines, deployment checks and rollback procedures."
+    },
+    {
+      "name": "code-review-and-quality",
+      "description": "Review a change for correctness, design, maintainability and test coverage."
+    },
+    {
+      "name": "constraint-driven-development",
+      "description": "Record project quality thresholds and check changes against them."
+    },
+    {
+      "name": "context-engineering",
+      "description": "Choose repository instructions, examples and context for an engineering task."
+    },
+    {
+      "name": "debugging-and-error-recovery",
+      "description": "Diagnose failures, test a cause and verify recovery."
+    },
+    {
+      "name": "deprecation-and-migration",
+      "description": "Stage compatibility changes, migrate users and retire old interfaces."
+    },
+    {
+      "name": "doubt-driven-development",
+      "description": "Use independent review to challenge assumptions behind a technical decision."
+    },
+    {
+      "name": "frontend-ui-engineering",
+      "description": "Build and verify accessible, responsive components and user interfaces."
+    },
+    {
+      "name": "git-workflow-and-versioning",
+      "description": "Plan commits, branches, pull requests and release versions."
+    },
+    {
+      "name": "idea-refine",
+      "description": "Explore alternatives, test assumptions and define an initial project scope."
+    },
+    {
+      "name": "incremental-implementation",
+      "description": "Deliver a change in small increments with a check for each one."
+    },
+    {
+      "name": "interview-me",
+      "description": "Clarify an underspecified request through a sequence of focused questions."
+    },
+    {
+      "name": "observability-and-instrumentation",
+      "description": "Select logs, metrics, traces and alerts for production behavior."
+    },
+    {
+      "name": "performance-optimization",
+      "description": "Profile bottlenecks and verify improvements against a baseline."
+    },
+    {
+      "name": "security-and-hardening",
+      "description": "Review trust boundaries and strengthen input validation, authentication and sensitive data handling."
+    },
+    {
+      "name": "shipping-and-launch",
+      "description": "Prepare staged rollouts, monitoring and rollback plans."
+    },
+    {
+      "name": "source-driven-development",
+      "description": "Verify implementation choices against version-appropriate primary documentation."
+    },
+    {
+      "name": "spec-driven-development",
+      "description": "Define goals, boundaries and acceptance criteria before implementation."
+    },
+    {
+      "name": "test-driven-development",
+      "catalog_name": "addyosmani-test-driven-development",
+      "description": "Develop behavior through a failing test, a minimal implementation and refactoring."
+    },
+    {
+      "name": "using-agent-skills",
+      "description": "Discover available workflows and select one for the current task."
+    }
+  ]
+}

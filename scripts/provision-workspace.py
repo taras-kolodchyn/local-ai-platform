@@ -65,28 +65,39 @@ def provision_vectors(request, stores, backend_key):
 def provision_skill_catalog(request, manifest):
     """Register upstream discovery references; runtime adaptations stay local."""
     existing = {item['name']: item for item in request('GET', '/claude-code/plugins')['plugins']}
-    for entry in manifest['skills']:
-        name = entry['name']
+    entries = manifest['skills'] + manifest.get('marketplace_only', [])
+    bundled = {entry['name'] for entry in manifest['skills']}
+    for entry in entries:
+        upstream_name = entry['name']
+        name = entry.get('catalog_name', upstream_name)
+        path = 'skills/' + upstream_name
         source = {'source': 'git-subdir', 'url': manifest['source'] + '.git',
-                  'path': 'skills/' + name, 'sha': manifest['commit']}
+                  'path': path, 'sha': manifest['commit']}
         if name in existing:
             if existing[name]['source'] != source:
                 raise ValueError('Existing skill source differs; review catalog entry: ' + name)
             continue
+        if upstream_name not in bundled:
+            description = entry['description'] + ' Catalog installation retrieves the pinned upstream skill.'
+        elif 'description' in entry:
+            description = entry['description'] + ' Moyai includes an offline adaptation.'
+        else:
+            description = ('Pinned upstream workflow. Reviewed local adaptation installed for: '
+                           + ', '.join(entry['profiles']) + '. Catalog installation retrieves upstream content.')
         request('POST', '/claude-code/plugins', {
             'name': name, 'source': source, 'version': '1.0.0',
-            'description': 'Pinned upstream workflow. Reviewed local adaptation installed for: '
-                           + ', '.join(entry['profiles']) + '. Catalog installation retrieves upstream content.',
-            'author': {'name': 'Jesse Vincent'}, 'category': 'Development',
-            'homepage': manifest['source'] + '/tree/' + manifest['commit'] + '/skills/' + name,
-            'keywords': ['local-workspace', 'reviewed-workflow']})
+            'description': description,
+            'author': {'name': manifest.get('author', 'Jesse Vincent')}, 'category': 'Development',
+            'homepage': manifest['source'] + '/tree/' + manifest['commit'] + '/' + path,
+            'keywords': ['local-workspace', 'reviewed-workflow' if upstream_name in bundled else 'upstream-workflow']})
+    return len(entries)
 
 
-def skills():
-    manifest = json.loads((ROOT / 'execution/skills/manifest.json').read_text())
+def skills(manifest_path='execution/skills/manifest.json'):
+    manifest = json.loads((ROOT / manifest_path).read_text())
     admin = gateway((LOCAL / 'litellm-master-key').read_text().strip())
-    provision_skill_catalog(admin, manifest)
-    print('Three workflow sources registered in dashboard catalog')
+    count = provision_skill_catalog(admin, manifest)
+    print(f"{count} workflow sources registered in the LiteLLM Skills catalog")
 
 
 def owner_request(admin):
@@ -263,7 +274,8 @@ def routes():
 
 
 if __name__ == '__main__':
-    modes = {'vectors': vectors, 'profiles': profiles, 'routes': routes, 'skills': skills}
+    modes = {'vectors': vectors, 'profiles': profiles, 'routes': routes, 'skills': skills,
+             'moyai-skills': lambda: skills('integrations/moyai/skills/catalog.json')}
     if len(sys.argv) != 2 or sys.argv[1] not in modes:
-        raise SystemExit('Usage: provision-workspace.py vectors|profiles|routes|skills')
+        raise SystemExit('Usage: provision-workspace.py vectors|profiles|routes|skills|moyai-skills')
     modes[sys.argv[1]]()

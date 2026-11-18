@@ -28,6 +28,7 @@ docker compose up --detach --wait --wait-timeout 120 retrieval >/dev/null
 # Stop old profile containers and retire their routes. Data removal is a separate
 # explicit migration; ordinary startup keeps Moyai as the single default agent.
 python3 scripts/reconcile-agents.py --stop-runtimes
+python3 scripts/provision-workspace.py moyai-skills
 bash scripts/moyai.sh up
 bash scripts/smoke-test.sh
 

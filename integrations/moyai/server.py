@@ -8,6 +8,7 @@ import shutil
 
 import uvicorn
 
+from analysis_mode import PROFILE, install_analysis_routing
 from local_config import validate_secrets
 from moyai_workspace import SessionWorkspace
 from repository_backend import NativeFiles, RepositoryBackend, install_task_status
@@ -52,8 +53,9 @@ async def main():
         model, client = local_model(settings)
         async with client:
             runtime = Runtime(settings)
+            install_analysis_routing(runtime.database)
             workspace = SessionWorkspace(RepositoryBackend(plans=runtime.stores.plan, native_files=NativeFiles(runtime)))
-            await runtime.start(models={'local-qwen': model}, workspace=workspace)
+            await runtime.start(models={'local-qwen': model, PROFILE: model}, workspace=workspace)
             try:
                 await runtime.connect()
                 async with make_worker(runtime):

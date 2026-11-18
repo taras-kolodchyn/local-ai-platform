@@ -35,14 +35,14 @@ class MoyaiClient:
         password = Path('.local/moyai/admin-password').read_text().strip()
         self.csrf = self.request('/api/login', {'username': 'admin', 'password': password})['csrf']
 
-    def session(self, title):
+    def session(self, title, *, model='local-qwen'):
         return self.request('/api/sessions', {
-            'title': title, 'visibility': 'private', 'model': 'local-qwen',
+            'title': title, 'visibility': 'private', 'model': model,
         })['id']
 
     def turn(self, session, prompt, *, timeout=300):
         turn = self.request(f'/api/sessions/{session}/messages', {
-            'prompt': prompt, 'request_key': str(uuid.uuid4()), 'model': 'local-qwen',
+            'prompt': prompt, 'request_key': str(uuid.uuid4()),
         })['id']
         Path('.local/moyai/last-session.json').write_text(json.dumps({'session': session, 'turn': turn}) + '\n')
         print(f'Moyai turn submitted: {turn}', flush=True)

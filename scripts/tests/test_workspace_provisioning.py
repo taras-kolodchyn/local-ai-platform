@@ -1,4 +1,5 @@
 import importlib.util
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -111,6 +112,60 @@ class ProvisioningTest(unittest.TestCase):
         self.assertEqual(records[0]['source']['sha'], 'a' * 40)
         self.assertEqual(records[0]['source']['path'], 'skills/systematic-debugging')
         self.assertIn('adaptation', records[0]['description'])
+
+    def test_moyai_catalog_matches_packaged_skills_and_preserves_existing_entries(self):
+        root = module.ROOT / 'integrations/moyai/skills'
+        manifest = json.loads((root / 'catalog.json').read_text())
+        self.assertRegex(manifest['commit'], r'^[0-9a-f]{40}$')
+        self.assertEqual(sorted(skill['name'] for skill in manifest['skills']),
+                         sorted(path.parent.name for path in root.glob('*/SKILL.md')))
+        records = [{'name': 'operator-skill', 'source': {'source': 'github', 'repo': 'example/other'}}]
+
+        def request(method, route, body=None):
+            self.assertEqual(route, '/claude-code/plugins')
+            if method == 'GET':
+                return {'plugins': records}
+            self.assertEqual(method, 'POST')
+            records.append(body)
+
+        module.provision_skill_catalog(request, manifest)
+        module.provision_skill_catalog(request, manifest)
+        all_skills = manifest['skills'] + manifest['marketplace_only']
+        self.assertEqual(len({skill['name'] for skill in all_skills}), 25)
+        self.assertEqual(len(records), len(all_skills) + 1)
+        by_catalog_name = {row['name']: row for row in records[1:]}
+        for skill in all_skills:
+            row = by_catalog_name[skill.get('catalog_name', skill['name'])]
+            self.assertEqual(row['source'], {'source': 'git-subdir', 'url': manifest['source'] + '.git',
+                                             'path': 'skills/' + skill['name'], 'sha': manifest['commit']})
+            self.assertEqual(row['author']['name'], manifest['author'])
+        for row in records[1:1 + len(manifest['skills'])]:
+            name = row['name']
+            header = (root / name / 'SKILL.md').read_text().split('---\n')[1].splitlines()
+            self.assertIn('name: ' + name, header)
+        records[1]['source'] = records[0]['source'].copy()
+        with self.assertRaisesRegex(ValueError, records[1]['name']):
+            module.provision_skill_catalog(request, manifest)
+        self.assertEqual(records[1]['source'], records[0]['source'])
+
+    def test_catalog_only_entry_can_share_an_upstream_name_with_another_publisher(self):
+        existing = {'name': 'test-driven-development', 'source': {'repo': 'obra/superpowers'}}
+        records = [existing.copy()]
+        def request(method, route, body=None):
+            if method == 'GET':
+                return {'plugins': records}
+            records.append(body)
+        manifest = {'source': 'https://github.com/addyosmani/agent-skills', 'author': 'Addy Osmani',
+                    'commit': 'b' * 40, 'skills': [], 'marketplace_only': [
+                        {'name': 'test-driven-development', 'catalog_name': 'addyosmani-test-driven-development',
+                         'description': 'Drive changes with a failing test.'}]}
+        module.provision_skill_catalog(request, manifest)
+        module.provision_skill_catalog(request, manifest)
+        self.assertEqual([row['name'] for row in records], [existing['name'], 'addyosmani-test-driven-development'])
+        self.assertEqual(records[0], existing)
+        self.assertEqual(records[1]['source']['path'], 'skills/test-driven-development')
+        self.assertIn('/skills/test-driven-development', records[1]['homepage'])
+        self.assertNotIn('offline adaptation', records[1]['description'])
 
     def test_routes_associate_existing_profile_keys_with_registered_ids(self):
         import json
