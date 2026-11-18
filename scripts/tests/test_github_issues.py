@@ -60,6 +60,18 @@ class IssuePublishingTests(unittest.TestCase):
         with self.assertRaises((ValueError,subprocess.CalledProcessError)):
             publisher.reproduce(self.repo,self.base,self.manifest,bad,self.digest)
 
+    def test_coverage_publisher_only_accepts_new_integration_targets(self):
+        manifest = dict(self.manifest, verification_profile='rust-retry-tests')
+        with self.assertRaises(ValueError):
+            publisher.reproduce(self.repo, self.base, manifest, self.patch, self.digest)
+        path = 'tests/boundary.rs'
+        content = b'#[test] fn boundary() {}\n'
+        rows = manifest['files'] + [{'path':path, 'size':len(content), 'sha256':sha256(content).hexdigest()}]
+        digest = sha256(publisher.canonical(rows)).hexdigest()
+        patch = b'--- /dev/null\n+++ b/tests/boundary.rs\n@@ -0,0 +1 @@\n+' + content
+        _, entries = publisher.reproduce(self.repo, self.base, manifest, patch, digest)
+        self.assertEqual([e['path'] for e in entries], [publisher.PROJECT + '/' + path])
+
     def test_prepare_reconciles_existing_snapshot_with_active_embedding_generation(self):
         (self.repo / 'sources' / self.base).mkdir(parents=True)
         catalog = self.repo / '.local/repositories'

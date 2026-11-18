@@ -596,7 +596,7 @@ class Guest:
                   'cancel': {'operation_id'}, 'status': {'operation_id'}}
         if not isinstance(op, str) or op not in fields:
             raise ValueError('unknown operation or fields')
-        supplied = set(request) - ({'receipt_key'} if op == 'check' else {'receipt_key', 'task_id', 'tree_hash'} if op == 'cancel' else set())
+        supplied = set(request) - ({'receipt_key'} if op == 'check' else {'receipt_key', 'task_id', 'tree_hash', 'profile'} if op == 'cancel' else set())
         if supplied != {'op', 'conversation_id'} | fields[op]:
             raise ValueError('unknown operation or fields')
         conversation = request['conversation_id']
@@ -613,14 +613,17 @@ class Guest:
         key = request.get('receipt_key')
         if key is not None and (not isinstance(key, str) or not CONVERSATION.fullmatch(key)):
             raise ValueError('invalid receipt key')
-        if request['profile'] != 'rust-retry' or type(request['timeout_seconds']) not in (int, float) or not 1 <= request['timeout_seconds'] <= 300:
+        if request['profile'] not in ('rust-retry', 'rust-retry-tests') or type(request['timeout_seconds']) not in (int, float) or not 1 <= request['timeout_seconds'] <= 300:
             raise ValueError('invalid fixed profile or timeout')
         if state_path.exists():
             return self.operation(state_path)
+        manifest = load_json(directory / '.repository-state' / 'manifest.json')
+        if request['profile'] != manifest['verification_profile']:
+            raise ValueError('check profile differs from pinned manifest')
         return self.check(directory, request, state_path)
 
     def import_project(self, directory, manifest, files):
-        if not isinstance(manifest, dict) or type(manifest.get('schema_version')) is not int or manifest.get('schema_version') != 1 or manifest.get('verification_profile') != 'rust-retry':
+        if not isinstance(manifest, dict) or type(manifest.get('schema_version')) is not int or manifest.get('schema_version') != 1 or manifest.get('verification_profile') not in ('rust-retry', 'rust-retry-tests'):
             raise ValueError('unsupported manifest')
         if not isinstance(manifest.get('snapshot_id'), str) or digest({k: v for k, v in manifest.items() if k != 'snapshot_id'}) != manifest['snapshot_id']:
             raise ValueError('snapshot digest mismatch')
@@ -687,6 +690,9 @@ class Guest:
         current = {row['path']: row for row in rows}
         protected = all(current.get(name) == row for name, row in original.items() if not editable(name))
         protected = protected and all(name in original or editable(name) for name in current)
+        if manifest['verification_profile'] == 'rust-retry-tests':
+            protected = (protected and all(current.get(name) == row for name, row in original.items())
+                         and all(re.fullmatch(r'tests/[A-Za-z0-9_-]+\.rs', name) for name in current.keys() - original.keys()))
         for name in ('Cargo.toml', 'Cargo.lock'):
             protected = protected and current.get(name, {}).get('sha256') == hashlib.sha256(read_regular(self.oracles/name)).hexdigest()
         return {'ok': True, 'files': files, 'tree_hash': digest(rows), 'protected_unchanged': protected,
@@ -729,7 +735,11 @@ class Guest:
             if key is not None:
                 if not isinstance(key, str) or not CONVERSATION.fullmatch(key) or not ID.fullmatch(request.get('task_id', '')) or not CONVERSATION.fullmatch(request.get('tree_hash', '')):
                     raise ValueError('invalid cancel binding')
-                receipt.update(state='cancelled', task_id=request['task_id'], tree_hash=request['tree_hash'], profile='rust-retry', no_process_started=True, processes_stopped=True)
+                profile = request.get('profile', 'rust-retry')
+                if profile not in ('rust-retry', 'rust-retry-tests'):
+                    raise ValueError('invalid cancel profile')
+                receipt.update(state='cancelled', task_id=request['task_id'], tree_hash=request['tree_hash'],
+                               profile=profile, no_process_started=True, processes_stopped=True)
                 receipt = sign_receipt(receipt, key)
             if self.claim(path, receipt):
                 return receipt
@@ -930,7 +940,7 @@ class Guest:
                     else:
                         changed_tests[name] = sorted(added)
         receipt = {'ok':False,'state':'running','operation_id':request['operation_id'],'task_id':request['task_id'],
-                   'profile':'rust-retry','tree_hash':before['tree_hash'],'commands':[], 'checks':{},
+                   'profile':request['profile'],'tree_hash':before['tree_hash'],'commands':[], 'checks':{},
                    'owner_identity':incarnation(os.getpid()), 'no_process_started':True, 'processes_stopped':False,'launch_errors':[]}
         invalid = None
         if not before['protected_unchanged']:

@@ -24,7 +24,7 @@ def safe_relative(value):
 
 
 def validate_profile(manifest, read_source):
-    if manifest.get('verification_profile') != 'rust-retry':
+    if manifest.get('verification_profile') not in ('rust-retry', 'rust-retry-tests'):
         raise ValueError('Unsupported verification profile')
     rows = manifest.get('files')
     if not isinstance(rows, list) or not 1 <= len(rows) <= MAX_FILES:

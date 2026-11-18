@@ -124,7 +124,7 @@ def main(argv=None):
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument('--repo', type=Path)
     source.add_argument('--smoke-fixture', action='store_true', help='Use the pinned local Rust demo commit')
-    parser.add_argument('--profile', default='rust-retry', choices=['rust-retry'])
+    parser.add_argument('--profile', default='rust-retry', choices=('rust-retry', 'rust-retry-tests'))
     parser.add_argument('--catalog', default=ROOT / '.local/repositories', type=Path,
         help='Custom catalogs are supported only with --no-index')
     parser.add_argument('--unversioned', action='store_true')

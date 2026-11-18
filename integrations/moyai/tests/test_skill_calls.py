@@ -62,6 +62,29 @@ class SkillCallTests(unittest.IsolatedAsyncioTestCase):
         self.request.model_request_parameters.function_tools = []
         self.assertEqual((await self.check_response(TextPart(MARKUP))).text, MARKUP)
 
+    async def test_issue_selection_requires_the_open_receipt_from_this_owner_turn(self):
+        from github_issue import ISSUES
+        self.ctx.prompt = ISSUES + '19'
+        self.ctx.deps.visibility = 'private'
+        self.ctx.deps.surface = 'web'
+        step = lambda: self.workspace.engineering_skills.issue_step(self.ctx, self.request.messages)
+        self.assertIsNone(step())
+        opened = ToolReturnPart('open_github_issue', {'issue_data':{'title':'Add coverage','body':'Check both APIs'}},
+                                tool_call_id='github-issue-turn')
+        self.request.messages = [ModelRequest(parts=[opened], run_id='earlier')]
+        self.assertIsNone(step())
+        self.request.messages[0].run_id = 'root'
+        self.assertEqual(step(), SELECT_SKILLS)
+        self.request.model_request_parameters.function_tools.append(ToolDefinition(name=SELECT_SKILLS,
+            parameters_json_schema={'type':'object', 'properties':{'skills':{'type':'array', 'items':{'type':'string'}}}}))
+        self.workspace.phase.return_value = 'analyzing'
+        request = await self.workspace.before_model_request(self.ctx, self.request)
+        self.assertIn('Check both APIs', str(request.messages))
+        self.request.messages.append(ModelRequest(parts=[ToolReturnPart(SELECT_SKILLS, {'skills':[SKILL]})], run_id='root'))
+        self.assertEqual(step(), SKILL)
+        self.ctx.active_capability_ids.add(SKILL)
+        self.assertIsNone(step())
+
     async def test_batch_uses_only_offered_inactive_skills_from_this_turn(self):
         self.request.messages = [ModelRequest(parts=[ToolReturnPart(SELECT_SKILLS, {'skills': [SKILL]})], run_id='root')]
         forced = await self.workspace.before_model_request(self.ctx, self.request)

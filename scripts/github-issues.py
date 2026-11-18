@@ -22,8 +22,8 @@ sys.path.insert(0, str(ROOT / 'integrations/moyai'))
 from github_app import AppError, Installation, request as app_request
 from client import MoyaiClient
 from github_issue import ISSUES, REPO, atomic_json, issue_number
-from repository_backend import bounded_read, canonical, editable
-from repository_ledger import ARTIFACT_PATHS, validate_checks, verify_artifact
+from repository_backend import bounded_read, canonical, coverage_path, editable
+from repository_ledger import ARTIFACT_PATHS, baseline_established, clean_coverage_baseline, validate_checks, verify_artifact
 
 STATE = ROOT / '.local/github-issues'
 PROJECT = 'examples/rust-service'
@@ -87,7 +87,7 @@ class GitHub:
         return {'title':row['title'], 'body':body}
 
 
-def prepare(base):
+def prepare(base, profile='rust-retry'):
     require(bool(re.fullmatch('[a-f0-9]{40}', base)), 'Invalid GitHub main commit.')
     repo = STATE / 'sources' / base
     repo.parent.mkdir(exist_ok=True)
@@ -103,8 +103,9 @@ def prepare(base):
     registration = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(registration)
     catalog = ROOT / '.local/repositories'
+    prefix = 'repo_github_tests_' if profile == 'rust-retry-tests' else 'repo_github_'
     manifest = registration.sibling('repository-snapshot').prepare_snapshot(
-        repo / PROJECT, catalog, 'rust-retry', repository_id='repo_github_' + base)
+        repo / PROJECT, catalog, profile, repository_id=prefix + base)
     require(manifest['git']['head'] == base and manifest['git']['dirty'] is False
             and manifest['git']['subtree'] == PROJECT, 'GitHub checkout differs from its pinned base.')
     # The indexer reuses a completed generation only for the active embedding fingerprint.
@@ -115,7 +116,7 @@ def prepare(base):
 def verified_patch(client, job):
     session = job['session']
     task = client.request(f'/api/sessions/{session}/repository-task')
-    require(task['phase'] == 'completed' and not task['pending'] and task['baseline_failed']
+    require(task['phase'] == 'completed' and not task['pending'] and baseline_established(task)
             and task['binding'] == job['binding']
             and task['github_issue'] == {'number':job['number'], 'turn':job['turn']},
             'The finished native task does not match this issue and pinned source.')
@@ -136,6 +137,14 @@ def verified_patch(client, job):
             and report['baseline_and_attempts'] == task['receipts']
             and receipt['state'] == 'passed' and receipt['tree_hash'] == result['verified_tree'] == task['verified_tree'],
             'Trusted check receipts and delivered artifacts disagree.')
+    profile = job['binding'].get('verification_profile', 'rust-retry')
+    require(receipt.get('profile') == profile and report.get('verification_profile') == profile,
+            'The verified report differs from the granted profile.')
+    if profile == 'rust-retry-tests':
+        original = task['receipts'][0]
+        validate_checks(original)
+        require(original['tree_hash'] == result['original_tree'] and clean_coverage_baseline(original),
+                'Tests-only publication requires a verified clean original implementation.')
     validate_checks(receipt)
     return patch, result['verified_tree'], receipt['checks']
 
@@ -160,6 +169,8 @@ def reproduce(repo, base, manifest, patch, verified):
             prefix = PROJECT + '/'
             name = path.removeprefix(prefix)
             require(path.startswith(prefix) and editable(name), 'Patch includes a path outside the Rust profile.')
+            if manifest.get('verification_profile') == 'rust-retry-tests':
+                require(coverage_path(name, expected), 'Tests-only publication permits new integration tests only.')
             listing = staged('ls-files', '--stage', '-z', '--', path)
             require(listing.startswith(b'100644 ') and listing.endswith(b'\t' + path.encode() + b'\0'),
                     'Only regular non-executable source files may be published.')
@@ -175,6 +186,8 @@ def publish(api, repo, manifest, job, patch, digest, checks, save, *, installati
     number, base = job['number'], job['base']
     prefix = f'codex/app-{installation.app_id}' if installation else 'codex'
     branch = f'{prefix}/issue-{number}'
+    coverage = manifest.get('verification_profile') == 'rust-retry-tests'
+    title = 'Add Rust retry integration coverage' if coverage else 'Fix the Rust example retry ceiling'
     def refs():
         return [r['object']['sha'] for r in api(f'git/matching-refs/heads/{branch}') if r['ref'] == 'refs/heads/' + branch]
     tree, entries = reproduce(repo, base, manifest, patch, digest)
@@ -190,7 +203,7 @@ def publish(api, repo, manifest, job, patch, digest, checks, save, *, installati
         base_tree = git(repo, 'rev-parse', base + '^{tree}').decode().strip()
         remote = api('git/trees', {'base_tree':base_tree, 'tree':entries})
         require(remote['sha'] == tree, 'GitHub tree differs from the verified local index.')
-        commit = api('git/commits', {'message':f'Fix Rust retry ceiling (#{number})', 'tree':tree, 'parents':[base]})
+        commit = api('git/commits', {'message':f'{title} (#{number})', 'tree':tree, 'parents':[base]})
         require(commit['tree']['sha'] == tree and [p['sha'] for p in commit['parents']] == [base]
                 and re.fullmatch('[a-f0-9]{40}', commit['sha']), 'GitHub commit does not match the verified tree and parent.')
         job.update(tree=tree, commit=commit['sha'])
@@ -201,13 +214,15 @@ def publish(api, repo, manifest, job, patch, digest, checks, save, *, installati
     require(refs() == [head], 'The issue branch has a different head.')
     if not prs:
         sha = hashlib.sha256(patch).hexdigest()
+        baseline = ('The original project and retry oracle passed before adding tests.' if coverage
+                    else 'The failing baseline was reproduced.')
         body = (f'Closes #{number}\n\nMoyai verified the Rust example locally against base `{base}`. '
-                f'The failing baseline was reproduced. The repaired tree passed {checks["project_tests_run"]} '
+                f'{baseline} The verified tree passed {checks["project_tests_run"]} '
                 f'project tests and {checks["oracle_tests_run"]} protected tests. '
                 'The added regression suite detected the previous 60-second ceiling.\n\n'
                 f'Patch SHA-256: `{sha}`\n')
         created = api('pulls', {'head':branch, 'base':BASE, 'draft':True,
-                                'title':f'Fix the Rust example retry ceiling (#{number})', 'body':body})
+                                'title':f'{title} (#{number})', 'body':body})
         prs = [api(f'pulls/{int(created["number"])}')]
     require(len(prs) == 1, 'Expected exactly one pull request for the issue branch.')
     pr = prs[0]
@@ -256,6 +271,9 @@ class Publisher:
         def save(value):
             atomic_json(jobfile, value)
         action = request['action']
+        if job:
+            require(job['binding'].get('verification_profile', 'rust-retry') == self.binding.get('verification_profile', 'rust-retry'),
+                    'The granted profile differs from the original issue binding.')
         if action == 'open':
             if job:
                 require(job['session'] == session, 'This issue already belongs to another Moyai conversation.')
@@ -333,7 +351,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--app', action='store_true', help='Use only the private GitHub App installation.')
     parser.add_argument('--operator-issue', type=int, default=os.environ.get('MOYAI_OPERATOR_ISSUE') or None, help='Limit the selected publisher identity to one operator-approved issue.')
+    parser.add_argument('--profile', choices=('rust-retry', 'rust-retry-tests'),
+                        default=os.environ.get('MOYAI_ISSUE_PROFILE') or 'rust-retry')
     args = parser.parse_args()
+    if args.profile == 'rust-retry-tests' and not args.operator_issue:
+        parser.error('the tests-only publisher requires one operator-approved issue')
     os.chdir(ROOT)
     STATE.mkdir(exist_ok=True, parents=True, mode=0o700)
     exchange = STATE / 'exchange'
@@ -355,7 +377,7 @@ def main():
         if args.operator_issue is not None:
             github.ticket(args.operator_issue)
         print('Preparing the pinned GitHub main snapshot and its local context index…', flush=True)
-        manifest, binding = prepare(github.api('commits/main')['sha'])
+        manifest, binding = prepare(github.api('commits/main')['sha'], args.profile)
         client = MoyaiClient()
         subprocess.run([*COMPOSE, 'up', '--detach', '--no-deps', '--build', '--wait', 'moyai'], cwd=ROOT, check=True)
         client.login()
