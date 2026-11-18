@@ -45,7 +45,9 @@ async def main():
     from moyai.api import create_app
     from moyai.runtime import Runtime
     from moyai.settings import Settings
-    from moyai.worker import make_worker
+    from moyai.worker import ACTIVITIES, make_worker
+    from pydantic_ai.capabilities import CombinedCapability
+    from gateway_skills import GatewayCatalog, turn_skills
 
     async with await listen('127.0.0.1', 4000, 'moyai-bridge', 4000):
         settings = Settings(_env_file=None)
@@ -55,7 +57,10 @@ async def main():
             runtime = Runtime(settings)
             install_analysis_routing(runtime.database)
             workspace = SessionWorkspace(RepositoryBackend(plans=runtime.stores.plan, native_files=NativeFiles(runtime)))
-            await runtime.start(models={'local-qwen': model, PROFILE: model}, workspace=workspace)
+            if turn_skills not in ACTIVITIES:
+                ACTIVITIES.append(turn_skills)
+            await runtime.start(models={'local-qwen': model, PROFILE: model},
+                                workspace=CombinedCapability([workspace, GatewayCatalog()]))
             try:
                 await runtime.connect()
                 async with make_worker(runtime):

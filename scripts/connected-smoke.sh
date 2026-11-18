@@ -25,14 +25,19 @@ curl --fail --silent --show-error --max-time 120 \
   --data "$request" http://127.0.0.1:4000/github/mcp > "$raw_output"
 awk '/^data: / {sub(/^data: /, ""); print; exit}' "$raw_output" > "$output"
 
-jq -e '[.result.tools[].name] | index("github-get_me") != null and index("github-search_code") != null' "$output" >/dev/null
-if jq -er '.result.tools[].name' "$output" | rg -q '(^|_)(create|delete|merge|push|rerun|update|write)(_|$)'; then
-  die "Connected GitHub MCP exposed a write-capable tool"
-fi
+jq -e '[.result.tools[].name] | sort == [
+  "github-get_commit", "github-get_file_contents", "github-get_me", "github-issue_read",
+  "github-list_branches", "github-list_commits", "github-pull_request_read",
+  "github-search_code", "github-search_repositories"]' "$output" >/dev/null \
+  || die "Connected GitHub MCP returned an unexpected tool list"
 ok "Connected GitHub MCP exposes only the reviewed read-only tool allowlist"
 
-if docker compose logs --no-color github-mcp litellm 2>/dev/null | grep -Fq -- "$GITHUB_MCP_AUTHORIZATION"; then
-  die "GitHub authorization value appeared in service logs"
-fi
+docker compose logs --no-color github-mcp litellm | python3 -c '
+import os, sys
+token = os.environ["GITHUB_MCP_AUTHORIZATION"].removeprefix("Bearer ").encode()
+matches = sum(token in line for line in sys.stdin.buffer)
+if matches:
+    sys.exit("GitHub authorization value appeared in service logs")
+'
 ok "Connected-mode authorization value is absent from service logs"
 chmod 600 "$output" "$raw_output"

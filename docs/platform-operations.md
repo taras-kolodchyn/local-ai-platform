@@ -21,7 +21,7 @@ Ordinary startup does not delete data. An explicit one-time cleanup is available
 
 ```sh
 make up
-make purge-legacy-agents
+python3 scripts/reconcile-agents.py --purge-data
 make down
 ```
 

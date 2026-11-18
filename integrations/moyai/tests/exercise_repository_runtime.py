@@ -16,9 +16,7 @@ from repository_ledger import Ledger, RepositoryError, authentic_receipt
 from repository_probe_cleanup import ProbeEvidence, finish_probes
 
 
-async def exercise():
-    rows = json.loads(Path('/run/local-repositories/catalog.json').read_text())['repositories']
-    binding = next(row for row in rows if row['verification_profile'] == 'rust-retry')
+async def exercise(binding):
     scopes, outcomes = [], {}
     evidence = ProbeEvidence()
     original_timeout = implementation.CHECK_TIMEOUT
@@ -27,7 +25,7 @@ async def exercise():
         scope = ('runtime-probe-'+uuid.uuid4().hex,uuid.uuid4().hex)
         scopes.append(scope)
         evidence.record(scopes, 'running')
-        await backend.open(scope,binding['repository_id'])
+        await backend.open(scope, binding['repository_id'], expected_binding=binding)
         return scope
 
     try:
@@ -146,4 +144,4 @@ if __name__ == '__main__':
     if os.getuid() == 0:
         user = pwd.getpwnam('workspace')
         os.setgroups([]); os.setgid(user.pw_gid); os.setuid(user.pw_uid)
-    asyncio.run(exercise())
+    asyncio.run(exercise(json.loads(sys.argv[1])))

@@ -22,7 +22,7 @@ ledger to the same native Moyai runtime.
 ```mermaid
 flowchart TB
     subgraph Host["Apple Silicon macOS host"]
-        Codex["Codex CLI / VS Code extension"]
+        Codex["Codex CLI"]
         Hermes["Hermes Agent"]
         Other["Other OpenAI-compatible clients"]
         DMR["Docker Model Runner\nllama.cpp + Metal"]
@@ -141,7 +141,7 @@ flowchart LR
     Data --> Model
 ```
 
-Repository text and retrieved chunks are data, even when they contain phrases that look like instructions. Shell and write actions remain subject to the client sandbox and approval policy. The VS Code extension uses the same isolated Codex configuration as the CLI; selecting its Cloud path is outside the local boundary. The gateway does not make model-generated commands safe.
+Repository text and retrieved chunks are data, even when they contain phrases that look like instructions. Shell and write actions remain subject to the client sandbox and approval policy. The gateway does not make model-generated commands safe.
 
 ## Network layout
 

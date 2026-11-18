@@ -341,9 +341,16 @@ def main():
     (exchange/'requests').mkdir(exist_ok=True)
     (exchange/'requests').chmod(0o777)  # Only this directory is mounted for the nonroot controller.
     (exchange/'replies').mkdir(exist_ok=True)
+
+    def stop_publisher(signum, _frame):
+        # Make can forward TERM after the process group already received it.
+        # Let the first signal finish lease cleanup under the publisher lock.
+        signal.signal(signum, signal.SIG_IGN)
+        raise SystemExit(0)
+
     with (STATE/'publisher.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+        signal.signal(signal.SIGTERM, stop_publisher)
         github = GitHub(args.operator_issue, installation=Installation() if args.app else None)
         if args.operator_issue is not None:
             github.ticket(args.operator_issue)

@@ -93,7 +93,7 @@ Cargo's transitive dependencies were refreshed with Rust 1.100.0.
   denial, persistent memory add/recall/isolation/update/delete across fresh
   processes, all three gateway-dispatched profiles, and execution authorization.
 - A separate final `make smoke-test` passed after startup, using the scoped
-  client key. `make vscode-smoke` and `make hermes-smoke` both passed through
+  client key. The former editor integration and `make hermes-smoke` passed through
   the same local gateway with that scoped credential.
 - Final status: 14 long-running services running; every configured container
   health check healthy and all configured Prometheus scrape targets healthy.
@@ -103,8 +103,7 @@ Cargo's transitive dependencies were refreshed with Rust 1.100.0.
   Hermes image v0.23.1 with Mem0 SDK 2.2.1 and provider 1.3.0.
 - VS Code 1.146.0 / official Codex extension 26.1111.21308 / bundled Codex
   0.169.0-alpha.11.1: configuration/provider checks and an ephemeral local turn
-  passed. The extension was initially absent and was installed through
-  `make vscode-install`. Interactive autonomous editing was not tested.
+  passed before the platform retired this integration. Interactive autonomous editing was not tested.
 - No hosted CI run or authenticated connected GitHub MCP check was performed.
 
 ## Startup credential correction
@@ -195,7 +194,7 @@ OpenTelemetry 1.45.2 family, and 6.6.1 respectively.
   volume or credential identity was deleted or reset.
 
 - Final `make up` passed on the digest-pinned base, followed by separate
-  `make smoke-test`, `make vscode-smoke`, and `make hermes-smoke` passes.
+  platform, editor and Hermes smoke checks.
   Both CLI and profile paths use the same audited image. Lazy dependency
   installation is explicitly disabled in all generated Hermes templates.
 - The original synthetic fact also survived the complete final startup; it was

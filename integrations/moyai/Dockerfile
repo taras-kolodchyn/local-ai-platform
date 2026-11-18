@@ -3,10 +3,8 @@ USER root
 RUN apt-get update && apt-get install -y --no-install-recommends openssh-client \
     && rm -rf /var/lib/apt/lists/*
 COPY *.py LICENSE.upstream /opt/moyai-local/
-COPY skills /opt/moyai-local/skills
-RUN python -c "from shutil import copytree; from moyai.agent import PACKAGE_ROOT; copytree('/opt/moyai-local/skills', PACKAGE_ROOT / 'skills', dirs_exist_ok=True)"
 COPY tests /opt/moyai-local/tests
 ENV PYTHONPATH=/opt/moyai-local:/app PYDANTIC_AI_NO_BANNER=1
 RUN python /opt/moyai-local/offline_assets.py
-RUN python -m unittest discover -s /opt/moyai-local/tests
+RUN --mount=type=bind,source=skills,target=/opt/test-skill-seeds python -m unittest discover -s /opt/moyai-local/tests
 ENTRYPOINT ["python", "/opt/moyai-local/server.py"]

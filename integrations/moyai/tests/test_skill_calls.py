@@ -2,7 +2,8 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock
 
-from moyai.agent import PACKAGE_ROOT, bundled_skill_catalog
+from pydantic_ai.capabilities import CombinedCapability
+from gateway_skills import GatewaySkill
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import ModelRequest, ModelResponse, RetryPromptPart, TextPart, ToolCallPart, ToolReturnPart, UserPromptPart
@@ -27,6 +28,7 @@ class SkillCallTests(unittest.IsolatedAsyncioTestCase):
         self.ctx = SimpleNamespace(run_id='root', run_step=1, active_capability_ids=set(),
                                    deps=SimpleNamespace(root_run_id='root', turn_id='turn',
                                                         session_id='s', workspace_key='w'))
+        self.ctx.capabilities = {n: GatewaySkill(n, n, n) for n in (SKILL, 'documentation-and-adrs')}
         self.loader = ToolDefinition(name='load_capability', tool_kind='capability-load',
                                     parameters_json_schema={'type': 'object', 'properties': {'id': {'type': 'string'}},
                                                             'required': ['id'], 'additionalProperties': False})
@@ -73,6 +75,19 @@ class SkillCallTests(unittest.IsolatedAsyncioTestCase):
         self.request.messages[0].run_id = 'earlier-turn'
         self.assertIs(await self.workspace.before_model_request(self.ctx, self.request), self.request)
 
+    async def test_selection_rejects_skills_outside_the_offered_set(self):
+        self.ctx.deps.surface = 'web'
+        self.ctx.prompt = 'Plan a change.'
+        selector = ToolDefinition(name=SELECT_SKILLS)
+        self.request.model_request_parameters.function_tools = [selector, self.loader]
+        forced = await self.workspace.before_model_request(self.ctx, self.request)
+        self.assertEqual(forced.model_settings['tool_choice'], [SELECT_SKILLS])
+        for names, active in ((['documentation-and-adrs'], set()), ([SKILL], {SKILL}), ([1], set())):
+            self.ctx.active_capability_ids = active
+            response = ModelResponse(parts=[ToolCallPart(SELECT_SKILLS, {'skills': names})])
+            with self.assertRaises(ModelRetry):
+                await self.workspace.after_model_request(self.ctx, request_context=forced, response=response)
+
     async def test_explicit_repository_intake_and_attached_phases_keep_their_native_tools(self):
         self.ctx.deps.surface = 'web'
         self.ctx.prompt = 'Complete the registered task for repository_id repo_example.'
@@ -118,11 +133,50 @@ class SkillCallTests(unittest.IsolatedAsyncioTestCase):
         real = ModelResponse(parts=[ToolCallPart('load_capability', {'id': SKILL})])
         self.assertIs(await self.workspace.after_model_request(self.ctx, request_context=forced, response=real), real)
 
+    async def test_textual_open_requires_a_current_listing_and_the_requested_id(self):
+        self.ctx.deps.surface = 'web'
+        self.ctx.prompt = 'Use list_repositories, then open_repository for repository_id repo_demo.'
+        params = self.request.model_request_parameters
+        opening = ToolDefinition(name='open_repository', parameters_json_schema={
+            'type': 'object', 'properties': {'repository_id': {'type': 'string'}}})
+        params.function_tools = [ToolDefinition(name='list_repositories'), opening]
+        markup = TextPart('<function=open_repository>\n<parameter=repository_id>\nrepo_demo\n</parameter>\n</function>\n</tool_call>')
+        listing = ToolReturnPart('list_repositories', [{'repository_id': 'repo_demo'}])
+        self.request.messages = [ModelRequest(parts=[listing], run_id='old-turn')]
+        self.assertEqual((await self.check_response(markup)).text, markup.content)
+        self.request.messages[0].run_id = self.ctx.run_id
+        other = TextPart(markup.content.replace('repo_demo', 'repo_other'))
+        self.assertEqual((await self.check_response(other)).text, other.content)
+        with self.assertRaises(ModelRetry) as retry:
+            await self.check_response(markup)
+        self.request.messages.append(ModelRequest(parts=[RetryPromptPart(content=retry.exception.message)]))
+        forced = await self.workspace.before_model_request(self.ctx, self.request)
+        self.assertEqual(forced.model_settings['tool_choice'], ['open_repository'])
+        with self.assertRaises(ModelRetry):
+            await self.workspace.after_model_request(self.ctx, request_context=forced,
+                response=ModelResponse(parts=[ToolCallPart('open_repository', {'repository_id': 'repo_other'})]))
+        real = ModelResponse(parts=[ToolCallPart('open_repository', {'repository_id': 'repo_demo'})])
+        self.assertIs(await self.workspace.after_model_request(self.ctx, request_context=forced, response=real), real)
+
+    async def test_newly_attached_task_only_offers_native_tools_for_its_current_phase(self):
+        self.ctx.deps.surface = 'web'
+        self.ctx.prompt = 'Repair this repository.'
+        self.workspace.phase.return_value = 'analyzing'
+        read = ToolDefinition(name='read_file')
+        self.request.model_request_parameters.function_tools = [read, self.loader, ToolDefinition(name='write_file')]
+        self.request.messages = [ModelRequest(parts=[ToolReturnPart('open_repository', {})], run_id='root')]
+        scoped = await self.workspace.before_model_request(self.ctx, self.request)
+        self.assertEqual(scoped.model_settings['tool_choice'], 'required')
+        self.assertEqual(scoped.model_request_parameters.function_tools, [read])
+        self.assertFalse(scoped.model_request_parameters.deferred_capability_ids)
+        self.request.messages[0].run_id = 'earlier-turn'
+        self.assertIs(await self.workspace.before_model_request(self.ctx, self.request), self.request)
+
     async def test_sdk_executes_the_loader_and_restores_the_original_user_task(self):
         calls = []
         task = 'Make a plan for the example.'
         self.workspace.backend.ledger = SimpleNamespace(status=lambda *scope: None)
-        catalog = bundled_skill_catalog(PACKAGE_ROOT / 'skills', '/opt/moyai/skills')
+        catalog = CombinedCapability(list(self.ctx.capabilities.values()))
 
         def respond(messages, info):
             calls.append((info.model_settings or {}).get('tool_choice'))
@@ -146,7 +200,7 @@ class SkillCallTests(unittest.IsolatedAsyncioTestCase):
     async def test_sdk_selection_loads_each_selected_skill_once_and_allows_an_empty_selection(self):
         self.workspace.backend.ledger = SimpleNamespace(status=lambda *scope: None)
         self.ctx.deps.surface = 'web'
-        catalog = bundled_skill_catalog(PACKAGE_ROOT / 'skills', '/opt/moyai/skills')
+        catalog = CombinedCapability(list(self.ctx.capabilities.values()))
         for wanted in ([], [SKILL, 'documentation-and-adrs']):
             choices = []
 

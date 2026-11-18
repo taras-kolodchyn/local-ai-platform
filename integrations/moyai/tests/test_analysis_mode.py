@@ -66,7 +66,9 @@ class AnalysisModeTests(unittest.IsolatedAsyncioTestCase):
         other_names = ['shell', 'write_file', 'edit_file', 'save_artifact', 'write_plan', 'delegate_task',
                        'open_repository', 'open_github_issue', 'run_repository_checks', 'future_tool']
         definitions = [ToolDefinition(name=n) for n in other_names + ['list_files', 'read_file']]
+        from gateway_skills import GatewaySkill
         skill = 'code-simplification'
+        self.ctx.capabilities = {skill: GatewaySkill(skill, 'Simplify code', 'Review callers.')}
         loader = ToolDefinition(name='load_capability', tool_kind='capability-load',
                                 parameters_json_schema={'properties': {'id': {'type': 'string'}}})
         request = ModelRequestContext(model=None, messages=[], model_settings=None,
