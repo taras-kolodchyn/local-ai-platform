@@ -14,7 +14,7 @@ import stat
 import time
 
 from local_config import workspace_directory
-from repository_ledger import ARTIFACT_PATHS, Ledger, RepositoryError, verify_artifact
+from repository_ledger import ARTIFACT_PATHS, Ledger, RepositoryError, clean_coverage_baseline, verify_artifact
 
 CATALOG = Path('/run/local-repositories')
 CONTEXT_URL = 'http://repository-context:8000/mcp/'
@@ -136,12 +136,16 @@ def scoped_tree(reply, manifest):
     return files, reply['tree_hash']
 
 
-def source_patch(before, after):
+def coverage_path(name, original_paths):
+    return name not in original_paths and re.fullmatch(r'tests/[A-Za-z0-9_-]{1,80}\.rs', name) is not None
+
+
+def source_patch(before, after, profile='rust-retry'):
     text = []
     for name in sorted(before.keys() | after.keys()):
         if before.get(name) == after.get(name):
             continue
-        if not editable(name):
+        if not editable(name) or (profile == 'rust-retry-tests' and not coverage_path(name, before)):
             raise RepositoryError('Patch includes a protected path.')
         # Git separates diff records at LF. Other Unicode separators are file content.
         old = StringIO(before.get(name, b'').decode(), newline='\n').readlines()
@@ -152,7 +156,9 @@ def source_patch(before, after):
         new_label = 'b/' + name if name in after else '/dev/null'
         for line in difflib.unified_diff(old, new, old_label, new_label):
             text.append(line if line.endswith('\n') else line + '\n\\ No newline at end of file\n')
-    if not text or before.get('src/lib.rs') == after.get('src/lib.rs') or not any(
+    if profile == 'rust-retry-tests' and not text:
+        raise RepositoryError('The coverage patch requires a new Rust integration test.')
+    if not text or (profile == 'rust-retry' and before.get('src/lib.rs') == after.get('src/lib.rs')) or not any(
         p.startswith('tests/') and after[p] != before.get(p) for p in after
     ):
         raise RepositoryError('The patch requires implementation and regression-test changes.')
@@ -350,7 +356,7 @@ class RepositoryBackend:
         directory = self.catalog/'snapshots'/snapshot_id
         manifest = json.loads(bounded_read(self.catalog, f'snapshots/{snapshot_id}/manifest.json', 1 << 20))
         if (manifest['snapshot_id'] != snapshot_id or manifest['repository_id'] != binding['repository_id']
-                or manifest['verification_profile'] != 'rust-retry' or manifest['schema_version'] != 1
+                or manifest['verification_profile'] not in ('rust-retry', 'rust-retry-tests') or manifest['verification_profile'] != binding.get('verification_profile', 'rust-retry') or manifest['schema_version'] != 1
                 or fingerprint({k:v for k,v in manifest.items() if k != 'snapshot_id'}) != snapshot_id):
             raise RepositoryError('Manifest does not match its registered identity.')
         return manifest, directory
@@ -410,10 +416,13 @@ class RepositoryBackend:
     def summary(task):
         if not task:
             return {'attached':False}
-        result = {key:task.get(key) for key in ('task_id','phase','binding','baseline_failed','attempts',
+        result = {key:task.get(key) for key in ('task_id','phase','binding','baseline_failed','baseline_clean','attempts',
                                               'verified_tree','artifacts','files','deadline','model_calls','tool_calls',
                                               'pending','write_outcome','check_observation','github_issue')}
-        if task['binding'].get('verification_profile') == 'rust-retry':
+        if task['binding'].get('verification_profile') == 'rust-retry-tests':
+            result['verification_contract'] = ('Add a new tests/*.rs integration target covering the issue requirements. '
+                'Preserve every original file. New tests must pass the correct implementation and detect the old ceiling.')
+        elif task['binding'].get('verification_profile') == 'rust-retry':
             result['verification_contract'] = RUST_RETRY_CONTRACT
         if task.get('receipts'):
             latest = task['receipts'][-1]
@@ -471,7 +480,7 @@ class RepositoryBackend:
             return await self.status(scope)
         try:
             receipt = await self.guest(scope, 'check', task_id=task['task_id'], operation_id=operation,
-                                       profile='rust-retry', timeout_seconds=remaining,
+                                       profile=manifest['verification_profile'], timeout_seconds=remaining,
                                        receipt_key=self.ledger.check_key(*scope, operation))
             await self.settle(scope, operation, receipt, manifest)
         except asyncio.CancelledError:
@@ -532,6 +541,8 @@ class RepositoryBackend:
         checks = receipt.get('checks', {})
         if receipt['state'] == 'passed':
             summary['next_action'] = 'Trusted checks passed on this tree. Call finish_repository_task now to deliver the verified patch and reports; no further check is needed without edits.'
+        elif clean_coverage_baseline(receipt):
+            summary['next_action'] = 'The original retry policy passes. Add the requested coverage in a new tests/*.rs file.'
         elif receipt['state'] == 'failed' and checks.get('oracle_passed'):
             if not checks.get('regression_tests_added'):
                 summary['next_action'] = RUST_RETRY_CONTRACT + ' Create the integration test before running checks again.'
@@ -551,7 +562,8 @@ class RepositoryBackend:
     async def cancel(self, scope, operation, manifest):
         task = self.ledger.status(*scope)
         receipt = await self.guest(scope, 'cancel', operation_id=operation, task_id=task['task_id'],
-                                   tree_hash=task['check_tree'], receipt_key=self.ledger.check_key(*scope,operation))
+                                   tree_hash=task['check_tree'], profile=task['binding'].get('verification_profile', 'rust-retry'),
+                                   receipt_key=self.ledger.check_key(*scope,operation))
         await self.settle(scope, operation, receipt, manifest)
 
     async def status(self, scope, current_turn=None):
@@ -593,8 +605,8 @@ class RepositoryBackend:
         after, tree = scoped_tree(await self.guest(scope, 'tree'), manifest)
         task = self.ledger.ready_to_finish(*scope, tree)
         original = await asyncio.to_thread(self.originals, manifest, directory)
-        patch = source_patch(original, after)
-        report = canonical({'task_id':task['task_id'],'verification_profile':'rust-retry',
+        patch = source_patch(original, after, manifest['verification_profile'])
+        report = canonical({'task_id':task['task_id'],'verification_profile':manifest['verification_profile'],
                             'baseline_and_attempts':task['receipts']}) + b'\n'
         files = dict(zip(ARTIFACT_PATHS, (patch, report)))
         digests = {p:sha256(b).hexdigest() for p,b in files.items()}

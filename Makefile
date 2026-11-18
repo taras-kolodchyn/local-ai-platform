@@ -109,6 +109,7 @@ moyai-smoke: ## Verify real Moyai file, shell, test and artifact workflows
 	@python3 scripts/moyai-smoke.py $(if $(filter 1,$(RESTART)),--restart,)
 
 .PHONY: github-issues
+github-issues github-app-issues: export MOYAI_ISSUE_PROFILE := $(value PROFILE)
 github-issues: export MOYAI_OPERATOR_ISSUE := $(value ISSUE)
 github-issues: ## Run the opt-in Moyai issue publisher (ISSUE=N limits host gh authorization to one issue)
 	@python3 scripts/github-issues.py

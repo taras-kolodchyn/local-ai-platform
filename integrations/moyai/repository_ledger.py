@@ -160,7 +160,7 @@ class Ledger:
                     or task.get('analysis_retry') or task.get('pending') or task['deadline'] <= self.clock()
                     or task.get('original_tree') != current_tree or not current_tree or not exhausted
                     or phases - {'preparing','analyzing','verifying','failed'}
-                    or (task['receipts'] and not task.get('baseline_failed'))):
+                    or (task['receipts'] and not baseline_established(task))):
                 raise RepositoryError('Only a pristine issue analysis that exhausted its budget can be retried once.')
             task['analysis_retry'] = {'turn':turn, 'tool_calls':task['tool_calls'], 'model_calls':task['model_calls']}
             self._save(db, task, 'analyzing')
@@ -294,7 +294,7 @@ class Ledger:
             if task['phase'] not in {'analyzing','implementing','verified'}:
                 raise RepositoryError('A check cannot begin in this phase.')
             baseline = task['phase'] == 'analyzing'
-            if baseline and (tree != task['original_tree'] or task.get('baseline_failed')):
+            if baseline and (tree != task['original_tree'] or baseline_established(task)):
                 raise RepositoryError('The baseline must be checked once on the original tree.')
             if not baseline:
                 if task['attempts'] >= self.attempt_limit:
@@ -366,6 +366,8 @@ class Ledger:
             no_launch = (commands == [] and receipt.get('no_process_started') is True
                          and receipt.get('processes_stopped') is True)
             if outcome in {'passed','failed'} and not (outcome == 'failed' and no_launch):
+                if receipt.get('profile') != task['binding'].get('verification_profile', 'rust-retry'):
+                    raise RepositoryError('Verification profile differs from the task binding.')
                 validate_checks(receipt)
             elif outcome not in {'cancelled','timeout','failed'} or not (no_launch or commands_stopped(receipt)):
                 raise RepositoryError('Verification has no authenticated stopped outcome.')
@@ -378,7 +380,9 @@ class Ledger:
                 phase = 'timed_out'
             elif task['check_baseline']:
                 task['baseline_failed'] = outcome == 'failed' and baseline_violation(receipt)
-                phase = 'analyzing' if task['baseline_failed'] else 'failed'
+                if task['binding'].get('verification_profile') == 'rust-retry-tests':
+                    task['baseline_clean'] = clean_coverage_baseline(receipt)
+                phase = 'analyzing' if baseline_established(task) else 'failed'
             elif outcome == 'passed':
                 task['verified_tree'] = fresh_tree
                 phase = 'verified'
@@ -470,7 +474,9 @@ def missing_change_evidence(task, items):
         return 'Repository changes require the analyzing phase.'
     if not has_change_citation(task):
         return 'Use search_repository to cite the implementation or documented retry policy.'
-    if not task.get('baseline_failed'):
+    if not baseline_established(task):
+        if task.get('binding', {}).get('verification_profile') == 'rust-retry-tests':
+            return 'Use run_repository_checks to establish that the original policy and project tests pass.'
         return 'Use run_repository_checks to establish the failing original baseline.'
     if not items:
         return 'No native plan was saved. Use write_plan with pending future steps and a measurable retry ceiling.'
@@ -485,6 +491,28 @@ def has_acceptance_criteria(content):
     subject = re.search(r'retry|backoff|delay|attempt|затримк|повтор|спроб', text)
     expectation = re.search(r'cap|limit|ceil|bounded|maximum|max\b|at most|never exceed|не перевищ|обмеж|меж', text)
     return bool(ceiling and subject and expectation)
+
+
+def baseline_established(task):
+    if task.get('binding', {}).get('verification_profile') == 'rust-retry-tests':
+        return task.get('baseline_clean') is True
+    return task.get('baseline_failed') is True
+
+
+def clean_coverage_baseline(receipt):
+    # An unchanged tree has no added regressions to run against the counterexample.
+    # Only this specific omission may fail; all original builds and tests must pass.
+    checks = receipt.get('checks', {})
+    commands = receipt.get('commands', [])
+    return (receipt.get('profile') == 'rust-retry-tests' and receipt['state'] == 'failed'
+            and receipt.get('failure_code') == 'regression_requirement' and not receipt.get('launch_errors')
+            and checks.get('baseline_policy_violation') is False and checks.get('regression_tests_added') == 0
+            and checks.get('regression_tests_run') == 0 and checks.get('oracle_tests_run') == len(ORACLE_TESTS)
+            and checks.get('oracle_passed') is True and checks.get('protected_test_names') == ORACLE_TESTS
+            and checks.get('project_tests_run', 0) > 0 and commands_stopped(receipt)
+            and {'oracle', 'baseline_probe', 'project'} <= {c.get('kind') for c in commands}
+            and all(c.get('native_completed') is True for c in commands if c.get('kind') in {'oracle', 'baseline_probe', 'project'})
+            and all(passing_command(c) and c.get('state') == 'passed' for c in commands))
 
 
 def baseline_violation(receipt):
@@ -510,7 +538,7 @@ def commands_stopped(receipt):
 def validate_checks(receipt):
     checks = receipt.get('checks', {})
     commands = receipt.get('commands', [])
-    if (receipt.get('profile') != 'rust-retry' or checks.get('protected_unchanged') is not True
+    if (receipt.get('profile') not in ('rust-retry', 'rust-retry-tests') or checks.get('protected_unchanged') is not True
             or checks.get('tree_unchanged') is not True or checks.get('verification_inputs_unchanged') is not True
             or not commands_stopped(receipt)
             or any(not isinstance(cmd.get('argv'), list) or not cmd['argv']

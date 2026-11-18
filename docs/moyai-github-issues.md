@@ -12,6 +12,12 @@ The first execution profile covers the retry policy in `examples/rust-service` i
 
 The App transport uses GitHub REST API version `2026-03-10`. The registration and authentication flow was checked against GitHub documentation on 2026-11-18. [Manifest registration](https://docs.github.com/en/apps/sharing-github-apps/registering-a-github-app-from-a-manifest) · [App JWTs](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-json-web-token-jwt-for-a-github-app) · [Installation access tokens](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-an-installation-access-token-for-a-github-app)
 
+### Add coverage to a passing Rust example
+
+Run `make github-app-issues ISSUE=N PROFILE=rust-retry-tests` and submit the issue URL in an empty private chat. After intake Qwen sees the issue title and body and chooses the primary guide for this bounded task from the local LiteLLM catalog pinned to the turn. It may select an empty list. Moyai loads the chosen guide through a native tool call.
+
+The coverage profile requires a passing original implementation and preserves every original file. The agent may add integration targets under `examples/rust-service/tests/`. Verification runs the project and protected tests. Each new test must pass on the candidate and complete on the compiled 60,000 ms counterexample. At least one must detect the counterexample. The App opens a draft at the pinned base. The operator reviews the assertions and CI before merging and checking issue closure and CI on `main`.
+
 ### Single-message App rehearsal, 2026-11-18
 
 The operator pasted the URL of issue #10 into an empty private Moyai web chat. This was the only user message. In 2m 32s, one turn retrieved the retry policy, reproduced the 60,000 ms baseline, edited the Rust implementation and tests, delivered three Files links and returned the draft PR. GitHub identifies `moyai-local-348144ed[bot]` as the author of both the commit and the draft. [Issue #10](https://github.com/taras-kolodchyn/local-ai-platform/issues/10) · [Draft PR #11](https://github.com/taras-kolodchyn/local-ai-platform/pull/11) · [Published commit](https://github.com/taras-kolodchyn/local-ai-platform/commit/1f9cc341f2c9e967e5d63416f0b127884bd69074)

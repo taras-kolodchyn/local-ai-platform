@@ -233,7 +233,7 @@ def stage_sources(root, stage, paths):
 def prepare_snapshot(repo: Path, catalog: Path, verification_profile: str,
                      *, unversioned=False, repository_id=None):
     root = Path(repo).resolve(strict=True)
-    if not root.is_dir() or verification_profile != 'rust-retry':
+    if not root.is_dir() or verification_profile not in ('rust-retry', 'rust-retry-tests'):
         raise ValueError('Expected a source directory and supported verification profile')
     if unversioned:
         identity = str(root)

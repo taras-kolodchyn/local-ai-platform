@@ -151,6 +151,22 @@ class RepositoryLedgerTests(unittest.TestCase):
             receipt,sort_keys=True,separators=(',',':'),ensure_ascii=True).encode(),'sha256').hex()
         return receipt
 
+    def test_clean_coverage_baseline_requires_completed_original_tests(self):
+        from repository_ledger import clean_coverage_baseline
+        self.ledger.start_check('s','a','baseline','base')
+        receipt = self.receipt('baseline','base','failed',missing_regression=True)
+        for command in receipt['commands']:
+            command['state'] = 'passed'
+        self.assertFalse(clean_coverage_baseline(receipt))
+        receipt['profile'] = 'rust-retry-tests'
+        self.assertTrue(clean_coverage_baseline(receipt))
+        for change in ({'native_completed':False}, {'exit_code':101}, {'descendants_stopped':False}):
+            broken = copy.deepcopy(receipt)
+            broken['commands'][0].update(change)
+            self.assertFalse(clean_coverage_baseline(broken))
+        receipt['checks']['baseline_policy_violation'] = True
+        self.assertFalse(clean_coverage_baseline(receipt))
+
     def implement(self):
         self.ledger.start_check('s','a','baseline','base')
         self.ledger.finish_check('s','a','baseline',self.receipt('baseline','base','failed',baseline=True),'base')
