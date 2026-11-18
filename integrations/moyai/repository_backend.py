@@ -320,7 +320,7 @@ def install_task_status(app, runtime, backend):
         if not task:
             raise HTTPException(404, 'No repository task is attached.')
         response = backend.summary(task)
-        response.update({k:task.get(k) for k in ('original_tree','created','citations','plan','receipts','delivery_check')})
+        response.update({k:task.get(k) for k in ('original_tree','created','citations','plan','receipts','delivery_check','documentation_reviews')})
         return JSONResponse(response, headers={'Cache-Control':'no-store'})
 
     # Native Moyai mounts its SPA at the root, after the authenticated API routes.
@@ -328,11 +328,12 @@ def install_task_status(app, runtime, backend):
 
 
 class RepositoryBackend:
-    def __init__(self, ledger=None, catalog=CATALOG, plans=None, native_files=None):
+    def __init__(self, ledger=None, catalog=CATALOG, plans=None, native_files=None, review_client=None):
         self._ledger = ledger
         self.catalog = Path(catalog)
         self.plans = plans
         self.native_files = native_files
+        self.review_client = review_client
 
     @property
     def ledger(self):
@@ -419,6 +420,8 @@ class RepositoryBackend:
         result = {key:task.get(key) for key in ('task_id','phase','binding','baseline_failed','baseline_clean','attempts',
                                               'verified_tree','artifacts','files','deadline','model_calls','tool_calls',
                                               'pending','write_outcome','check_observation','github_issue')}
+        if task.get('documentation_reviews'):
+            result['latest_documentation_review'] = task['documentation_reviews'][-1]
         if task['binding'].get('verification_profile') == 'rust-retry-tests':
             result['verification_contract'] = ('Add a new tests/*.rs integration target covering the issue requirements. '
                 'Preserve every original file. New tests must pass the correct implementation and detect the old ceiling.')
@@ -467,11 +470,15 @@ class RepositoryBackend:
         task = self.ledger.status(*scope)
         for settled in task['receipts']:
             if settled['operation_id'] == operation:
-                return self.check_summary(settled)
+                return self.check_summary(settled, task.get("github_issue"))
         manifest, _ = await asyncio.to_thread(self.snapshot, task['binding'])
         _, tree = scoped_tree(await self.guest(scope, 'tree'), manifest)
+        reviews = task.get('documentation_reviews') or []
+        if reviews and reviews[-1]['tree_hash'] == tree and reviews[-1]['verdict'] == 'changes_requested':
+            return {'state':'changes_requested', 'findings':reviews[-1]['findings'],
+                    'next_action':'Edit the cited documentation before rechecking this tree.'}
         if cached := self.ledger.reusable_check(*scope, tree):
-            return {**self.check_summary(cached), 'reused':True,
+            return {**self.check_summary(cached, task.get("github_issue")), 'reused':True,
                     'reused_operation_id':cached['operation_id'],
                     'reuse_reason':'The current tree matches the latest settled check; no Cargo work or validation attempt was repeated.'}
         decision = self.ledger.start_check(*scope, operation, tree)
@@ -490,10 +497,10 @@ class RepositoryBackend:
         except Exception:
             self.ledger.uncertain(*scope, operation)
             raise
-        return self.check_summary(receipt)
+        return self.check_summary(receipt, task.get("github_issue"))
 
     @staticmethod
-    def check_summary(receipt):
+    def check_summary(receipt, github_issue=None):
         remaining = 6000
         commands = []
         failure_cause = None
@@ -540,7 +547,8 @@ class RepositoryBackend:
             summary['error'] = failure_cause.encode('utf-8', errors='replace')[:512].decode('utf-8', errors='ignore')
         checks = receipt.get('checks', {})
         if receipt['state'] == 'passed':
-            summary['next_action'] = 'Trusted checks passed on this tree. Call finish_repository_task now to deliver the verified patch and reports; no further check is needed without edits.'
+            summary['next_action'] = ('Run review_repository_documentation on this checked tree.' if github_issue else
+                                      'Trusted checks passed on this tree. Call finish_repository_task now to deliver the verified patch and reports; no further check is needed without edits.')
         elif clean_coverage_baseline(receipt):
             summary['next_action'] = 'The original retry policy passes. Add the requested coverage in a new tests/*.rs file.'
         elif receipt['state'] == 'failed' and checks.get('oracle_passed'):
@@ -597,6 +605,38 @@ class RepositoryBackend:
                 await self.settle(scope, op, receipt, manifest)
         return self.summary(self.ledger.status(*scope))
 
+    async def review_documentation(self, scope, operation):
+        from documentation_review import review_patch
+        task = self.ledger.status(*scope)
+        manifest, directory = await asyncio.to_thread(self.snapshot, task['binding'])
+        after, tree = scoped_tree(await self.guest(scope, 'tree'), manifest)
+        history = task.get('documentation_reviews') or []
+        if history and history[-1]['tree_hash'] == tree and history[-1].get('review_operation') == operation:
+            return self.review_summary(history[-1])
+        if not task.get('github_issue') or task['phase'] != 'verified' or tree != task['verified_tree']:
+            raise RepositoryError('Documentation review requires a verified GitHub issue candidate.')
+        check = task['receipts'][-1]['operation_id']
+        original = await asyncio.to_thread(self.originals, manifest, directory)
+        patch = source_patch(original, after, manifest['verification_profile'])
+        prior = next((r for r in reversed(task.get('documentation_reviews', [])) if r['tree_hash'] == tree), None)
+        if prior is None:
+            def charge(attempt):
+                self.ledger.charge(*scope, 'model', f'{operation}-documentation-review-{attempt}')
+            decision = await review_patch(self.review_client, original, after, patch, charge=charge)
+        else:
+            decision = prior
+        _, current = scoped_tree(await self.guest(scope, 'tree'), manifest)
+        if current != tree:
+            raise RepositoryError('The candidate changed during documentation review.')
+        record = self.ledger.record_documentation_review(*scope, tree, check, {**decision, 'review_operation':operation})
+        return self.review_summary(record)
+
+    @staticmethod
+    def review_summary(record):
+        return {'verdict':record['verdict'], 'findings':record['findings'], 'evidence':record['evidence'],
+                'next_action':('Finish the reviewed task.' if record['verdict'] == 'approved' else
+                    'Correct the cited prose with native edit tools, preserve the requested coverage, then rerun checks.')}
+
     async def finish(self, scope, ctx):
         task = self.ledger.status(*scope)
         if task['phase'] == 'completed':
@@ -606,7 +646,8 @@ class RepositoryBackend:
         task = self.ledger.ready_to_finish(*scope, tree)
         original = await asyncio.to_thread(self.originals, manifest, directory)
         patch = source_patch(original, after, manifest['verification_profile'])
-        report = canonical({'task_id':task['task_id'],'verification_profile':manifest['verification_profile'],
+        reviews = {'documentation_reviews': task['documentation_reviews']} if task.get('documentation_reviews') else {}
+        report = canonical({**reviews, 'task_id':task['task_id'],'verification_profile':manifest['verification_profile'],
                             'baseline_and_attempts':task['receipts']}) + b'\n'
         files = dict(zip(ARTIFACT_PATHS, (patch, report)))
         digests = {p:sha256(b).hexdigest() for p,b in files.items()}

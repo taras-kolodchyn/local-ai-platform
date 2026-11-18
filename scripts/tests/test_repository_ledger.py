@@ -175,6 +175,31 @@ class RepositoryLedgerTests(unittest.TestCase):
         self.ledger.start_write('s','a','w','fingerprint')
         self.ledger.finish_write('s','a','w')
 
+    def test_issue_rejection_requires_a_new_checked_and_reviewed_tree(self):
+        self.ledger = Ledger(Path(self.tmp.name) / 'issue.db', clock=lambda: self.now)
+        self.ledger.attach('s','a',self.binding,github_issue={'number':26,'turn':'turn'})
+        self.ledger.imported('s','a','base')
+        self.implement()
+        def check(op, tree):
+            self.ledger.start_check('s','a',op,tree)
+            self.ledger.finish_check('s','a',op,self.receipt(op,tree,'passed'),tree)
+        check('first','candidate')
+        with self.assertRaises(RepositoryError):
+            self.ledger.ready_to_finish('s','a','candidate')
+        self.ledger.record_documentation_review('s','a','candidate','first',
+                                               {'verdict':'changes_requested','findings':['unsupported promise']})
+        self.assertEqual(self.ledger.status('s','a')['phase'], 'implementing')
+        self.ledger.start_write('s','a','correction','changed')
+        self.ledger.finish_write('s','a','correction')
+        check('second','corrected')
+        approve = {'verdict':'approved','findings':[]}
+        for tree, op in [('candidate','first'), ('corrected','first')]:
+            with self.assertRaises(RepositoryError):
+                self.ledger.record_documentation_review('s','a',tree,op,approve)
+        self.ledger.record_documentation_review('s','a','corrected','second',approve)
+        accepted = self.ledger.ready_to_finish('s','a','corrected')
+        self.assertEqual(len(accepted['documentation_reviews']), 2)
+
     def test_recovered_pass_requires_valid_signature_and_unchanged_tree(self):
         self.implement()
         self.ledger.start_check('s','a','good','repaired')

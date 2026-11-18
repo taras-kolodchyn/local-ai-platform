@@ -391,6 +391,29 @@ class Ledger:
             self._save(db, task, phase)
             return phase
 
+    def record_documentation_review(self, session, authority, tree, check_operation, decision):
+        with self._transaction() as db:
+            task = self._task(db, session, authority)
+            self._active(db, task)
+            if (not task.get('github_issue') or task['phase'] != 'verified' or task['pending']
+                    or task['verified_tree'] != tree or task['receipts'][-1]['operation_id'] != check_operation):
+                raise RepositoryError('The candidate changed during documentation review.')
+            findings = decision.get('findings')
+            if not isinstance(findings, list) or decision.get('verdict') != ('changes_requested' if findings else 'approved'):
+                raise RepositoryError('Documentation review findings and verdict must agree.')
+            record = {**decision, 'tree_hash':tree, 'snapshot_id':task['binding']['snapshot_id'],
+                      'check_operation':check_operation}
+            history = task.setdefault('documentation_reviews', [])
+            if history and history[-1] == record:
+                return record
+            history.append(record)
+            if decision['verdict'] == 'changes_requested':
+                task['verified_tree'] = None
+                self._save(db, task, 'implementing')
+            else:
+                self._save(db, task)
+            return record
+
     def ready_to_finish(self, session, authority, tree):
         with self._transaction() as db:
             task = self._task(db, session, authority)
@@ -399,6 +422,8 @@ class Ledger:
                 raise RepositoryError('Run trusted checks on the current tree before finalizing.')
             if not task['receipts'] or not commands_stopped(task['receipts'][-1]):
                 raise RepositoryError('Run trusted checks with descendant cleanup evidence before finalizing.')
+            if task.get('github_issue') and not approved_review(task, tree):
+                raise RepositoryError('Review the documentation on the checked candidate before delivery.')
             return task
 
     def stage_delivery(self, session, authority, tree, artifacts, check_operation):
@@ -409,6 +434,7 @@ class Ledger:
                     or not task['receipts'] or task['receipts'][-1]['operation_id'] != check_operation
                     or not commands_stopped(task['receipts'][-1])
                     or set(artifacts) != set(ARTIFACT_PATHS)
+                    or (task.get('github_issue') and not approved_review(task, tree))
                     or (task['artifacts'] and task['artifacts'] != artifacts)):
                 raise RepositoryError('Finalization requires fresh evidence and the same three artifacts.')
             task.update(artifacts=artifacts, delivery_check=check_operation)
@@ -491,6 +517,16 @@ def has_acceptance_criteria(content):
     subject = re.search(r'retry|backoff|delay|attempt|затримк|повтор|спроб', text)
     expectation = re.search(r'cap|limit|ceil|bounded|maximum|max\b|at most|never exceed|не перевищ|обмеж|меж', text)
     return bool(ceiling and subject and expectation)
+
+
+def approved_review(task, tree):
+    history = task.get('documentation_reviews') or []
+    checks = task.get('receipts') or []
+    return bool(tree and history and checks and history[-1].get('verdict') == 'approved'
+                and history[-1].get('findings') == []
+                and history[-1].get('tree_hash') == tree == checks[-1].get('tree_hash')
+                and history[-1].get('snapshot_id') == task['binding']['snapshot_id']
+                and history[-1].get('check_operation') == checks[-1]['operation_id'])
 
 
 def baseline_established(task):

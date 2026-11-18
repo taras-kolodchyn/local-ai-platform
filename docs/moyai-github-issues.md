@@ -18,6 +18,12 @@ Run `make github-app-issues ISSUE=N PROFILE=rust-retry-tests` and submit the iss
 
 The coverage profile requires a passing original implementation and preserves every original file. The agent may add integration targets under `examples/rust-service/tests/`. Verification runs the project and protected tests. Each new test must pass on the candidate and complete on the compiled 60,000 ms counterexample. At least one must detect the counterexample. The App opens a draft at the pinned base. The operator reviews the assertions and CI before merging and checking issue closure and CI on `main`.
 
+### Documentation review before publishing
+
+After Rust verification, Moyai sends the candidate diff and numbered implementation and policy lines to a separate local `local-qwen` request. The reviewer has one structured reporting tool. It records a source citation and a judgment for each changed passage in comments, Rustdoc and Markdown. The controller also checks affirmative removal promises and explicit retry-ceiling claims against the pinned policy. Deprecation alone only establishes the current API status. A future removal requires an explicit policy.
+
+When the reviewer requests changes, the editing agent receives the findings in the same chat. It must change the candidate, rerun the protected checks and obtain approval for the revised tree. The test report contains the review history. The host publisher checks the approval against the pinned snapshot, final Rust receipt, verified tree and downloaded patch hash before creating a draft. The report distinguishes model findings from policy checks and includes the source lines for inspection.
+
 ### Single-message App rehearsal, 2026-11-18
 
 The operator pasted the URL of issue #10 into an empty private Moyai web chat. This was the only user message. In 2m 32s, one turn retrieved the retry policy, reproduced the 60,000 ms baseline, edited the Rust implementation and tests, delivered three Files links and returned the draft PR. GitHub identifies `moyai-local-348144ed[bot]` as the author of both the commit and the draft. [Issue #10](https://github.com/taras-kolodchyn/local-ai-platform/issues/10) · [Draft PR #11](https://github.com/taras-kolodchyn/local-ai-platform/pull/11) · [Published commit](https://github.com/taras-kolodchyn/local-ai-platform/commit/1f9cc341f2c9e967e5d63416f0b127884bd69074)

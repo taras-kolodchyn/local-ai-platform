@@ -56,7 +56,7 @@ async def main():
         async with client:
             runtime = Runtime(settings)
             install_analysis_routing(runtime.database)
-            workspace = SessionWorkspace(RepositoryBackend(plans=runtime.stores.plan, native_files=NativeFiles(runtime)))
+            workspace = SessionWorkspace(RepositoryBackend(plans=runtime.stores.plan, native_files=NativeFiles(runtime), review_client=client))
             if turn_skills not in ACTIVITIES:
                 ACTIVITIES.append(turn_skills)
             await runtime.start(models={'local-qwen': model, PROFILE: model},

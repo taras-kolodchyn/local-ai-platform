@@ -14,7 +14,7 @@ from temporalio import workflow
 
 from github_issue import ISSUES, PULLS, exchange, issue_number, user_issue
 from repository_backend import NativeFiles, RepositoryBackend, coverage_path, fingerprint, scoped_tree, workspace_path
-from repository_ledger import ARTIFACT_PATHS, RepositoryError, baseline_established, commands_stopped, has_change_citation, missing_change_evidence
+from repository_ledger import ARTIFACT_PATHS, RepositoryError, approved_review, baseline_established, commands_stopped, has_change_citation, missing_change_evidence
 
 ISSUE = 'open_github_issue'
 DISCOVERY = {'list_repositories', 'open_repository', ISSUE}
@@ -25,8 +25,9 @@ STATUS = 'repository_task_status'
 CHECK = 'run_repository_checks'
 BEGIN = 'begin_repository_changes'
 FINISH = 'finish_repository_task'
+REVIEW = 'review_repository_documentation'
 SEARCH = 'search_repository'
-REPOSITORY = DISCOVERY | {STATUS, CHECK, BEGIN, FINISH, SEARCH}
+REPOSITORY = DISCOVERY | {STATUS, CHECK, BEGIN, FINISH, SEARCH, REVIEW}
 
 
 def allowed(phase):
@@ -38,7 +39,7 @@ def allowed(phase):
         names = FILES | PLANNING | {STATUS, SEARCH, CHECK}
         if phase == 'analyzing':
             return names | {BEGIN}
-        return names | WRITES | ({FINISH} if phase == 'verified' else set())
+        return names | WRITES | ({REVIEW, FINISH} if phase == 'verified' else set())
     if phase == 'delivering':
         return {STATUS, FINISH}
     if phase == 'completed':
@@ -120,13 +121,20 @@ class RepositoryWorkflow(AbstractCapability):
             """Run the fixed offline profile. Add regressions in tests/*.rs, follow next_action, and edit before retrying failed checks. An unchanged repair reuses settled evidence without another validation attempt."""
             return await backend.check(scope_of(ctx), identity(ctx,ctx.tool_call_id))
 
+        async def review_repository_documentation(ctx: RunContext) -> dict:
+            """Independently check the verified patch's documentation against its implementation and policy."""
+            try:
+                return await backend.review_documentation(scope_of(ctx), identity(ctx, ctx.tool_call_id))
+            except RepositoryError as error:
+                raise ToolFailed(str(error)) from error
+
         async def finish_repository_task(ctx: RunContext) -> dict:
             """Deliver the patch and reports to native Files and return verified download links."""
             return await backend.finish(scope_of(ctx), ctx)
 
         return FunctionToolset(id='local_repository_tools_v1', sequential=True,
                                tools=[list_repositories, open_repository, open_github_issue, search_repository, begin_repository_changes,
-                                      run_repository_checks, finish_repository_task, repository_task_status])
+                                      run_repository_checks, review_repository_documentation, finish_repository_task, repository_task_status])
 
     def get_toolset(self):
         return self.registered_tools
@@ -161,6 +169,8 @@ class RepositoryWorkflow(AbstractCapability):
             return 'other'
         if task['phase'] == 'verified' and (not task.get('receipts') or not commands_stopped(task['receipts'][-1])):
             return 'recheck'
+        if task['phase'] == 'verified' and not approved_review(task, task['verified_tree']):
+            return 'review/' + task['receipts'][-1]['operation_id']
         return task['phase']
 
     async def authorize_issue_response(self, ctx, request_context):
@@ -204,7 +214,8 @@ class RepositoryWorkflow(AbstractCapability):
 
     async def route_issue(self, ctx, request_context, number):
         phase = await self.github_route(*scope_of(ctx), number)
-        if (phase in ('analyzing','verified','recheck','failed') and
+        review_check = phase.partition('/')[2] if phase and phase.startswith('review/') else ''
+        if ((review_check or phase in ('analyzing','verified','recheck','failed')) and
                 (not workflow.in_workflow() or workflow.patched('local-github-issue-phases-v1'))):
             if phase == 'failed':
                 await self.authorize_issue_response(ctx, request_context)
@@ -218,6 +229,8 @@ class RepositoryWorkflow(AbstractCapability):
                 phase = 'analyzing'
             if phase == 'analyzing':
                 step = await self.issue_analysis_step(*scope_of(ctx))
+            elif review_check:
+                step = REVIEW
             else:
                 step = CHECK if phase == 'recheck' else FINISH
             if not step:
@@ -226,6 +239,8 @@ class RepositoryWorkflow(AbstractCapability):
             if coverage_plan:
                 step = 'write_plan'
             call_id = f'issue-{step}-{ctx.deps.turn_id}'
+            if review_check:
+                call_id += '-' + review_check
             if any(isinstance(p, (ToolReturnPart, RetryPromptPart)) and p.tool_call_id == call_id
                    for message in request_context.messages for p in message.parts):
                 return None  # Let the model handle the real native tool diagnostic.
@@ -320,7 +335,7 @@ class RepositoryWorkflow(AbstractCapability):
                 and (not workflow.in_workflow() or workflow.patched('local-github-issue-implementation-output-v1'))
                 and await self.github_route(*scope_of(ctx), number) == 'implementing'):
             # The native graph records the retry and enforces the turn's output retry limit.
-            raise ModelRetry('This issue is still implementing. Inspect the source and the last check result. '
+            raise ModelRetry('This issue is still implementing. Inspect the source, last check result and any documentation review findings. '
                              'Use the native edit tools for any missing repair or regression tests, then call '
                              'run_repository_checks. Verified Files and the draft PR are delivered by the controller.')
         return response
@@ -359,6 +374,8 @@ class RepositoryWorkflow(AbstractCapability):
         if phase is None:
             return [t for t in tool_defs if t.name not in REPOSITORY or (root and t.name in DISCOVERY - {ISSUE})]
         names = allowed(phase) if root else {STATUS}
+        if not ticket:
+            names = names - {REVIEW}
         return [replace(t, sequential=True) for t in tool_defs if t.name in names]
 
     @durable_operation('admit')
@@ -372,6 +389,8 @@ class RepositoryWorkflow(AbstractCapability):
                 if name in REPOSITORY and (not root or name not in DISCOVERY):
                     raise RepositoryError('Open a registered repository from the parent conversation first.')
                 return {}
+            if name == REVIEW and not task.get('github_issue'):
+                raise RepositoryError('Issue documentation review requires a GitHub task.')
             ledger.charge(*scope, 'tool', operation)
             if (not root and name != STATUS) or name not in allowed(task['phase']):
                 raise RepositoryError('Tool unavailable in repository phase ' + task['phase'] + '.')

@@ -23,7 +23,7 @@ from github_app import AppError, Installation, request as app_request
 from client import MoyaiClient
 from github_issue import ISSUES, REPO, atomic_json, issue_number
 from repository_backend import bounded_read, canonical, coverage_path, editable
-from repository_ledger import ARTIFACT_PATHS, baseline_established, clean_coverage_baseline, validate_checks, verify_artifact
+from repository_ledger import ARTIFACT_PATHS, approved_review, baseline_established, clean_coverage_baseline, validate_checks, verify_artifact
 
 STATE = ROOT / '.local/github-issues'
 PROJECT = 'examples/rust-service'
@@ -113,6 +113,16 @@ def prepare(base, profile='rust-retry'):
     return manifest, binding
 
 
+def verify_documentation_review(task, report, patch):
+    history = task.get('documentation_reviews') or []
+    require(approved_review(task, task['verified_tree']) and report.get('documentation_reviews') == history,
+            'Publication requires an approved documentation review for the final check and tree.')
+    review = history[-1]
+    require(review.get('patch_sha256') == hashlib.sha256(patch).hexdigest()
+            and review.get('model') == 'local-qwen' and review.get('evidence') and review.get('findings') == [],
+            'The documentation review does not approve the delivered patch with source evidence.')
+
+
 def verified_patch(client, job):
     session = job['session']
     task = client.request(f'/api/sessions/{session}/repository-task')
@@ -145,6 +155,8 @@ def verified_patch(client, job):
         validate_checks(original)
         require(original['tree_hash'] == result['original_tree'] and clean_coverage_baseline(original),
                 'Tests-only publication requires a verified clean original implementation.')
+    if task.get('documentation_reviews') or not job.get('pr'):
+        verify_documentation_review(task, report, patch)
     validate_checks(receipt)
     return patch, result['verified_tree'], receipt['checks']
 
@@ -220,7 +232,7 @@ def publish(api, repo, manifest, job, patch, digest, checks, save, *, installati
                 f'{baseline} The verified tree passed {checks["project_tests_run"]} '
                 f'project tests and {checks["oracle_tests_run"]} protected tests. '
                 'The added regression suite detected the previous 60-second ceiling.\n\n'
-                f'Patch SHA-256: `{sha}`\n')
+                f'Documentation review approved the same patch.\n\nPatch SHA-256: `{sha}`\n')
         created = api('pulls', {'head':branch, 'base':BASE, 'draft':True,
                                 'title':f'{title} (#{number})', 'body':body})
         prs = [api(f'pulls/{int(created["number"])}')]
@@ -298,6 +310,7 @@ class Publisher:
         require(self.github.api('commits/main')['sha'] == job['base'], 'GitHub main moved since verification.')
         def checked_api(endpoint, body=None):
             if body is not None:
+                require(not job.get('pr'), 'Recovery of an already published draft is read-only.')
                 if endpoint in {'git/refs', 'pulls'}:
                     require(self.github.ticket(number) == job['issue'], 'The issue changed since intake. Review its updated scope.')
                     require(self.github.api('commits/main')['sha'] == job['base'], 'GitHub main moved since verification.')
