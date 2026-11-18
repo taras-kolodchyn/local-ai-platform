@@ -2,6 +2,12 @@
 
 Current dependency pins and verification: [2026-11-16 update](dependency-update-2026-11-16.md).
 
+Current repository workflow: [2026-11-17 results](results/repository-workflow-2026-11-17.md).
+Native Moyai completed three fresh local-model Rust retry repairs with scoped
+context, independent checks and verified patch delivery. The expanded lifecycle
+suite and restart persistence passed. This covers the trusted single-user
+`rust-retry` profile; the historical complex-agent failures below remain historical.
+
 The results below are the historical baseline, not verification of the updated stack.
 Research and live-verification date: 2026-07-20. Sources are upstream project
 documentation or release metadata. Results below distinguish platform transport

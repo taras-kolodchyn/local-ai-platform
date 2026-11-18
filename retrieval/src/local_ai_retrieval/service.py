@@ -20,7 +20,8 @@ from .vector_api import vector_routes
 from .vector_registry import list_stores, scoped_search
 from .config import Settings
 from .db import get_chunk as db_get_chunk
-from .db import migrate, observability_snapshot, search_chunks
+from .db import compatible_scope_exists, migrate, observability_snapshot, search_chunks
+from .ingestion import embedding_fingerprint
 from .embeddings import embed_texts
 from .metrics import (
     INDEXED_CHUNKS,
@@ -58,18 +59,25 @@ def perform_search(request: SearchRequest) -> list[dict[str, Any]]:
     started = time.monotonic()
     query_hash = _query_hash(request.query)
     try:
-        vector = embed_texts([request.query], SETTINGS)[0]
-        with VECTOR_SEARCH_LATENCY.time():
-            results = search_chunks(
-                SETTINGS,
-                vector,
-                query=request.query,
-                repository=request.repository,
-                branch=request.branch,
-                path_prefix=request.path_prefix,
-                limit=request.limit,
-                max_chars=request.max_chars,
-            )
+        if not SETTINGS.embedding_artifact_id:
+            raise ValueError('Query embedding identity is unavailable')
+        fingerprint = embedding_fingerprint(SETTINGS, SETTINGS.embedding_artifact_id)
+        if compatible_scope_exists(SETTINGS, fingerprint, repository=request.repository, branch=request.branch):
+            vector = embed_texts([request.query], SETTINGS)[0]
+            with VECTOR_SEARCH_LATENCY.time():
+                results = search_chunks(
+                    SETTINGS,
+                    vector,
+                    query=request.query,
+                    repository=request.repository,
+                    branch=request.branch,
+                    compatible_fingerprint=fingerprint,
+                    path_prefix=request.path_prefix,
+                    limit=request.limit,
+                    max_chars=request.max_chars,
+                )
+        else:
+            results = []
     except Exception as exc:
         RETRIEVAL_REQUESTS.labels(status="error").inc()
         LOGGER.exception(

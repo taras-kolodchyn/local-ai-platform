@@ -27,4 +27,5 @@ ok "Qwen embedding model available"
 
 docker model configure --context-size "$QWEN_CONTEXT_SIZE" "$QWEN_MODEL" >/dev/null
 docker model configure --mode embedding "$EMBEDDING_MODEL" >/dev/null
+python3 scripts/model-config.py runtime-env >/dev/null
 ok "Model runtime configuration applied"

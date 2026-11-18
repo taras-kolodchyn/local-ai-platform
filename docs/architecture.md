@@ -13,6 +13,9 @@ Current operational changes (2026-11-17): Moyai is the single default active
 agent; Codex/Hermes remain optional clients. The former workspace A2A profiles
 are retired. Model routing is generated from resolved `.env` settings and
 retrieval combines vector and full-text search. See [platform operations](platform-operations.md).
+Registered [repository tasks](repository-workflow.md) add immutable source and
+embedding generations, scoped context MCP and a controller-owned verification
+ledger to the same native Moyai runtime.
 
 ## Component view
 
@@ -30,6 +33,7 @@ flowchart TB
     subgraph Compose["Docker Compose - isolated Linux networks"]
         LiteLLM["LiteLLM AI Gateway\n127.0.0.1:4000"]
         Moyai["Local Moyai\ndefault agent + SSH sandbox + Temporal"]
+        RepositoryContext["Read-only repository context MCP\npinned snapshot + generation"]
         Redis["Redis response cache"]
         Postgres["PostgreSQL + pgvector"]
         Ingestion["Ingestion CLI/worker"]
@@ -43,6 +47,8 @@ flowchart TB
 
         LiteLLM --> Redis
         Moyai --> LiteLLM
+        Moyai --> RepositoryContext
+        RepositoryContext -->|"separate scoped search key"| LiteLLM
         LiteLLM --> Postgres
         Ingestion --> LiteLLM
         Ingestion --> Postgres
@@ -115,7 +121,12 @@ flowchart LR
     Limit --> MCP["read-only retrieval MCP tool"]
 ```
 
-Each chunk records repository, relative path, branch, commit, language, optional symbol, content hash, chunk ordinal, and ingestion timestamp. Reindexing upserts changed chunks and removes rows no longer present at the same repository/branch snapshot.
+Each chunk records repository, relative path, branch, commit, language, optional
+symbol, content hash, chunk ordinal, and ingestion timestamp. Registered snapshots
+add exact source and indexed-generation identities plus Git dirty/subtree
+provenance. A new registration retains historical generations used by attached
+tasks. Both search candidate channels enforce that same generation and embedding
+fingerprint. Legacy indexing updates its active repository/branch selection.
 
 ## Trust boundaries
 

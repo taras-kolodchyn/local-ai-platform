@@ -59,6 +59,15 @@ for variable in LITELLM_MASTER_KEY POSTGRES_PASSWORD REDIS_PASSWORD GRAFANA_ADMI
 done
 
 mkdir -p .local/codex .local/hermes .local/hermes-container .local/logs .local/smoke
+mkdir -p .local/repositories/snapshots
+chmod 755 .local/repositories .local/repositories/snapshots
+if [[ ! -f .local/repositories/catalog.json ]]; then
+  printf '%s\n' '{"schema_version":1,"repositories":[],"indexed_generations":[]}' > .local/repositories/catalog.json
+fi
+chmod 644 .local/repositories/catalog.json
+if [[ ! -f .local/model-runtime.env ]]; then
+  printf '%s\n' 'EMBEDDING_ARTIFACT_ID=' > .local/model-runtime.env
+fi
 chmod 700 .local .local/codex .local/hermes .local/hermes-container .local/smoke
 # Trusted containers write metadata-only JSON logs here; Alloy reads the same
 # bind mount without access to the Docker socket.
@@ -78,6 +87,7 @@ for service in litellm retrieval ingestion mcp-tools postgres redis; do
   touch ".local/logs/${service}.log"
 done
 chmod 600 .local/litellm-master-key .local/litellm-api-key .local/client.compose.env
+chmod 600 .local/model-runtime.env
 chmod 666 .local/logs/*.log
 
 if [[ ! -s .local/vector-backend-key ]]; then

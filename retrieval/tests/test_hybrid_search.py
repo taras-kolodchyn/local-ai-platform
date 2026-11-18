@@ -193,7 +193,11 @@ def test_http_mcp_and_scoped_vector_store_use_the_real_hybrid_search(db_settings
                        content='return token', embedding=OPPOSITE_VECTOR)
     key = tmp_path / 'key'
     key.write_text('backend-test')
-    settings = replace(db_settings, vector_key_file=key)
+    settings = replace(db_settings, vector_key_file=key, embedding_artifact_id='sha256:fixture')
+    from local_ai_retrieval.ingestion import embedding_fingerprint
+    with psycopg.connect(settings.database_url) as connection:
+        connection.execute("UPDATE source_chunks SET metadata=jsonb_build_object('embedding_fingerprint', %s::text)",
+            (embedding_fingerprint(settings, settings.embedding_artifact_id),))
     monkeypatch.setattr(transport, 'SETTINGS', settings)
     # Embedding inference is the only external boundary replaced; SQL/search stay real.
     monkeypatch.setattr(transport, 'embed_texts', lambda *_: [QUERY_VECTOR])

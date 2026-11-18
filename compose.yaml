@@ -144,6 +144,9 @@ services:
       context: ./retrieval
       dockerfile: Dockerfile
     image: local-ai-platform/retrieval:0.1.0
+    env_file:
+      - path: ./.local/model-runtime.env
+        required: false
     environment: &retrieval-env
       DATABASE_URL: postgresql://localai:${POSTGRES_PASSWORD}@postgres:5432/local_ai
       LITELLM_BASE_URL: http://litellm:4000/v1
@@ -240,6 +243,9 @@ services:
 
   ingestion:
     image: local-ai-platform/retrieval:0.1.0
+    env_file:
+      - path: ./.local/model-runtime.env
+        required: false
     profiles: ["tools"]
     environment:
       <<: *retrieval-env

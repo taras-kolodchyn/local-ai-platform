@@ -11,7 +11,6 @@ from .db import (
     ChunkRecord,
     apply_snapshot,
     create_ingestion_run,
-    delete_snapshot,
     existing_hashes,
     finish_ingestion_run,
     migrate,
@@ -67,10 +66,9 @@ def index_repository(
     started = time.monotonic()
     migrate(settings)
     repository_name, branch, commit_hash = repository_identity(root, repository)
-    if force:
-        delete_snapshot(settings, repository_name, branch)
-
-    hashes = existing_hashes(settings, repository_name, branch)
+    # A failed forced rebuild must retain the previous searchable snapshot.
+    fingerprint = embedding_fingerprint(settings, settings.embedding_artifact_id) if settings.embedding_artifact_id else None
+    hashes = {} if force else existing_hashes(settings, repository_name, branch, fingerprint)
     run_id = create_ingestion_run(settings, repository_name, branch, commit_hash)
     scan_stats = ScanStats()
     live_keys: list[tuple[str, int]] = []
@@ -104,6 +102,7 @@ def index_repository(
                         "path": source.relative_path,
                         "language": source.language,
                         "symbol_name": chunk.symbol_name,
+                        "embedding_fingerprint": fingerprint,
                     },
                     embedding=vector,
                 )
@@ -188,3 +187,94 @@ def index_repository(
         "chunks_deleted": deleted,
         "skipped_sensitive": scan_stats.skipped_sensitive,
     }
+
+
+def embedding_fingerprint(settings: Settings, artifact_id: str) -> str:
+    """Alias alone is mutable and can never authorize embedding reuse."""
+    import hashlib
+    import json
+    if not artifact_id or len(artifact_id) > 512:
+        raise ValueError('An immutable embedding artifact identity is required')
+    return hashlib.sha256(json.dumps({'artifact_id': artifact_id,
+        'dimensions': settings.embedding_dimensions, 'input_format': 'plain-source-v1',
+        'chunker': 'line-symbol-v1',
+        'chunker_source': hashlib.sha256(Path(__file__).with_name('chunker.py').read_bytes()).hexdigest()}, sort_keys=True).encode()).hexdigest()
+
+
+def index_snapshot(manifest_path: Path, settings: Settings, *, embedding_artifact_id: str,
+                   force: bool = False, catalog_root: Path = Path('/run/local-repositories')) -> dict:
+    """Validate immutable staged bytes, then atomically publish an indexed generation."""
+    import hashlib
+    import json
+    from .db import activate_generation, find_generation, publish_generation
+    from .scanner import LANGUAGES
+    from .profiles import validate_profile
+    from .source_io import SnapshotReader
+    if not settings.embedding_artifact_id or settings.embedding_artifact_id != embedding_artifact_id:
+        raise ValueError('Embedding deployment identity differs from requested artifact')
+    manifest_path = Path(manifest_path)
+    try:
+        selected = manifest_path.relative_to(catalog_root)
+    except ValueError as exc:
+        raise ValueError('Manifest is outside the trusted catalog') from exc
+    if len(selected.parts) != 3 or selected.parts[0] != 'snapshots' or selected.parts[2] != 'manifest.json':
+        raise ValueError('Expected a selected snapshot manifest under the trusted catalog')
+    selected_id = selected.parts[1]
+    sources = []
+    total = 0
+    seen = set()
+    with SnapshotReader(catalog_root, selected_id) as reader:
+        manifest = json.loads(reader.read_manifest())
+        identity = dict(manifest)
+        snapshot_id = identity.pop('snapshot_id')
+        expected = hashlib.sha256(json.dumps(identity, sort_keys=True, separators=(',', ':'),
+            ensure_ascii=True).encode()).hexdigest()
+        if snapshot_id != selected_id:
+            raise ValueError('Manifest identity differs from the selected snapshot directory')
+        if snapshot_id != expected or manifest.get('schema_version') != 1:
+            raise ValueError('Snapshot manifest identity is invalid')
+        fingerprint = embedding_fingerprint(settings, embedding_artifact_id)
+        for entry in manifest['files']:
+            relative = Path(entry['path'])
+            if relative.is_absolute() or '..' in relative.parts or entry['path'] in seen:
+                raise ValueError('Invalid manifest path')
+            seen.add(entry['path'])
+            raw = reader.read_source(relative)
+            total += len(raw)
+            if len(raw) != entry['size'] or len(raw) > 1_000_000 or total > 100_000_000 or len(seen) > 5000:
+                raise ValueError('Snapshot exceeds source bounds or file size changed')
+            if hashlib.sha256(raw).hexdigest() != entry['sha256']:
+                raise ValueError('Snapshot file hash changed')
+            sources.append((entry['path'], raw.decode('utf-8')))
+    source_bytes = {path: text.encode('utf-8') for path, text in sources}
+    validate_profile(manifest, source_bytes.__getitem__)
+    migrate(settings)
+    existing = None if force else find_generation(settings, snapshot_id, fingerprint)
+    if existing:
+        activate_generation(settings, existing["generation_id"])
+        return existing | {'chunks_embedded': 0, 'chunks_reused': sum(len(chunk_text(text)) for _, text in sources)}
+    records = []
+    pending = []
+    git = manifest['git']
+    def flush():
+        if not pending:
+            return
+        vectors = embed_texts([chunk.content for _, chunk in pending], settings)
+        for (path, chunk), vector in zip(pending, vectors, strict=True):
+            metadata = {'snapshot_id': snapshot_id, 'git': git, 'repository_id': manifest['repository_id'],
+                        'embedding_fingerprint': fingerprint}
+            records.append(ChunkRecord(manifest['repository_id'], git['branch'], git['head'],
+                path, LANGUAGES.get(Path(path).suffix, 'text'), chunk.symbol_name, chunk.index,
+                chunk.start_line, chunk.end_line, chunk.content_hash, chunk.content, metadata, vector))
+        pending.clear()
+    chunk_count = 0
+    for path, text in sources:
+        for chunk in chunk_text(text):
+            chunk_count += 1
+            if chunk_count > 4096:
+                raise ValueError('Snapshot exceeds the 4096-chunk generation budget')
+            pending.append((path, chunk))
+            if len(pending) >= BATCH_SIZE:
+                flush()
+    flush()
+    return publish_generation(settings, manifest, fingerprint, records) | {'chunks_embedded': len(records), 'chunks_reused': 0}

@@ -61,7 +61,9 @@ make verify
 ```
 
 The ordered phases are lint, required unit/DB/Rust tests, supported startup,
-JSON status, endpoint smoke and real Moyai acceptance with a service restart.
+JSON status, endpoint smoke, plain Moyai acceptance, and repeated real-model
+repository acceptance with service restarts. See [repository tasks](repository-workflow.md)
+for source registration, the first Rust profile and private evidence.
 The finalizer always attempts shutdown and independently checks owned project
 containers and configured resident models. Failures, cleanup failures and
 unavailable inventories are unsuccessful results. Unrelated Docker projects or
@@ -92,7 +94,16 @@ They do not require model weights and are not skipped in CI.
 Upstream: [PostgreSQL 17 text search](https://www.postgresql.org/docs/17/textsearch-controls.html),
 [pgvector hybrid retrieval](https://github.com/pgvector/pgvector#hybrid-search).
 
-## Verification record — 2026-11-17
+## Repository workflow verification — 2026-11-17
+
+The expanded `make verify` passed all eight phases, including 325 Python/DB
+checks, two Rust tests, actual native Moyai acceptance, and two fresh repository
+tasks with restart persistence. Together with the first accepted development
+run, three final-implementation local-model cycles returned independently
+verified patches. Shutdown inventory was empty for owned containers and configured
+resident models. See the [versioned results and limits](results/repository-workflow-2026-11-17.md).
+
+## Earlier unified-lifecycle verification — 2026-11-17
 
 The complete `make verify` run passed lint, 159 Python/DB checks and 2 Rust
 tests, startup, live model-binding checks, JSON status, endpoint smoke and real

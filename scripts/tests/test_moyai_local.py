@@ -50,11 +50,12 @@ class MoyaiConfigTests(unittest.TestCase):
         self.assertTrue(hasattr(config, 'valid_scoped_key'), 'Stored key scope verification is missing')
         valid = config.valid_scoped_key
         info = {'key_alias': 'moyai-local-mvp', 'models': ['local-qwen'],
-                'allowed_routes': ['openai_routes', '/model/info'], 'status': 'active',
+                'allowed_routes': ['/v1/responses', '/model/info'], 'status': 'active',
                 'object_permission': {'object_permission_id': 'fixture-id', 'mcp_servers': [], 'agents': []}}
         self.assertTrue(valid('fixture-virtual', 'fixture-master', info))
         self.assertFalse(valid('fixture-master', 'fixture-master', info))
         changes = ({'models': ['local-qwen', 'other']}, {'key_alias': 'general-client'},
+                   {'allowed_routes': ['openai_routes', '/model/info']},
                    {'allowed_routes': ['openai_routes', 'management_routes']}, {'status': 'revoked'},
                    {'team_id': 'inherited-team'}, {'object_permission': None},
                    {'object_permission': {'mcp_servers': ['external-server']}},

@@ -10,6 +10,8 @@ import uvicorn
 
 from local_config import validate_secrets
 from moyai_workspace import SessionWorkspace
+from repository_backend import NativeFiles, RepositoryBackend, install_task_status
+from repository_metrics import install_metrics
 from inference import local_model
 from relay import listen
 
@@ -19,6 +21,7 @@ def prepare():
     values = json.loads(Path('/run/moyai-config.json').read_text())
     validate_secrets(values)
     os.environ['WORKSPACE_PASSWORD'] = values['password']
+    os.environ['MOYAI_REPOSITORY_CONTEXT_TOKEN'] = values['repository_context_token']
     os.environ['LITELLM_API_KEY'] = values['api_key']
     os.environ['HOME'] = '/home/workspace'
     user = pwd.getpwnam('workspace')
@@ -49,11 +52,14 @@ async def main():
         model, client = local_model(settings)
         async with client:
             runtime = Runtime(settings)
-            await runtime.start(models={'local-qwen': model}, workspace=SessionWorkspace())
+            workspace = SessionWorkspace(RepositoryBackend(plans=runtime.stores.plan, native_files=NativeFiles(runtime)))
+            await runtime.start(models={'local-qwen': model}, workspace=workspace)
             try:
                 await runtime.connect()
                 async with make_worker(runtime):
                     app = create_app(runtime)
+                    install_task_status(app, runtime, workspace.backend)
+                    install_metrics(app)
                     await uvicorn.Server(uvicorn.Config(
                         app, host='0.0.0.0', port=8787, access_log=False, log_level='warning',
                     )).serve()

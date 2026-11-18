@@ -18,7 +18,7 @@ import traceback
 ROOT = Path(__file__).resolve().parents[1]
 PROJECTS = ('local-ai-platform', 'local-ai-moyai')
 PHASES = (('lint', []), ('test', []), ('up', []), ('status', ['FORMAT=json']), ('smoke-test', []),
-          ('moyai-smoke', ['RESTART=1']))
+          ('moyai-smoke', ['RESTART=1']), ('repository-smoke', ['RESTART=1']))
 HUB_PREFIXES = ('docker.io/', 'index.docker.io/', 'registry-1.docker.io/')
 
 

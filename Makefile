@@ -67,6 +67,15 @@ reindex: ## Delete and rebuild the selected REPO=/absolute/path snapshot
 	@test -n "$(REPO)" || { echo "Usage: make reindex REPO=/absolute/path" >&2; exit 2; }
 	@INDEX_REPO_PATH="$(abspath $(REPO))" $(COMPOSE) --profile tools run --rm ingestion reindex /workspace --repository "$(notdir $(abspath $(REPO)))"
 
+.PHONY: repository-add repository-smoke
+repository-add: export MOYAI_SOURCE_REPO := $(value REPO)
+repository-add: ## Register an immutable REPO snapshot for local Moyai tasks
+	@test -n "$$MOYAI_SOURCE_REPO" || { echo "Usage: make repository-add REPO=/absolute/path" >&2; exit 2; }
+	@python3 scripts/prepare-repository.py --repo "$$MOYAI_SOURCE_REPO" --profile rust-retry
+
+repository-smoke: ## Verify a real repository repair through local Moyai
+	@python3 scripts/repository-smoke.py $(if $(filter 1,$(RESTART)),--restart,)
+
 benchmark: ## Record local chat and retrieval latency without prompt bodies
 	@bash scripts/benchmark.sh
 
@@ -128,3 +137,16 @@ moyai-smoke: ## Verify real Moyai file, shell, test and artifact workflows
 .PHONY: purge-legacy-agents
 purge-legacy-agents: ## Delete retired workspace profile data and keys; requires the running gateway/database
 	@bash -c 'source scripts/lib.sh; load_env; python3 scripts/reconcile-agents.py --purge-data'
+
+.PHONY: github-issues
+github-issues: export MOYAI_OPERATOR_ISSUE := $(value ISSUE)
+github-issues: ## Run the opt-in Moyai issue publisher (ISSUE=N limits host gh authorization to one issue)
+	@python3 scripts/github-issues.py
+
+.PHONY: github-app-setup github-app-issues
+github-app-setup: ## Register the private Moyai GitHub App on localhost
+	@python3 scripts/register-github-app.py
+
+github-app-issues: export MOYAI_OPERATOR_ISSUE := $(value ISSUE)
+github-app-issues: ## Publish as the GitHub App, optionally scoped to ISSUE=N
+	@python3 scripts/github-issues.py --app

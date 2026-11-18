@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import re
 import shlex
+import subprocess
 import sys
 import tempfile
 
@@ -130,6 +131,34 @@ def render(root=ROOT, output=None):
     return destination
 
 
+def write_runtime_identity(root=ROOT, *, inspect=None):
+    """Write only public immutable model identity after the artifact is available."""
+    model = next(item for item in resolve(root)['models'] if item['alias'] == 'local-embeddings')
+    if inspect is None:
+        def inspect(reference):
+            result = subprocess.run(['docker', 'model', 'inspect', reference],
+                check=True, capture_output=True, text=True, timeout=30)
+            return json.loads(result.stdout)
+    metadata = inspect(model['reference'])
+    artifact = metadata.get('id') if isinstance(metadata, dict) else None
+    if not isinstance(artifact, str) or not re.fullmatch(r'sha256:[a-f0-9]{64}', artifact):
+        raise ValueError('Embedding artifact identity is unavailable')
+    path = root / '.local/model-runtime.env'
+    path.parent.mkdir(parents=True, exist_ok=True)
+    value = 'EMBEDDING_ARTIFACT_ID=' + artifact + '\n'
+    if not path.is_file() or path.read_text() != value:
+        descriptor, temporary = tempfile.mkstemp(prefix='.runtime-', dir=path.parent)
+        try:
+            with os.fdopen(descriptor, 'w') as stream:
+                stream.write(value)
+            os.replace(temporary, path)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
+    path.chmod(0o600)
+    return path
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest='command', required=True)
@@ -137,9 +166,12 @@ def main():
     resolver.add_argument('--format', choices=['json'], default='json')
     renderer = commands.add_parser('render', help='Generate the effective LiteLLM configuration')
     renderer.add_argument('--output', type=Path)
+    commands.add_parser('runtime-env', help='Record the available immutable embedding artifact')
     arguments = parser.parse_args()
     try:
-        if arguments.command == 'resolve':
+        if arguments.command == 'runtime-env':
+            print(write_runtime_identity())
+        elif arguments.command == 'resolve':
             print(json.dumps(resolve(), indent=2))
         else:
             print(render(output=arguments.output))

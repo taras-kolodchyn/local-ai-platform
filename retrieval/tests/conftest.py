@@ -85,5 +85,5 @@ def retrieval_database():
 @pytest.fixture
 def db_settings(retrieval_database):
     with psycopg.connect(retrieval_database.database_url) as connection:
-        connection.execute('TRUNCATE source_chunks, ingestion_runs, workspace_vector_stores RESTART IDENTITY')
+        connection.execute('TRUNCATE source_chunks, ingestion_runs, workspace_vector_stores, repository_generations RESTART IDENTITY')
     return retrieval_database
