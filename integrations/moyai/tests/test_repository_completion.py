@@ -14,6 +14,39 @@ from repository_workflow import RepositoryWorkflow
 
 
 class RepositoryCompletionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_retry_uses_status_from_failed_phase_toolset_until_tools_refresh(self):
+        from github_issue import ISSUES
+        cap, ctx = self.setup_capability({'phase':'failed','github_issue':{'number':6,'turn':'old'}})
+        ctx.prompt = ISSUES + '6'
+        ctx.deps.surface, ctx.deps.visibility = 'web', 'private'
+        cap.retry_issue_analysis = AsyncMock(return_value=None)
+        cap.issue_analysis_step = AsyncMock(return_value='write_plan')
+        response = await cap.wrap_model_request(ctx,request_context=SimpleNamespace(messages=[]),handler=AsyncMock())
+        self.assertEqual(response.parts[0].tool_name,'repository_task_status')
+
+    async def test_issue_dispatches_plan_then_enters_changes_on_persisted_evidence(self):
+        from github_issue import ISSUES
+        from pydantic_ai.messages import ToolCallPart
+        task = {'phase':'analyzing','binding':{'verification_profile':'rust-retry'},
+                'citations':[{'path':'src/lib.rs'}],'baseline_failed':True,
+                'github_issue':{'number':6,'turn':'turn'}}
+        cap, ctx = self.setup_capability(task)
+        ctx.prompt = ISSUES + '6'
+        ctx.deps.surface, ctx.deps.visibility = 'web', 'private'
+        plan = SimpleNamespace(get_items=AsyncMock(return_value=[]))
+        cap.backend.plans = lambda session: plan
+        request = SimpleNamespace(messages=[])
+        handler = AsyncMock(return_value=ModelResponse(parts=[TextPart('Done')]))
+        response = await cap.wrap_model_request(ctx,request_context=request,handler=handler)
+        call = response.parts[0]
+        self.assertIsInstance(call,ToolCallPart)
+        self.assertEqual(call.tool_name,'write_plan')
+        items = call.args_as_dict()['items']
+        self.assertTrue(all(i['status']=='pending' for i in items))
+        plan.get_items.return_value = [SimpleNamespace(model_dump=lambda **kw:items[0])]
+        response = await cap.wrap_model_request(ctx,request_context=request,handler=handler)
+        self.assertEqual(response.parts[0].tool_name,'begin_repository_changes')
+
     async def test_issue_url_dispatches_exact_tool_once_and_obeys_authority(self):
         from github_issue import ISSUES
         from pydantic_ai.messages import ModelRequest, ToolReturnPart

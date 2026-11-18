@@ -134,7 +134,8 @@ class Ledger:
             if self._operation(db, session, operation):
                 return
             key = kind + '_calls'
-            if task[key] >= self.limits[kind] or task['deadline'] <= self.clock():
+            previous_calls = task.get('analysis_retry', {}).get(key, 0)
+            if task[key] - previous_calls >= self.limits[kind] or task['deadline'] <= self.clock():
                 if task['phase'] not in TERMINAL:
                     self._save(db, task, 'uncertain' if task.get('pending') else 'failed')
                     db.commit()
@@ -143,6 +144,26 @@ class Ledger:
             db.execute('INSERT INTO operations VALUES (?,?,?,?,?,?,?)',
                        (session, operation, kind, 'done', self.clock(), self.clock(), None))
             self._save(db, task)
+
+    def retry_issue_analysis(self, session, authority, number, turn, current_tree):
+        """One owner-initiated retry of an exhausted, pristine issue analysis."""
+        with self._transaction() as db:
+            task = self._task(db, session, authority)
+            ticket = task.get('github_issue') or {}
+            if (task['phase'] == 'analyzing' and ticket.get('number') == number
+                    and (task.get('analysis_retry') or {}).get('turn') == turn
+                    and task.get('original_tree') == current_tree):
+                return
+            exhausted = any(task[k + '_calls'] >= self.limits[k] for k in ('model','tool'))
+            phases = {r[0] for r in db.execute('SELECT phase FROM events WHERE session_id=?', (session,))}
+            if (task['phase'] != 'failed' or ticket.get('number') != number or turn == ticket.get('turn')
+                    or task.get('analysis_retry') or task.get('pending') or task['deadline'] <= self.clock()
+                    or task.get('original_tree') != current_tree or not current_tree or not exhausted
+                    or phases - {'preparing','analyzing','verifying','failed'}
+                    or (task['receipts'] and not task.get('baseline_failed'))):
+                raise RepositoryError('Only a pristine issue analysis that exhausted its budget can be retried once.')
+            task['analysis_retry'] = {'turn':turn, 'tool_calls':task['tool_calls'], 'model_calls':task['model_calls']}
+            self._save(db, task, 'analyzing')
 
     def cite(self, session, authority, citations):
         with self._transaction() as db:

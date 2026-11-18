@@ -170,8 +170,64 @@ class RepositoryWorkflow(AbstractCapability):
         with set_current_run_context(ctx):
             await authority.before_model_request(ctx, request_context)
 
+    @durable_operation('retry_issue_analysis')
+    async def retry_issue_analysis(self, session: str, authority: str, number: int, turn: str) -> str | None:
+        scope = (session, authority)
+        task = self.backend.ledger.status(*scope)
+        try:
+            claim = await exchange('open', number, session, turn)
+            if (claim['binding'] != task['binding'] or
+                    task['github_issue'] != {'number':number,'turn':claim['turn']}):
+                raise RepositoryError('The publisher claim differs from the pinned issue.')
+            manifest, _ = await asyncio.to_thread(self.backend.snapshot, task['binding'])
+            _, tree = scoped_tree(await self.backend.guest(scope, 'tree'), manifest)
+            self.backend.ledger.retry_issue_analysis(*scope, number, turn, tree)
+        except (ValueError, OSError) as error:
+            return str(error)
+        return None
+
+    @durable_operation('issue_analysis_step')
+    async def issue_analysis_step(self, session: str, authority: str) -> str | None:
+        task = self.backend.ledger.status(session, authority)
+        if task['binding'].get('verification_profile') != 'rust-retry' or not task['citations']:
+            return None
+        if not task.get('baseline_failed'):
+            return CHECK
+        items = [i.model_dump(mode='json') for i in await self.backend.plans(session).get_items()]
+        if not missing_change_evidence(task, items) and any(i.get('status') != 'completed' for i in items):
+            return BEGIN
+        return 'write_plan'
+
     async def route_issue(self, ctx, request_context, number):
         phase = await self.github_route(*scope_of(ctx), number)
+        if (phase in ('analyzing','verified','failed') and
+                (not workflow.in_workflow() or workflow.patched('local-github-issue-phases-v1'))):
+            if phase == 'failed':
+                await self.authorize_issue_response(ctx, request_context)
+                reason = await self.retry_issue_analysis(*scope_of(ctx), number, ctx.deps.turn_id)
+                if reason:
+                    return ModelResponse(parts=[TextPart(reason)], finish_reason='stop', provider_name='local-controller')
+                if not workflow.in_workflow() or workflow.patched('local-github-issue-retry-refresh-v1'):
+                    # Native tools for this request were prepared while the task was failed.
+                    return ModelResponse(parts=[ToolCallPart(STATUS, {}, tool_call_id='issue-resumed-'+ctx.deps.turn_id)],
+                                         finish_reason='tool_call', provider_name='local-controller')
+                phase = 'analyzing'
+            step = FINISH if phase == 'verified' else await self.issue_analysis_step(*scope_of(ctx))
+            if not step:
+                return None
+            call_id = f'issue-{step}-{ctx.deps.turn_id}'
+            if any(isinstance(p, (ToolReturnPart, RetryPromptPart)) and p.tool_call_id == call_id
+                   for message in request_context.messages for p in message.parts):
+                return None  # Let the model handle the real native tool diagnostic.
+            args = {}
+            if step == 'write_plan':
+                args['items'] = [
+                    {'content':'Implement the documented shared retry delay with a 30,000 ms ceiling, including extreme attempts.', 'status':'pending'},
+                    {'content':'Add integration regressions for both public functions and run the trusted Rust checks.', 'status':'pending'},
+                ]
+            await self.authorize_issue_response(ctx, request_context)
+            return ModelResponse(parts=[ToolCallPart(step, args, tool_call_id=call_id)],
+                                 finish_reason='tool_call', provider_name='local-controller')
         if phase not in ('open', 'preparing', 'other'):
             return None
         await self.authorize_issue_response(ctx, request_context)

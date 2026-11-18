@@ -58,6 +58,26 @@ class RepositoryLedgerTests(unittest.TestCase):
             self.ledger.charge('s', 'a', 'model', 'm2')
         self.assertEqual(self.ledger.status('s', 'a')['phase'], 'failed')
 
+    def test_one_owner_retry_preserves_the_original_baseline_and_total_usage(self):
+        self.ledger.attach('issue', 'a', self.binding, github_issue={'number':6,'turn':'original'})
+        self.ledger.imported('issue','a','base')
+        self.ledger.charge('issue','a','model','first')
+        with self.assertRaises(RepositoryError):
+            self.ledger.charge('issue','a','model','exhausted')
+        resume = self.ledger.retry_issue_analysis
+        for number, turn, tree in [(7,'next','base'),(6,'original','base'),(6,'next','changed')]:
+            with self.assertRaises(RepositoryError):
+                resume('issue','a',number,turn,tree)
+        resume('issue','a',6,'next','base')
+        resume('issue','a',6,'next','base')  # Activity reply lost after the transaction committed.
+        self.ledger.charge('issue','a','model','second')
+        task = self.ledger.status('issue','a')
+        self.assertEqual((task['phase'],task['model_calls'],task['original_tree']),('analyzing',2,'base'))
+        with self.assertRaises(RepositoryError):
+            self.ledger.charge('issue','a','model','exhausted-again')
+        with self.assertRaises(RepositoryError):
+            resume('issue','a',6,'third','base')
+
     def test_expired_admission_is_terminal(self):
         self.now = 121
         with self.assertRaises(RepositoryError):

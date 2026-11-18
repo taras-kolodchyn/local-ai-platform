@@ -12,6 +12,12 @@ The first execution profile covers the retry policy in `examples/rust-service` i
 
 The App transport uses GitHub REST API version `2026-03-10`. The registration and authentication flow was checked against GitHub documentation on 2026-11-18. [Manifest registration](https://docs.github.com/en/apps/sharing-github-apps/registering-a-github-app-from-a-manifest) · [App JWTs](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-json-web-token-jwt-for-a-github-app) · [Installation access tokens](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-an-installation-access-token-for-a-github-app)
 
+### Verified App run, 2026-11-18
+
+The private installation selected one repository. Moyai received [issue #6](https://github.com/taras-kolodchyn/local-ai-platform/issues/6) in a private web chat. The first turn exhausted its budget during planning. The controller now uses the Rust profile's native plan when the saved plan lacks the required acceptance criterion or marks every step complete before editing. Resubmitting the same URL can reopen an exhausted analysis once, within the original deadline, after the host confirms the claim and the controller verifies the pristine source tree.
+
+After a controller update, the successful turn in the same chat took 3m 55s. The attached baseline recorded 60,000 ms against a 30,000 ms limit. The repaired tree passed five project tests, including three added regressions, and four protected tests on its first repair validation. Both signed check receipts and the downloaded patch were independently verified. GitHub recorded `moyai-local-348144ed[bot]` as the author of the commit and the open draft. [Draft PR #8](https://github.com/taras-kolodchyn/local-ai-platform/pull/8) · [CI on commit 20eb589](https://github.com/taras-kolodchyn/local-ai-platform/actions/runs/44278872210)
+
 ## Run with the operator account
 
 1. Start the platform with `make up`.
