@@ -408,6 +408,25 @@ class RepositoryLedgerTests(unittest.TestCase):
         add_regression(receipt, 'supporting', 0)
         validate_checks(receipt)
 
+    def test_interleaving_contract_requires_real_failures_from_both_entry_points(self):
+        self.ledger.start_check('s','a','checks','base')
+        receipt = self.receipt('checks','base','passed')
+        submit = lambda: validate_checks(receipt, retry_contract='interleaved-extremes')
+        with self.assertRaises(RepositoryError):
+            submit()
+        runs = receipt['commands']
+        template = next(c for c in runs if c['kind']=='regression_counterexample')
+        build = next(c for c in runs if c['kind']=='counterexample_build')
+        triggers = ['bounded_backoff_ms','legacy_retry_delay_ms']
+        receipt['checks']['extreme_interleaving_detected'] = triggers
+        for trigger in triggers:
+            runs.extend([dict(build,kind='interleaving_build',trigger=trigger),
+                         dict(template,kind='interleaving_test',trigger=trigger)])
+        submit()
+        runs[-1]['output'] = 'no executed tests'
+        with self.assertRaises(RepositoryError):
+            submit()
+
     def test_supporting_only_regression_suite_fails(self):
         self.ledger.start_check('s','a','mix','base')
         receipt = self.receipt('mix','base','passed')

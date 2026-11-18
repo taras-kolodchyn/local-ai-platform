@@ -383,9 +383,9 @@ def mandatory_commands_passed(commands):
               'counterexample_build','regression','regression_counterexample','project'}
     if not required <= {row.get('kind') for row in commands}:
         return False
-    native={'oracle','baseline_probe','regression','regression_counterexample','project'}
+    native={'oracle','baseline_probe','regression','regression_counterexample','interleaving_test','project'}
     for row in commands:
-        expected=row.get('expected_exit_code') if row.get('kind')=='regression_counterexample' else 0
+        expected=row.get('expected_exit_code') if row.get('kind') in ('regression_counterexample','interleaving_test') else 0
         if type(expected) is not int or expected not in (0,101):
             return False
         if row.get('exit_code')!=expected or row.get('state')!=('failed' if expected else 'passed'):
@@ -474,6 +474,24 @@ def counterexample_source(candidate, operator_template):
         body=re.sub(r'\battempt\b',argument,body)
         candidate=candidate[:opening+1]+body+candidate[end-1:]
     return candidate
+
+
+def interleaving_source(candidate, trigger):
+    # Preserve the real bounded calculation and introduce state leakage in just one direction.
+    names = ('bounded_backoff_ms','legacy_retry_delay_ms')
+    if trigger not in names:
+        raise ValueError('unknown retry entry point')
+    _, opening, end, arg = function_span(candidate, names[0])
+    pure = candidate[opening:end]
+    for name in names:
+        _, opening, end, argument = function_span(candidate, name)
+        if name == trigger:
+            prefix = f'if {argument} == u32::MAX {{ __MOYAI_EXTREME.set(true); }}'
+        else:
+            prefix = f'if {argument} <= 2 && __MOYAI_EXTREME.get() {{ return 30_000; }}'
+        candidate = candidate[:opening] + '{' + prefix + f' __moyai_pure_delay({argument})' + '}' + candidate[end:]
+    return (candidate + f'\nfn __moyai_pure_delay({arg}: u32) -> u64 {pure}\n'
+            'std::thread_local! { static __MOYAI_EXTREME: std::cell::Cell<bool> = const {std::cell::Cell::new(false)}; }\n')
 
 
 def passed_test_names(output):
@@ -596,7 +614,7 @@ class Guest:
                   'cancel': {'operation_id'}, 'status': {'operation_id'}}
         if not isinstance(op, str) or op not in fields:
             raise ValueError('unknown operation or fields')
-        supplied = set(request) - ({'receipt_key'} if op == 'check' else {'receipt_key', 'task_id', 'tree_hash', 'profile'} if op == 'cancel' else set())
+        supplied = set(request) - ({'receipt_key','retry_contract'} if op == 'check' else {'receipt_key', 'task_id', 'tree_hash', 'profile'} if op == 'cancel' else set())
         if supplied != {'op', 'conversation_id'} | fields[op]:
             raise ValueError('unknown operation or fields')
         conversation = request['conversation_id']
@@ -615,6 +633,9 @@ class Guest:
             raise ValueError('invalid receipt key')
         if request['profile'] not in ('rust-retry', 'rust-retry-tests') or type(request['timeout_seconds']) not in (int, float) or not 1 <= request['timeout_seconds'] <= 300:
             raise ValueError('invalid fixed profile or timeout')
+        if 'retry_contract' in request and (request['retry_contract'] != 'interleaved-extremes'
+                or request['profile'] != 'rust-retry-tests'):
+            raise ValueError('unknown retry acceptance contract')
         if state_path.exists():
             return self.operation(state_path)
         manifest = load_json(directory / '.repository-state' / 'manifest.json')
@@ -1083,6 +1104,24 @@ class Guest:
                     repaired_result=native(repaired,project_env,[identity],'regression',test_path=name) if repaired else None
                     counter_result=native(broken,counter_env,[identity],'regression_counterexample',passed=None,test_path=name) if broken else None
                     proofs.append(regression_proof(name,identity,repaired_result,broken is not None,counter_result))
+            if changed_tests and request.get('retry_contract') == 'interleaved-extremes':
+                detected = []
+                for trigger in ('bounded_backoff_ms','legacy_retry_delay_ms'):
+                    root, target = scratch/trigger, scratch/'targets'/trigger
+                    files = {**source,'src/lib.rs':interleaving_source(source['src/lib.rs'].decode(), trigger).encode()}
+                    self.materialize(root, files)
+                    inputs.append((root,{p:hashlib.sha256(v).hexdigest() for p,v in files.items()}))
+                    compiled, env = build(root, target, 'interleaving_build')
+                    compiled['trigger'] = trigger
+                    for path, identities in changed_tests.items():
+                        binary = self.artifact(compiled, target, PurePosixPath(path).stem)
+                        if binary:
+                            for identity in identities:
+                                run = native(binary, env, [identity], 'interleaving_test', passed=None, test_path=path)
+                                run['trigger'] = trigger
+                                if run['native_completed'] and run['exit_code'] == 101 and trigger not in detected:
+                                    detected.append(trigger)
+                checks['extreme_interleaving_detected'] = detected
             # Execute each actual project binary independently from Cargo metadata.
             if project_build['state']=='passed':
                 for item in project_build.get('artifacts',[]):
@@ -1107,6 +1146,10 @@ class Guest:
                 receipt['failure_code']='regression_requirement'
                 receipt['error']=('Every added test must pass the candidate and complete on the compiled counterexample; at least one must fail its 60,000 ms policy. See regression_proofs for each identity.')
             receipt['state']='passed' if (checks['oracle_passed'] and checks['regression_counterexample_passed'] and checks['project_tests_run']>0 and mandatory_commands_passed(commands) and not receipt['launch_errors']) else 'failed'
+            if changed_tests and request.get('retry_contract') and len(checks['extreme_interleaving_detected']) != 2:
+                receipt.update(state='failed', failure_code='extreme_interleaving',
+                    error='Exercise u32::MAX on each retry entry point and assert exact small delays on the other '
+                          'in both call orders. The new tests must detect both cross-call state regressions.')
         except TimeoutError:
             receipt['state']='timeout'
         except InterruptedError:

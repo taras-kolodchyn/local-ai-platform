@@ -19,6 +19,14 @@ from github_issue import ISSUES, issue_number, user_issue
 
 
 class IssuePublishingTests(unittest.TestCase):
+    def test_issue_scope_selects_extreme_interleaving_only_for_the_tests_profile(self):
+        basic = {'number':29,'turn':'turn'}
+        scope = lambda text, profile: publisher.issue_scope(29,'turn',{'title':text},{'verification_profile':profile})
+        for text in ('Interleaved calls after u32::MAX','Interleave both calls after an extreme attempt'):
+            self.assertEqual(scope(text,'rust-retry-tests'), {**basic,'retry_contract':'interleaved-extremes'})
+            self.assertEqual(scope(text,'rust-retry'), basic)
+        self.assertEqual(scope('Check an extreme attempt','rust-retry-tests'), basic)
+
     def test_only_direct_root_web_issue_url(self):
         deps = SimpleNamespace(root_run_id='t', visibility='private', surface='web')
         ctx = SimpleNamespace(run_id='t', deps=deps, prompt=ISSUES+'6')

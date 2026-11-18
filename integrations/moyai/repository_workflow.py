@@ -12,7 +12,7 @@ from pydantic_ai.messages import ModelResponse, RetryPromptPart, TextPart, ToolC
 from pydantic_ai.toolsets import FunctionToolset
 from temporalio import workflow
 
-from github_issue import ISSUES, PULLS, exchange, issue_number, user_issue
+from github_issue import ISSUES, PULLS, exchange, issue_number, issue_scope, user_issue
 from repository_backend import NativeFiles, RepositoryBackend, coverage_path, fingerprint, scoped_tree, workspace_path
 from repository_ledger import ARTIFACT_PATHS, RepositoryError, approved_review, baseline_established, commands_stopped, has_change_citation, missing_change_evidence
 
@@ -89,7 +89,7 @@ class RepositoryWorkflow(AbstractCapability):
             scope = scope_of(ctx)
             try:
                 reply = await exchange('open', number, scope[0], ctx.deps.turn_id)
-                ticket = {'number':number, 'turn':reply['turn']}
+                ticket = issue_scope(number, reply['turn'], reply['issue'], reply['binding'])
                 binding = reply['binding']
                 task = await backend.open(scope, binding['repository_id'], ctx.deps.actor_id,
                                           github_issue=ticket, expected_binding=binding)
@@ -189,7 +189,7 @@ class RepositoryWorkflow(AbstractCapability):
         try:
             claim = await exchange('open', number, session, turn)
             if (claim['binding'] != task['binding'] or
-                    task['github_issue'] != {'number':number,'turn':claim['turn']}):
+                    task['github_issue'] != issue_scope(number, claim['turn'], claim['issue'], claim['binding'])):
                 raise RepositoryError('The publisher claim differs from the pinned issue.')
             manifest, _ = await asyncio.to_thread(self.backend.snapshot, task['binding'])
             _, tree = scoped_tree(await self.backend.guest(scope, 'tree'), manifest)

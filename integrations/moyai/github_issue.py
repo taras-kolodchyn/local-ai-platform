@@ -19,6 +19,15 @@ def issue_number(prompt):
     return int(match[1]) if match else None
 
 
+def issue_scope(number, turn, issue, binding):
+    scope = {'number':number, 'turn':turn}
+    text = (issue.get('title','') + '\n' + issue.get('body','')).lower()
+    if (binding.get('verification_profile') == 'rust-retry-tests' and 'interleav' in text
+            and ('u32::max' in text or re.search(r'\bextreme (?:attempt|input)s?\b', text))):
+        scope['retry_contract'] = 'interleaved-extremes'
+    return scope
+
+
 def user_issue(ctx):
     deps = ctx.deps
     if (ctx.run_id == deps.root_run_id and getattr(deps, 'visibility', None) == 'private'
