@@ -25,6 +25,8 @@ class IssuePublishingTests(unittest.TestCase):
         for text in ('Interleaved calls after u32::MAX','Interleave both calls after an extreme attempt'):
             self.assertEqual(scope(text,'rust-retry-tests'), {**basic,'retry_contract':'interleaved-extremes'})
             self.assertEqual(scope(text,'rust-retry'), basic)
+        self.assertEqual(scope('Interleave a capped attempt, u32::MAX, then attempts 0 and 2','rust-retry-tests'),
+                         {**basic,'retry_contract':'interleaved-capped-and-extreme'})
         self.assertEqual(scope('Check an extreme attempt','rust-retry-tests'), basic)
 
     def test_restart_requires_ended_owner_turn_and_no_artifacts_or_remote_publication(self):
