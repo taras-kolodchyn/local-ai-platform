@@ -119,7 +119,14 @@ search_payload=$(jq -cn '{query:"What is the required maximum retry delay?",repo
 curl --fail --silent --show-error --max-time 300 \
   --header 'Content-Type: application/json' --data "$search_payload" \
   http://127.0.0.1:8000/search > "$smoke/search.json"
-jq -e '.count >= 1 and any(.results[]; .path == "docs/architecture-rules.md" or .path == "src/lib.rs")' "$smoke/search.json" >/dev/null
+# A regression test can rank ahead of prose and still cite the correct policy.
+retry_policy_evidence='def cites_retry_ceiling:
+  .repository == "rust-service" and (.path | length) > 0 and
+  .start_line >= 1 and .end_line >= .start_line and
+  (.content | test("retry|backoff"; "i")) and
+  (.content | test("\\b(30[,_]?000|30 seconds)\\b"; "i"));'
+jq -e "$retry_policy_evidence"' .count >= 1 and any(.results[]; cites_retry_ceiling)' "$smoke/search.json" >/dev/null \
+  || die "Search returned no cited evidence of the Rust retry ceiling"
 ok "Incremental pgvector ingestion and retrieval passed"
 
 # Knowledge registration remains available without starting legacy agent runtimes.
@@ -136,14 +143,17 @@ awk '/^data: / {sub(/^data: /, ""); print; exit}' "$smoke/mcp-tools.sse" > "$smo
 jq -e '[.result.tools[].name] | index("local_retrieval-search_code") != null and index("local_retrieval-get_chunk") != null' "$smoke/mcp-tools.json" >/dev/null
 ok "Retrieval tools are discoverable through the LiteLLM MCP Gateway"
 
-mcp_retrieval_call=$(jq -cn '{jsonrpc:"2.0",id:2,method:"tools/call",params:{name:"local_retrieval-search_code",arguments:{query:"required maximum retry delay",repository:"rust-service",limit:2}}}')
+mcp_retrieval_call=$(jq -cn '{jsonrpc:"2.0",id:2,method:"tools/call",params:{name:"local_retrieval-search_code",arguments:{query:"required maximum retry delay",repository:"rust-service",path_prefix:"docs/",limit:2}}}')
 curl --fail --silent --show-error --max-time 300 \
   --header "Authorization: Bearer $key" \
   --header 'Content-Type: application/json' \
   --header 'Accept: application/json, text/event-stream' \
   --data "$mcp_retrieval_call" "$base/local_retrieval/mcp" > "$smoke/mcp-retrieval-call.sse"
 awk '/^data: / {sub(/^data: /, ""); print; exit}' "$smoke/mcp-retrieval-call.sse" > "$smoke/mcp-retrieval-call.json"
-jq -e '.result.isError == false and (.result.structuredContent.result | fromjson | any(.[]; .path == "docs/architecture-rules.md" or .path == "README.md"))' "$smoke/mcp-retrieval-call.json" >/dev/null
+jq -e "$retry_policy_evidence"' .result.isError == false and
+  (.result.structuredContent.result | fromjson |
+    any(.[]; .path == "docs/architecture-rules.md" and cites_retry_ceiling))' "$smoke/mcp-retrieval-call.json" >/dev/null \
+  || die "The documentation-scoped MCP search did not cite the documented retry ceiling"
 ok "Retrieval MCP tool call returned indexed policy context"
 
 curl --fail --silent --show-error --max-time 60 \
