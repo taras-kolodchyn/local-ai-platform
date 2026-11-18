@@ -30,6 +30,17 @@ model_list:
       description: __EMBEDDING_DESCRIPTION__
       mode: embedding
 
+guardrails:
+  - guardrail_name: headroom-compression
+    litellm_params:
+      guardrail: headroom
+      mode: pre_call
+      api_base: http://headroom:8787
+      api_key: os.environ/HEADROOM_API_KEY
+      default_on: true
+      ccr_retrieval: false
+      unreachable_fallback: fail_open
+
 litellm_settings:
   callbacks:
     - prometheus

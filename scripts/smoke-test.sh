@@ -59,6 +59,7 @@ chat_payload=$(jq -cn '{model:"local-qwen",messages:[{role:"user",content:"Reply
 api_post /v1/chat/completions "$chat_payload" "$smoke/chat.json"
 jq -e '.choices[0].message.content | type == "string" and length > 0' "$smoke/chat.json" >/dev/null
 ok "Chat Completions route returned model output"
+python3 scripts/compression-smoke.py
 
 responses_payload=$(jq -cn '{
   model:"local-qwen",

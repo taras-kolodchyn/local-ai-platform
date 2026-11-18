@@ -45,6 +45,7 @@ ensure_secret() {
 ensure_secret LITELLM_MASTER_KEY "sk-local-$(generate_hex 24)"
 ensure_secret POSTGRES_PASSWORD "$(generate_hex 24)"
 ensure_secret REDIS_PASSWORD "$(generate_hex 24)"
+ensure_secret HEADROOM_PROXY_TOKEN "$(generate_hex 32)"
 ensure_secret GRAFANA_ADMIN_PASSWORD "$(generate_hex 18)"
 ensure_secret MCP_POSTGRES_PASSWORD "$(generate_hex 24)"
 
@@ -53,7 +54,7 @@ replace_value WORKSPACE_GID "$(id -g)"
 
 load_env
 
-for variable in LITELLM_MASTER_KEY POSTGRES_PASSWORD REDIS_PASSWORD GRAFANA_ADMIN_PASSWORD MCP_POSTGRES_PASSWORD; do
+for variable in LITELLM_MASTER_KEY POSTGRES_PASSWORD REDIS_PASSWORD HEADROOM_PROXY_TOKEN GRAFANA_ADMIN_PASSWORD MCP_POSTGRES_PASSWORD; do
   value=${!variable:-}
   [[ -n "$value" && "$value" != "GENERATE_ME" ]] || die "$variable is unset or still uses GENERATE_ME"
 done

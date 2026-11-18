@@ -90,6 +90,24 @@ services:
         limits:
           memory: 512M
 
+  headroom:
+    <<: *service-defaults
+    image: ghcr.io/headroomlabs-ai/headroom:0.44.0@sha256:10ef5f71c4cae3a02ca28107dfcf379aa73314ff26544c1f9988140e71f732f4
+    environment:
+      HEADROOM_HOST: 0.0.0.0
+      HEADROOM_COMPRESS_ALLOW_REMOTE: "1"
+      # This deployment only serves /v1/compress. No inference provider is configured.
+      HEADROOM_SKIP_UPSTREAM_CHECK: "1"
+      HEADROOM_PROXY_TOKEN: ${HEADROOM_PROXY_TOKEN:?run make bootstrap}
+      HEADROOM_DISABLE_KOMPRESS: "1"
+      HF_HUB_OFFLINE: "1"
+      HEADROOM_TELEMETRY: "off"
+      LITELLM_LOCAL_MODEL_COST_MAP: "True"
+    tmpfs:
+      - /root/.headroom:mode=0700
+    networks:
+      - compression
+
   litellm:
     <<: *service-defaults
     image: ghcr.io/berriai/litellm:v1.109.1
@@ -98,6 +116,7 @@ services:
       - litellm --config /app/config.yaml --port 4000 --num_workers 1 2>&1 | tee -a /var/log/local-ai/litellm.log
     environment:
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?run make bootstrap}
+      HEADROOM_API_KEY: ${HEADROOM_PROXY_TOKEN:?run make bootstrap}
       UI_USERNAME: ${UI_USERNAME:-admin}
       UI_PASSWORD: ${UI_PASSWORD:-${LITELLM_MASTER_KEY}}
       DATABASE_URL: postgresql://localai:${POSTGRES_PASSWORD}@postgres:5432/litellm
@@ -133,6 +152,7 @@ services:
       - gateway
       - data
       - observability
+      - compression
     deploy:
       resources:
         limits:
@@ -419,6 +439,8 @@ volumes:
   grafana_data:
 
 networks:
+  compression:
+    internal: true
   gateway:
   mcp-host:
   observability-host:

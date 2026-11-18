@@ -46,6 +46,33 @@ the old workspace A2A registrations, verifies health, gateway, cache and scoped
 knowledge access, and writes optional Codex/Hermes client examples under `.local/`.
 Those client examples do not register or start additional agents in LiteLLM.
 
+### Local prompt compression
+
+LiteLLM automatically applies Headroom to eligible requests from all clients,
+including Moyai, before forwarding them to the model. Headroom runs on a
+private Docker network shared with the gateway. It uses
+structural compression for eligible history such as older tool results. LiteLLM
+preserves system messages, the latest user instruction and the latest assistant
+tool exchange. If the sidecar is unavailable, the gateway forwards the original
+context. To compare one request with compression bypassed, send the header
+`x-headroom-bypass: true`. The gateway policy lives in `litellm/config.yaml`.
+[LiteLLM integration](https://docs.litellm.ai/docs/proxy/headroom)
+· [Headroom compression API](https://docs.headroomlabs.ai/docs/proxy#post-v1compress)
+
+Verified on Apple Silicon on 2026-11-19 with LiteLLM 1.109.1 and Headroom
+0.44.0. On a synthetic 240-line timestamped log, Qwen's reported input fell
+from 6,558 to 280 tokens on both API routes. The answer retained the exact
+error code. An unstructured repetitive text sample yielded no reduction.
+Run `python3 scripts/compression-smoke.py` against the running stack to repeat
+the log comparison. It also runs during `make smoke-test`.
+
+In a live Moyai repair of the Rust retry ceiling on the same date, both patches
+passed independent acceptance. The baseline took 213.8 seconds and used
+239,112 input tokens across 20 model calls. With compression, the task took
+241.2 seconds and used 267,634 input tokens across 22 calls. Headroom reported
+611 tokens removed across the compressed run. The agent took different tool
+steps, so the elapsed difference includes variation between runs.
+
 `make up` seeds the **Skills** section of the [local LiteLLM dashboard](http://127.0.0.1:4000/ui)
 with [25 reviewed, text-only workflows](integrations/moyai/skills) adapted from
 [Addy Osmani’s MIT-licensed catalog](https://github.com/addyosmani/agent-skills/tree/39b723ceebf81474d0557c1fecd01eddab585563/skills).
