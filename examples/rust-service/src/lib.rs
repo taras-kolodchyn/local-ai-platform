@@ -32,9 +32,17 @@ async fn reports(Query(filter): Query<ReportFilter>) -> impl IntoResponse {
     (StatusCode::OK, Json(ReportResponse { query }))
 }
 
+/// Shared retry delay helper with a 30,000 ms ceiling.
+///
+/// Starts at 100 ms, doubles with each attempt, and caps at 30,000 ms.
+/// This function handles u32::MAX correctly by capping at the ceiling.
+pub fn bounded_backoff_ms(attempt: u32) -> u64 {
+    100_u64.saturating_mul(2_u64.saturating_pow(attempt)).min(30_000)
+}
+
 #[deprecated(note = "replace with the shared bounded_backoff_ms policy")]
 pub fn legacy_retry_delay_ms(attempt: u32) -> u64 {
-    100_u64.saturating_mul(2_u64.saturating_pow(attempt)).min(60_000)
+    bounded_backoff_ms(attempt)
 }
 
 pub fn app() -> Router {
