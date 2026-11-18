@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Register immutable stores and a read-only gateway credential; never print keys."""
 import argparse
+import fcntl
 import hashlib
 import json
 from pathlib import Path
@@ -65,6 +66,14 @@ def registrations(root, candidate=None):
 
 def provision_context(admin, root=ROOT, registration=None):
     root = Path(root)
+    directory = root / '.local/repositories'
+    directory.mkdir(parents=True, exist_ok=True)
+    with (directory / '.publish.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        return _provision_context_locked(admin, root, registration)
+
+
+def _provision_context_locked(admin, root, registration):
     rows = registrations(root, registration)
     stores = sorted({row['store_id'] for row in rows})
     local = root / '.local/moyai'
@@ -142,8 +151,11 @@ def main():
         except HTTPError as exc:
             raise RuntimeError('Gateway returned ' + str(exc.code)) from None
 
-    registration = json.loads(args.registration.read_text()) if args.registration else None
-    provision_context(admin, ROOT, registration)
+    if args.registration:
+        # register_catalog holds .publish.lock through this callback and its atomic rename.
+        _provision_context_locked(admin, ROOT, json.loads(args.registration.read_text()))
+    else:
+        provision_context(admin, ROOT)
     print('Repository context stores and restricted credential reconciled')
 
 

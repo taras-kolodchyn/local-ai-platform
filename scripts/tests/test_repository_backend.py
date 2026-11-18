@@ -164,8 +164,8 @@ class BackendTests(unittest.IsolatedAsyncioTestCase):
             scoped_tree(tree,self.manifest)
 
     async def test_patch_applies_with_unterminated_last_lines(self):
-        before = {'src/lib.rs':b'baseline\nold','Cargo.toml':b'protected\n'}
-        after = before | {'src/lib.rs':b'baseline\nnew','tests/new.rs':b'test\n'}
+        before = {'src/lib.rs':'// old\u2028comment\r\nold'.encode(),'Cargo.toml':b'protected\n'}
+        after = before | {'src/lib.rs':'// new\u2028comment\r\nnew'.encode(),'tests/new.rs':b'test\n'}
         for name,data in before.items():
             target = self.directory/name
             target.parent.mkdir(exist_ok=True)

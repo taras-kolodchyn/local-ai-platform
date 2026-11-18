@@ -417,7 +417,8 @@ class Ledger:
             op = 'artifact:' + path
             row = self._operation(db, session, op)
             if row:
-                return json.loads(row[2])['turn'], False
+                reserved_turn = json.loads(row[2])['turn']
+                return reserved_turn, row[1] == 'pending' and reserved_turn == turn
             db.execute('INSERT INTO operations VALUES (?,?,?,?,?,?,?)',
                        (session, op, 'artifact', 'pending', self.clock(), None, json.dumps({'turn':turn})))
             return turn, True
@@ -457,10 +458,14 @@ def authentic_receipt(receipt, key):
     return hmac.compare_digest(mac, hmac.digest(bytes.fromhex(key), payload, 'sha256').hex())
 
 
+def has_change_citation(task):
+    return any(c.get('path') in {'src/lib.rs', 'README.md', 'docs/architecture-rules.md'} for c in task['citations'])
+
+
 def missing_change_evidence(task, items):
     if task['phase'] != 'analyzing':
         return 'Repository changes require the analyzing phase.'
-    if not any(c.get('path') in {'src/lib.rs', 'README.md', 'docs/architecture-rules.md'} for c in task['citations']):
+    if not has_change_citation(task):
         return 'Use search_repository to cite the implementation or documented retry policy.'
     if not task.get('baseline_failed'):
         return 'Use run_repository_checks to establish the failing original baseline.'

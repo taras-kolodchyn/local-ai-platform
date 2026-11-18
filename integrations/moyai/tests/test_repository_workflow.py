@@ -3,6 +3,7 @@ from pathlib import Path
 from types import SimpleNamespace
 import tempfile
 import unittest
+from unittest.mock import AsyncMock, patch
 
 from pydantic_ai.exceptions import ToolFailed
 from pydantic_ai.messages import ToolCallPart
@@ -74,7 +75,7 @@ class WorkflowTests(unittest.IsolatedAsyncioTestCase):
             # Authorize a native turn and exercise the same storage write/read used by Files.
             from hashlib import sha256
             from moyai.contracts import NewMessage, NewSession
-            from moyai.models import User
+            from moyai.models import Artifact, User
             from pydantic_ai.workspaces import LocalWorkspaceBackend, Workspace
             from repository_backend import NativeFiles
             from sqlalchemy import select
@@ -97,10 +98,22 @@ class WorkflowTests(unittest.IsolatedAsyncioTestCase):
                 await files.deliver(ctx, turn.id, target, digest, False)
             with self.assertRaisesRegex(ValueError, 'differ'):
                 await files.deliver(ctx, turn.id, target, '0'*64, True)
-            receipt = await files.deliver(ctx, turn.id, target, digest, True)
+            verify_source = files.verify_source
+            async def transient_read(*args):
+                if preflight.await_count == 1:
+                    raise OSError('Temporary read failure before Files upload')
+                await verify_source(*args)
+            with patch.object(files, 'verify_source', new=AsyncMock(side_effect=transient_read)) as preflight, \
+                    patch.object(files, 'save', wraps=files.save) as save:
+                receipt = await files.deliver(ctx, turn.id, target, digest, True)
+                self.assertEqual(preflight.await_count, 2)
+                save.assert_awaited_once()
             self.assertEqual(receipt['sha256'], digest)
             self.assertEqual(receipt['download_url'], '/api/files/' + receipt['id'])
             self.assertEqual(receipt, await files.deliver(ctx, turn.id, target, digest, False))
+            async with runtime.database.sessions() as db:
+                records = await db.scalars(select(Artifact).where(Artifact.turn_id == turn.id, Artifact.name == target))
+                self.assertEqual([record.id for record in records], [receipt['id']])
 
         finally:
             await runtime.close()

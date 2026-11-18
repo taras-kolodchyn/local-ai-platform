@@ -14,6 +14,43 @@ from repository_workflow import RepositoryWorkflow
 
 
 class RepositoryCompletionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_implementing_issue_retries_premature_final_answer_with_native_limit(self):
+        from github_issue import ISSUES
+        from pydantic_ai.exceptions import UnexpectedModelBehavior
+        from pydantic_ai.messages import RetryPromptPart
+
+        cap, ctx = self.setup_capability({'phase':'implementing','github_issue':{'number':6}})
+        ctx.deps.surface, ctx.deps.visibility = 'web', 'private'
+        cap.backend.ledger.charge = lambda *args: None
+        attempts = []
+
+        def respond(messages, info):
+            attempts.append([p for message in messages for p in message.parts if isinstance(p, RetryPromptPart)])
+            return ModelResponse(parts=[TextPart('Done')])
+
+        agent = Agent(FunctionModel(respond), capabilities=[cap], retries=2)
+        with self.assertRaises(UnexpectedModelBehavior):
+            await agent.run(ISSUES + '6', deps=ctx.deps, run_id='root')
+        self.assertEqual(len(attempts), 3)
+        self.assertIn('run_repository_checks', str(attempts[1][-1].content))
+
+    async def test_new_issue_searches_for_change_evidence_before_baseline_or_planning(self):
+        from github_issue import ISSUES
+        from pydantic_ai.messages import ToolCallPart
+        for citations in ([], [{'path':'Cargo.lock'}]):
+            with self.subTest(citations=citations):
+                task = {'phase':'analyzing', 'binding':{'verification_profile':'rust-retry'},
+                        'citations':citations, 'github_issue':{'number':6,'turn':'turn'}}
+                cap, ctx = self.setup_capability(task)
+                ctx.prompt = ISSUES + '6'
+                ctx.deps.surface, ctx.deps.visibility = 'web', 'private'
+                response = await cap.wrap_model_request(ctx,request_context=SimpleNamespace(messages=[]),
+                    handler=AsyncMock(return_value=ModelResponse(parts=[TextPart('Done')])))
+                call = response.parts[0]
+                self.assertIsInstance(call,ToolCallPart)
+                self.assertEqual(call.tool_name,'search_repository')
+                self.assertIn('retry',call.args_as_dict()['query'])
+
     async def test_retry_uses_status_from_failed_phase_toolset_until_tools_refresh(self):
         from github_issue import ISSUES
         cap, ctx = self.setup_capability({'phase':'failed','github_issue':{'number':6,'turn':'old'}})

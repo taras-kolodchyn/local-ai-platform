@@ -240,12 +240,14 @@ class RepositoryLedgerTests(unittest.TestCase):
         self.ledger.stage_delivery('s','a','repaired',files,'good')
         for path, digest in files.items():
             self.assertEqual(self.ledger.reserve_file('s','a',path,'turn'),('turn', True))
+            self.assertEqual(self.ledger.reserve_file('s','a',path,'turn'),('turn', True))
             self.assertEqual(self.ledger.reserve_file('s','a',path,'new-turn'),('turn', False))
             with self.assertRaises(RepositoryError):
                 self.ledger.complete('s','a','repaired')
             with self.assertRaises(RepositoryError):
                 self.ledger.delivered('s','a',path,{'sha256':'wrong','name':path,'id':'native'})
             self.ledger.delivered('s','a',path,{'sha256':digest,'name':path,'id':'native'})
+            self.assertEqual(self.ledger.reserve_file('s','a',path,'turn'),('turn', False))
         self.ledger.complete('s','a','repaired',turn='delivery-turn')
         self.assertEqual(self.ledger.status('s','a')['phase'],'completed')
         self.assertEqual(self.ledger.status('s','a')['completion_turn'],'delivery-turn')

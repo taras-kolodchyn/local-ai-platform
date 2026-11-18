@@ -1,9 +1,12 @@
 """Source access credentials are separate, least-privilege and reconcilable."""
 import hashlib
+import fcntl
 import importlib.util
 import json
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import tempfile
+import threading
 import unittest
 from urllib.error import HTTPError
 
@@ -113,3 +116,22 @@ class ContextProvisioningTests(unittest.TestCase):
         key = (self.local/'moyai/context-gateway-key').read_text().strip()
         self.assertEqual(self.keys[key]['allowed_routes'], ['/__local_repository_context_unregistered__'])
         self.assertEqual(self.keys[key]['object_permission']['vector_stores'], [])
+
+    def test_startup_waits_for_pending_catalog_publication(self):
+        directory = self.local / 'repositories'
+        entered = threading.Event()
+        def startup():
+            entered.set()
+            self.module.provision_context(self.admin, self.root)
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            with (directory / '.publish.lock').open('a') as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX)
+                future = executor.submit(startup)
+                self.assertTrue(entered.wait(3))
+                with self.assertRaises(TimeoutError):
+                    future.result(timeout=0.2)
+                (directory / 'catalog.json').write_text(json.dumps({'schema_version': 1,
+                    'repositories': [self.row], 'indexed_generations': [self.row]}))
+            future.result(timeout=3)
+        key = (self.local / 'moyai/context-gateway-key').read_text().strip()
+        self.assertEqual(self.keys[key]['allowed_routes'], ['/v1/vector_stores/vs_fixture/search'])

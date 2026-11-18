@@ -70,6 +70,15 @@ class RepositoryAcceptanceTests(unittest.TestCase):
     def test_requires_real_baseline_and_current_authenticated_result(self):
         self.validator()(*self.evidence())
 
+    def test_github_task_requires_its_own_completed_intake_tool(self):
+        evidence = self.evidence()
+        evidence[0]['github_issue'] = {'number':6,'turn':'turn'}
+        with self.assertRaises(ValueError):
+            self.validator()(*evidence)
+        evidence[4].remove('open_repository')
+        evidence[4].add('open_github_issue')
+        self.validator()(*evidence)
+
     def test_rejects_forged_stale_or_incomplete_success_evidence(self):
         changes = [lambda e: e[1].update(tree_hash='stale'),
                    lambda e: e[1].update(receipt_authenticity=[True, False]),

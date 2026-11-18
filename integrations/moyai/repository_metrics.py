@@ -30,6 +30,7 @@ def render_metrics(path=Path('/data/local-tasks.db')):
             return 'local_repository_task_metrics_up 0\n'
         with closing(sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True, timeout=2)) as db:
             db.execute('PRAGMA query_only=ON')
+            db.execute('BEGIN')
             tasks = db.execute('SELECT session_id,phase,created FROM tasks').fetchall()
             events = db.execute('SELECT session_id,phase,ts FROM events ORDER BY session_id,ts,rowid').fetchall()
         groups = defaultdict(list)
@@ -42,9 +43,10 @@ def render_metrics(path=Path('/data/local-tasks.db')):
             for (previous, started), (_, ended) in zip(history, history[1:]):
                 if previous not in SETTLED and ended >= started:
                     phases[previous].append(ended - started)
-            terminal = next((ts for state, ts in history if state in SETTLED), None)
-            if phase in SETTLED and terminal is not None and terminal >= created:
-                durations.append(terminal - created)
+            if phase in SETTLED and history and history[-1][0] == phase:
+                finished = history[-1][1]
+                if finished >= created:
+                    durations.append(finished - created)
         counts = Counter(phase for _, phase, _ in tasks if phase in PHASES)
         result = ['local_repository_task_metrics_up 1', '# TYPE local_repository_tasks gauge']
         result.extend(f'local_repository_tasks{{phase="{phase}"}} {counts[phase]}' for phase in PHASES)

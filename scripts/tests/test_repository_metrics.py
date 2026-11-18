@@ -1,4 +1,5 @@
 """Operational metrics expose bounded aggregates rather than task identities."""
+from contextlib import closing
 import importlib.util
 from pathlib import Path
 import sqlite3
@@ -47,12 +48,14 @@ class RepositoryMetricsTests(unittest.TestCase):
             self.fail('Repository task metrics are missing')
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'tasks.db'
-            with sqlite3.connect(path) as db:
+            with closing(sqlite3.connect(path)) as db, db:
                 db.executescript('CREATE TABLE tasks (session_id TEXT,phase TEXT,created REAL);'
                                  'CREATE TABLE events (session_id TEXT,phase TEXT,ts REAL);')
                 db.execute('INSERT INTO tasks VALUES (?,?,?)', ('private-session', 'completed', 100))
                 db.executemany('INSERT INTO events VALUES (?,?,?)', [
                     ('private-session', 'analyzing', 100),
+                    ('private-session', 'failed', 102),
+                    ('private-session', 'analyzing', 104),
                     ('private-session', 'implementing', 105),
                     ('private-session', 'verifying', 115),
                     ('private-session', 'completed', 130)])

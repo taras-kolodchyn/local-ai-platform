@@ -1,5 +1,6 @@
 from hashlib import sha256
 import importlib.util
+import json
 from pathlib import Path
 import subprocess
 import sys
@@ -59,6 +60,24 @@ class IssuePublishingTests(unittest.TestCase):
         with self.assertRaises((ValueError,subprocess.CalledProcessError)):
             publisher.reproduce(self.repo,self.base,self.manifest,bad,self.digest)
 
+    def test_prepare_reconciles_existing_snapshot_with_active_embedding_generation(self):
+        (self.repo / 'sources' / self.base).mkdir(parents=True)
+        catalog = self.repo / '.local/repositories'
+        catalog.mkdir(parents=True)
+        scope = {'repository_id': 'repo_github_' + self.base, 'snapshot_id': 'a' * 64}
+        old = {**scope, 'generation_id': 'gen_old', 'store_id': 'vs_old'}
+        current = {**scope, 'generation_id': 'gen_current', 'store_id': 'vs_current'}
+        (catalog / 'catalog.json').write_text(json.dumps({'repositories': [old]}))
+        manifest = {**scope, 'git': {'head': self.base, 'dirty': False, 'subtree': publisher.PROJECT}}
+        registration = Mock()
+        registration.sibling.return_value.prepare_snapshot.return_value = manifest
+        registration.index_prepared.return_value = current
+        with (patch.object(publisher, 'ROOT', self.repo), patch.object(publisher, 'STATE', self.repo),
+              patch.object(publisher.importlib.util, 'spec_from_file_location'),
+              patch.object(publisher.importlib.util, 'module_from_spec', return_value=registration)):
+            self.assertEqual(publisher.prepare(self.base), (manifest, current))
+        registration.index_prepared.assert_called_once_with(catalog, manifest)
+
     def test_lost_pr_response_reconciles_without_duplicate_branch_commit_or_pr(self):
         tree, _ = publisher.reproduce(self.repo,self.base,self.manifest,self.patch,self.digest)
         head, refs, prs, calls = 'c'*40, [], [], []
@@ -75,7 +94,7 @@ class IssuePublishingTests(unittest.TestCase):
             if path.startswith('pulls?'): return prs
             if path == 'pulls':
                 self.assertIs(body['draft'],True)
-                prs.append({'head':side,'base':{**side,'ref':'main'},'state':'open','draft':True,'number':7})
+                prs.append({'head':side,'base':{**side,'ref':'main','sha':self.base},'state':'open','draft':True,'number':7})
                 raise TimeoutError
             self.fail(path)
         job = {'base':self.base,'number':6}
@@ -88,6 +107,11 @@ class IssuePublishingTests(unittest.TestCase):
             self.assertEqual(calls.count(operation),1)
         refs[0]['object']['sha'] = 'f'*40
         with self.assertRaisesRegex(ValueError,'different head'): publish()
+        refs.clear()
+        prs[0]['state'] = 'closed'
+        with self.assertRaises(ValueError): publish()
+        self.assertEqual(calls.count('git/refs'), 1)
+        self.assertEqual(refs, [])
 
     def test_app_publish_reconciles_only_its_branch_and_bot_author(self):
         installation = SimpleNamespace(app_id=42, bot='moyai-test[bot]')
@@ -95,12 +119,13 @@ class IssuePublishingTests(unittest.TestCase):
         branch = 'codex/app-42/issue-6'
         side = {'ref':branch,'sha':job['commit'],'repo':{'full_name':publisher.REPO}}
         author = {'type':'User','login':'operator'}
+        base = {**side,'ref':'main','sha':self.base}
         def api(endpoint, body=None):
             self.assertIsNone(body)
             if endpoint == 'git/matching-refs/heads/'+branch:
                 return [{'ref':'refs/heads/'+branch,'object':{'sha':job['commit']}}]
             self.assertTrue(endpoint.endswith(':'+branch))
-            return [{'head':side,'base':{**side,'ref':'main'},'state':'open','draft':True,'number':9,'user':author}]
+            return [{'head':side,'base':base,'state':'open','draft':True,'number':9,'user':author}]
         def reconcile():
             return publisher.publish(api, self.repo, self.manifest, job, self.patch, self.digest, {}, Mock(),
                                      installation=installation)
@@ -111,6 +136,8 @@ class IssuePublishingTests(unittest.TestCase):
             reconcile()
         author['login'] = installation.bot
         self.assertEqual(reconcile(), {'number':9, 'head':job['commit'], 'author':installation.bot, 'app_id':42})
+        base['sha'] = 'b'*40
+        with self.assertRaisesRegex(ValueError,'verified commit'): reconcile()
 
     def test_issue_limit_does_not_enable_personal_identity_in_app_mode(self):
         installation = Mock()
@@ -120,6 +147,42 @@ class IssuePublishingTests(unittest.TestCase):
             installation.api.assert_called_once_with('issues/6', None)
             with self.assertRaisesRegex(ValueError,'another issue'):
                 github.ticket(7)
+
+    def test_cancelled_turn_cannot_create_branch_or_draft_after_verification(self):
+        session, turn = str(uuid.uuid4()), str(uuid.uuid4())
+        request = {'number':6, 'session':session, 'turn':turn, 'action':'publish'}
+        binding = {'snapshot_id':'snapshot'}
+        manifest = {**self.manifest,'git':{'head':self.base, 'dirty':False, 'subtree':publisher.PROJECT}}
+        snapshot = self.repo/'.local/repositories/snapshots/snapshot'
+        snapshot.mkdir(parents=True)
+        (snapshot/'manifest.json').write_text(json.dumps(manifest))
+        ticket = {'title':'Retry','body':'Repair'}
+        job = {**request, 'base':self.base,'binding':binding,'issue':ticket,'commit':'c'*40}
+        (self.repo/'issue-6.json').write_text(json.dumps(job))
+        detail = {'session':{'visibility':'private','surface':'web','owner_id':'actor','active_turn':turn},
+                  'messages':[{'role':'user','is_self':True,'turn_id':turn,'content':ISSUES+'6'}],
+                  'turns':[{'id':turn,'status':'running','actor_id':'actor'}]}
+        stopped = {**detail,'session':{**detail['session'],'active_turn':None}}
+        ref = {'ref':'refs/heads/codex/issue-6','object':{'sha':job['commit']}}
+        for refs in ([], [ref]):
+            with self.subTest(existing_ref=bool(refs)):
+                def api(endpoint, body=None):
+                    self.assertIsNone(body, f'Unexpected GitHub write to {endpoint}')
+                    if endpoint == 'commits/main': return {'sha':self.base}
+                    if endpoint.startswith('git/matching-refs/'): return refs
+                    if endpoint.startswith('pulls?'): return []
+                    self.fail(endpoint)
+                github = Mock(operator_issue=6, installation=None)
+                github.api.side_effect, github.ticket.return_value = api, ticket
+                client = Mock()
+                client.request.side_effect = [detail, stopped]
+                host = publisher.Publisher(github, client, manifest, binding)
+                with patch.object(publisher,'ROOT',self.repo), patch.object(publisher,'STATE',self.repo), \
+                        patch.object(publisher,'verified_patch',return_value=(self.patch,self.digest,
+                                     {'project_tests_run':1,'oracle_tests_run':4})), \
+                        patch.object(publisher,'reproduce',return_value=('d'*40, [])):
+                    with self.assertRaisesRegex(ValueError, 'originating private turn'):
+                        host.dispatch(request)
 
     def test_intake_pins_only_original_operator_message_and_allows_same_chat_recovery(self):
         session_id, turn = str(uuid.uuid4()), str(uuid.uuid4())
@@ -144,7 +207,10 @@ class IssuePublishingTests(unittest.TestCase):
             request['turn'] = detail['messages'][0]['turn_id'] = detail['turns'][0]['id'] = later
             detail['session']['active_turn'] = later
             self.assertEqual(host.dispatch(request), opened)
-            github.ticket.assert_called_once()
+            self.assertEqual(github.ticket.call_count,2)
+            github.ticket.return_value = {'title':'Updated requirements', 'body':'Changed'}
+            with self.assertRaisesRegex(ValueError, 'issue changed'):
+                host.dispatch(request)
             detail['session']['surface'] = 'automation'
             with self.assertRaisesRegex(ValueError, 'originating'):
                 host.dispatch(request)

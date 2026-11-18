@@ -4,6 +4,7 @@ import base64
 from contextlib import ExitStack
 import difflib
 from hashlib import sha256
+from io import StringIO
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -142,8 +143,9 @@ def source_patch(before, after):
             continue
         if not editable(name):
             raise RepositoryError('Patch includes a protected path.')
-        old = before.get(name, b'').decode().splitlines(keepends=True)
-        new = after.get(name, b'').decode().splitlines(keepends=True)
+        # Git separates diff records at LF. Other Unicode separators are file content.
+        old = StringIO(before.get(name, b'').decode(), newline='\n').readlines()
+        new = StringIO(after.get(name, b'').decode(), newline='\n').readlines()
         if not (old or new):
             raise RepositoryError('Cannot deliver a content-free file change.')
         old_label = 'a/' + name if name in before else '/dev/null'
@@ -270,6 +272,15 @@ class NativeFiles:
         verify_artifact(await ctx.workspace.read_bytes(str(resolved)), digest)
 
     async def deliver(self, ctx, turn_id, path, digest, dispatch):
+        from sqlalchemy.exc import OperationalError
+
+        try:
+            return await self._deliver_once(ctx, turn_id, path, digest, dispatch)
+        except (OSError, OperationalError):
+            # Observe first on retry. Native Files deduplicates (turn, name, object digest).
+            return await self._deliver_once(ctx, turn_id, path, digest, dispatch)
+
+    async def _deliver_once(self, ctx, turn_id, path, digest, dispatch):
         observed = await self.observe(ctx, turn_id, path, digest)
         if observed:
             return observed

@@ -107,11 +107,8 @@ def prepare(base):
         repo / PROJECT, catalog, 'rust-retry', repository_id='repo_github_' + base)
     require(manifest['git']['head'] == base and manifest['git']['dirty'] is False
             and manifest['git']['subtree'] == PROJECT, 'GitHub checkout differs from its pinned base.')
-    registered = json.loads((catalog/'catalog.json').read_text()) if (catalog/'catalog.json').exists() else {}
-    binding = next((row for row in registered.get('repositories', [])
-                    if row['snapshot_id'] == manifest['snapshot_id'] and row['repository_id'] == manifest['repository_id']), None)
-    if not binding:
-        binding = registration.index_prepared(catalog, manifest)
+    # The indexer reuses a completed generation only for the active embedding fingerprint.
+    binding = registration.index_prepared(catalog, manifest)
     return manifest, binding
 
 
@@ -182,8 +179,14 @@ def publish(api, repo, manifest, job, patch, digest, checks, save, *, installati
         return [r['object']['sha'] for r in api(f'git/matching-refs/heads/{branch}') if r['ref'] == 'refs/heads/' + branch]
     tree, entries = reproduce(repo, base, manifest, patch, digest)
     require(job.get('tree', tree) == tree, 'Previously reserved publication has a different tree.')
+    if job.get('pr'):
+        prs = [api(f'pulls/{int(job["pr"]["number"])}')]
+    else:
+        # Include closed and retargeted PRs before creating or restoring any ref.
+        query = 'pulls?state=all&head=' + REPO.split('/')[0] + ':' + branch
+        prs = api(query)
     if not job.get('commit'):
-        require(not refs(), 'The issue branch already exists. The publisher cannot claim it.')
+        require(not prs and not refs(), 'The issue branch was already used. The publisher cannot claim it.')
         base_tree = git(repo, 'rev-parse', base + '^{tree}').decode().strip()
         remote = api('git/trees', {'base_tree':base_tree, 'tree':entries})
         require(remote['sha'] == tree, 'GitHub tree differs from the verified local index.')
@@ -193,11 +196,9 @@ def publish(api, repo, manifest, job, patch, digest, checks, save, *, installati
         job.update(tree=tree, commit=commit['sha'])
         save(job)  # Persist the exact commit before any visible ref is created.
     head = job['commit']
-    if not refs():
+    if not prs and not refs():
         api('git/refs', {'ref':'refs/heads/' + branch, 'sha':head})
     require(refs() == [head], 'The issue branch has a different head.')
-    query = 'pulls?state=all&base=main&head=' + REPO.split('/')[0] + ':' + branch
-    prs = api(query)
     if not prs:
         sha = hashlib.sha256(patch).hexdigest()
         body = (f'Closes #{number}\n\nMoyai verified the Rust example locally against base `{base}`. '
@@ -211,7 +212,7 @@ def publish(api, repo, manifest, job, patch, digest, checks, save, *, installati
     require(len(prs) == 1, 'Expected exactly one pull request for the issue branch.')
     pr = prs[0]
     require(pr['draft'] is True and pr['state'] == 'open' and pr['head']['sha'] == head
-            and pr['head']['ref'] == branch and pr['base']['ref'] == BASE
+            and pr['head']['ref'] == branch and pr['base']['ref'] == BASE and pr['base']['sha'] == base
             and pr['head']['repo']['full_name'] == pr['base']['repo']['full_name'] == REPO,
             'GitHub did not confirm the expected open draft at the verified commit.')
     result = {'number':pr['number'], 'head':head}
@@ -228,17 +229,24 @@ class Publisher:
         self.github, self.client = github, client
         self.manifest, self.binding = manifest, binding
 
-    def dispatch(self, request):
-        number, session, turn = (request[k] for k in ('number','session','turn'))
-        require(type(number) is int and 0 < number < 10**10, 'Invalid issue number.')
-        require(all(str(uuid.UUID(v)) == v for v in (session, turn)), 'Invalid conversation identity.')
-        require(self.github.operator_issue in (None, number), 'Issue outside the operator grant.')
+    def authorize_turn(self, number, session, turn):
         chat = self.client.request(f'/api/sessions/{session}?include_messages=true&include_activity=false')
         current = chat['session']
         require(current['visibility'] == 'private' and current['surface'] == 'web'
                 and current['active_turn'] == turn and not current.get('swarm_id') and not current.get('parent_session_id')
                 and any(t['id'] == turn and t['status'] == 'running' and t['actor_id'] == current['owner_id']
                         and not t.get('parent_turn') for t in chat['turns']), 'The originating private turn is no longer running.')
+        own_url = any(m['turn_id'] == turn and m['role'] == 'user' and m['is_self'] and not m.get('source')
+                      and not m.get('deleted') and not m.get('edited_after_start') and not m.get('sent_as_goal')
+                      and issue_number(m['content']) == number for m in chat['messages'])
+        require(own_url, 'A direct operator issue URL is required.')
+
+    def dispatch(self, request):
+        number, session, turn = (request[k] for k in ('number','session','turn'))
+        require(type(number) is int and 0 < number < 10**10, 'Invalid issue number.')
+        require(all(str(uuid.UUID(v)) == v for v in (session, turn)), 'Invalid conversation identity.')
+        require(self.github.operator_issue in (None, number), 'Issue outside the operator grant.')
+        self.authorize_turn(number, session, turn)
         claim_directory = STATE
         if self.github.installation is not None:
             claim_directory = STATE / f'app-{self.github.installation.app_id}'
@@ -248,13 +256,11 @@ class Publisher:
         def save(value):
             atomic_json(jobfile, value)
         action = request['action']
-        own_url = any(m['turn_id'] == turn and m['role'] == 'user' and m['is_self'] and not m.get('source')
-                      and not m.get('deleted') and not m.get('edited_after_start') and not m.get('sent_as_goal')
-                      and issue_number(m['content']) == number for m in chat['messages'])
-        require(own_url, 'A direct operator issue URL is required.')
         if action == 'open':
             if job:
                 require(job['session'] == session, 'This issue already belongs to another Moyai conversation.')
+                require(self.github.ticket(number) == job['issue'], 'The issue changed since intake. Review its updated scope.')
+                require(self.github.api('commits/main')['sha'] == job['base'], 'GitHub main moved since intake.')
             else:
                 ticket = self.github.ticket(number)
                 require(self.github.api('commits/main')['sha'] == self.manifest['git']['head'],
@@ -272,7 +278,14 @@ class Publisher:
         require(manifest['git']['head'] == job['base'] and manifest['git']['subtree'] == PROJECT
                 and not manifest['git']['dirty'], 'The snapshot differs from the pinned GitHub source.')
         require(self.github.api('commits/main')['sha'] == job['base'], 'GitHub main moved since verification.')
-        result = publish(self.github.api, STATE/'sources'/job['base'], manifest, job, patch, digest, checks, save,
+        def checked_api(endpoint, body=None):
+            if body is not None:
+                if endpoint in {'git/refs', 'pulls'}:
+                    require(self.github.ticket(number) == job['issue'], 'The issue changed since intake. Review its updated scope.')
+                    require(self.github.api('commits/main')['sha'] == job['base'], 'GitHub main moved since verification.')
+                self.authorize_turn(number, session, turn)
+            return self.github.api(endpoint, body)
+        result = publish(checked_api, STATE/'sources'/job['base'], manifest, job, patch, digest, checks, save,
                          installation=self.github.installation)
         save({**job, 'pr':result})
         return result

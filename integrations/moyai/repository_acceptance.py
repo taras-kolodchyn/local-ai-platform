@@ -63,7 +63,8 @@ def validate_evidence(task, observer, result, report, completed_tools, binding, 
                 type(c.get('start_line')) is int and type(c.get('end_line')) is int
                 and 1 <= c['start_line'] <= 7 <= c['end_line'] for c in task['citations']),
             'Retrieved context does not cover the documented retry policy')
-    required = {'open_repository', 'search_repository', 'write_plan', 'run_repository_checks',
+    intake = 'open_github_issue' if task.get('github_issue') else 'open_repository'
+    required = {intake, 'search_repository', 'write_plan', 'run_repository_checks',
                 'begin_repository_changes', 'finish_repository_task'}
     require(required <= completed_tools and completed_tools & {'edit_file', 'write_file'},
             'Actual model tools did not complete the repository workflow')
