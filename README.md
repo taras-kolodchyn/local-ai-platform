@@ -45,9 +45,13 @@ the old workspace A2A registrations, verifies health, gateway, cache and scoped
 knowledge access, and writes optional Codex/Hermes client examples under `.local/`.
 Those client examples do not register or start additional agents in LiteLLM.
 
-`make up` also registers three engineering workflows in the **Skills** section
-of the [local LiteLLM dashboard](http://127.0.0.1:4000/ui). The entries point
-to the [pinned MIT-licensed upstream skills](https://github.com/addyosmani/agent-skills/tree/39b723ceebf81474d0557c1fecd01eddab585563/skills).
+`make up` registers all 25 workflows from Addy Osmani's catalog in the **Skills**
+section of the [local LiteLLM dashboard](http://127.0.0.1:4000/ui). Registration
+uses the checked-in manifest and works offline. Each catalog entry points to its
+skill directory at the [pinned MIT-licensed upstream revision](https://github.com/addyosmani/agent-skills/tree/39b723ceebf81474d0557c1fecd01eddab585563/skills).
+Installing an upstream entry from the marketplace requires access to GitHub.
+The Addy Osmani version of test-driven development appears as
+`addyosmani-test-driven-development` alongside the existing Superpowers entry.
 Moyai packages [local adaptations](integrations/moyai/skills) for planning
 (`planning-and-task-breakdown`), refactoring (`code-simplification`), and
 architecture decisions (`documentation-and-adrs`). In a new ordinary Moyai
