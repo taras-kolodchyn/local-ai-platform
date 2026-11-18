@@ -4,7 +4,7 @@ SHELL := /bin/bash
 COMPOSE := docker compose --project-name local-ai-platform --file compose.yaml
 REPO ?=
 
-.PHONY: help doctor bootstrap pull-model up down restart logs status smoke-test test lint verify index reindex benchmark hermes-smoke vscode-install vscode-check vscode-smoke vscode connected-up connected-smoke connected-down clean reset configure-codex configure-hermes
+.PHONY: help doctor bootstrap pull-model up down restart logs status smoke-test test lint verify index reindex benchmark hermes-smoke connected-up connected-smoke connected-down clean reset configure-codex configure-hermes
 
 help: ## Show available commands
 	@awk 'BEGIN {FS = ":.*## "; printf "Local AI Platform\n\n"} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-18s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -28,23 +28,11 @@ restart: ## Stop and start the complete stack, including Moyai and inference
 	@$(MAKE) down
 	@$(MAKE) up
 
-logs: ## Follow service logs (metadata-only policy)
+logs: ## Follow core service logs (metadata-only policy)
 	@$(COMPOSE) logs --follow --tail=200
 
 status: ## Show containers, DMR models, and endpoints
 	@FORMAT="$(FORMAT)" bash scripts/status.sh
-
-vscode-install: ## Install or update the official Codex extension for VS Code
-	@bash scripts/vscode.sh install
-
-vscode-check: ## Verify the VS Code extension, local Codex config, MCP, and provider
-	@bash scripts/vscode.sh check
-
-vscode-smoke: ## Run one ephemeral local turn through the extension's Codex runtime
-	@bash scripts/vscode.sh smoke
-
-vscode: ## Open VS Code with the isolated local Codex configuration
-	@bash scripts/vscode.sh launch
 
 smoke-test: ## Verify live endpoints, bridge, embeddings, cache, pgvector, MCP, and metrics
 	@bash scripts/smoke-test.sh
@@ -58,14 +46,13 @@ lint: ## Validate shell, Python, YAML/Compose, and configuration invariants
 verify: ## Run all required checks and real Moyai acceptance, then verify complete shutdown
 	@python3 scripts/verify.py
 
+index reindex: export INDEX_SOURCE := $(value REPO)
 index: ## Incrementally index REPO=/absolute/path through local embeddings
-	@test -n "$(REPO)" || { echo "Usage: make index REPO=/absolute/path" >&2; exit 2; }
-	@test -d "$(REPO)" || { echo "Repository path does not exist: $(REPO)" >&2; exit 2; }
-	@INDEX_REPO_PATH="$(abspath $(REPO))" $(COMPOSE) --profile tools run --rm ingestion index /workspace --repository "$(notdir $(abspath $(REPO)))"
-
-reindex: ## Delete and rebuild the selected REPO=/absolute/path snapshot
-	@test -n "$(REPO)" || { echo "Usage: make reindex REPO=/absolute/path" >&2; exit 2; }
-	@INDEX_REPO_PATH="$(abspath $(REPO))" $(COMPOSE) --profile tools run --rm ingestion reindex /workspace --repository "$(notdir $(abspath $(REPO)))"
+reindex: ## Rebuild the selected REPO=/absolute/path index
+index reindex:
+	@test -n "$$INDEX_SOURCE" || { echo "Usage: make $@ REPO=/absolute/path" >&2; exit 2; }
+	@source_dir=$$(CDPATH= cd -- "$$INDEX_SOURCE" && pwd -P) || exit 2; \
+	  INDEX_REPO_PATH="$$source_dir" $(COMPOSE) --profile tools run --rm ingestion $@ /workspace --repository "$${source_dir##*/}"
 
 .PHONY: repository-add repository-smoke
 repository-add: export MOYAI_SOURCE_REPO := $(value REPO)
@@ -100,31 +87,18 @@ configure-hermes: bootstrap ## Generate a Hermes config example under .local/
 clean: ## Remove generated caches/logs but preserve databases and models
 	@bash scripts/clean.sh
 
-reset: ## Delete local containers and volumes (requires CONFIRM_RESET=yes)
-	@test "$(CONFIRM_RESET)" = "yes" || { echo "Refusing destructive reset. Re-run with CONFIRM_RESET=yes" >&2; exit 2; }
-	@$(COMPOSE) down --volumes --remove-orphans
-	@echo "Local Compose volumes removed. DMR model artifacts were preserved."
+reset: export RESET_APPROVAL := $(value CONFIRM_RESET)
+reset: ## Stop the stack and delete core data volumes (requires CONFIRM_RESET=yes)
+	@test "$$RESET_APPROVAL" = "yes" || { echo "Refusing destructive reset. Re-run with CONFIRM_RESET=yes" >&2; exit 2; }
+	@$(MAKE) down
+	@$(COMPOSE) --profile '*' down --volumes --remove-orphans
+	@echo "Core data volumes removed. Moyai conversations and downloaded models were preserved."
 
-.PHONY: vector-smoke memory-smoke runtime-smoke workspace-smoke
+.PHONY: vector-smoke
 vector-smoke: ## Verify registered vector search and access boundaries
 	@python3 scripts/vector-smoke.py
 
-memory-smoke: ## Historical workspace-profile check (retired from the default stack)
-	@python3 scripts/memory-smoke.py
-
-runtime-smoke: ## Historical workspace-runtime check (retired from the default stack)
-	@python3 scripts/runtime-smoke.py
-
-workspace-smoke: ## Historical workspace A2A check (retired from the default stack)
-	@python3 scripts/workspace-smoke.py
-
-.PHONY: workspace
-workspace: ## Historical A2A client (profiles retired; use Moyai for current execution)
-	@python3 scripts/workspace.py "$(PROFILE)"
-
-.PHONY: moyai-up moyai-down moyai-status moyai-smoke
-moyai-up: up ## Compatibility alias for the complete stack startup
-
+.PHONY: moyai-down moyai-status moyai-smoke
 moyai-down: ## Stop local Moyai without removing its files or history
 	@bash scripts/moyai.sh down
 
@@ -133,10 +107,6 @@ moyai-status: ## Show the local Moyai services
 
 moyai-smoke: ## Verify real Moyai file, shell, test and artifact workflows
 	@python3 scripts/moyai-smoke.py $(if $(filter 1,$(RESTART)),--restart,)
-
-.PHONY: purge-legacy-agents
-purge-legacy-agents: ## Delete retired workspace profile data and keys; requires the running gateway/database
-	@bash -c 'source scripts/lib.sh; load_env; python3 scripts/reconcile-agents.py --purge-data'
 
 .PHONY: github-issues
 github-issues: export MOYAI_OPERATOR_ISSUE := $(value ISSUE)

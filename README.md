@@ -1,11 +1,12 @@
 # Local AI Platform
 
-An open-source, reproducible local AI platform for coding agents on Apple Silicon, powered by Qwen, LiteLLM, Docker Model Runner, Codex, Hermes, MCP, Redis, PostgreSQL/pgvector, and Grafana.
+Moyai runs coding tasks locally on Apple Silicon using Qwen through LiteLLM and
+Docker Model Runner. PostgreSQL/pgvector provides repository context, Redis
+caches gateway responses, and Grafana displays platform metrics.
 
-> Status: validated Apple Silicon MVP. Core gateway, model, cache, retrieval,
-> offline MCP, and observability paths passed live tests on a 48 GiB arm64 Mac.
-> The autonomous local-model coding exercise did not pass its acceptance
-> criteria; that limitation is documented instead of being hidden.
+The [Rust demo acceptance report](docs/results/repository-reliability-2026-11-17.md)
+records the task, independent checks and downloaded patch. Run `make verify`
+to produce a fresh report on this Mac. Codex CLI and Hermes are optional clients.
 
 Current dependency pins and upgrade verification: [2026-11-16 update](docs/dependency-update-2026-11-16.md).
 
@@ -14,7 +15,7 @@ Current dependency pins and upgrade verification: [2026-11-16 update](docs/depen
 A coding agent is more than a local chat UI. It needs a model gateway, tool permissions, retrieval, caching, auditability, and a safe execution boundary. This repository puts those pieces behind one OpenAI-compatible endpoint:
 
 ```text
-Codex / Hermes / other clients -> LiteLLM -> local Qwen on Apple Silicon
+Moyai / optional CLI clients  -> LiteLLM -> local Qwen on Apple Silicon
                                       |
                                       +-> Redis response cache
                                       +-> MCP Gateway
@@ -52,11 +53,14 @@ skill directory at the [pinned MIT-licensed upstream revision](https://github.co
 Installing an upstream entry from the marketplace requires access to GitHub.
 The Addy Osmani version of test-driven development appears as
 `addyosmani-test-driven-development` alongside the existing Superpowers entry.
-Moyai packages [local adaptations](integrations/moyai/skills) for planning
-(`planning-and-task-breakdown`), refactoring (`code-simplification`), and
-architecture decisions (`documentation-and-adrs`). In a new ordinary Moyai
-chat, try “Use code-simplification to review this function” and paste the
-function. The agent can load the instructions on demand without GitHub access.
+Moyai packages [local adaptations of all 25 workflows](integrations/moyai/skills).
+To update the instructions Moyai uses, edit the skill's local `SKILL.md` and
+run `make up` to rebuild the image. The LiteLLM dashboard manages marketplace entries.
+Describe the task in a new chat and Qwen selects the relevant instructions
+from the image. The native skill ID for the Addy Osmani TDD workflow is
+`test-driven-development`. The browser workflow can analyze a supplied local
+DevTools trace, and the release workflow can prepare a rollout from local
+evidence. A skill adds instructions within the tools available to the chat.
 Registered repository tasks retain their phase-specific tool restrictions.
 An ordinary web chat uses one local model request to select relevant engineering
 workflows from their descriptions. Qwen loads each selected skill with a separate
@@ -64,7 +68,7 @@ native call before answering the original request. It can select an empty list.
 
 Choose **local-qwen-analysis** in Moyai's model picker for chat-only analysis.
 It uses the same local Qwen through LiteLLM. The profile permits reading and
-listing existing files and loading the three packaged skills. The workspace
+listing existing files and loading the selected packaged skills. The workspace
 refuses commands and file changes. Plans, proposed code and ADRs go in the
 chat. For a shortcut, start a web message with `/analysis` or end it with
 “без змін у файлах”. Moyai records the analysis profile on the turn and as the
@@ -72,10 +76,13 @@ chat's selected model. Choose **local-qwen** to resume editing on a later turn.
 The local integration uses Pydantic AI 2.55.0's
 [read-only workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/#read-only-access).
 
-With the platform running, `python3 scripts/moyai-skills-smoke.py` sends one
-Rust design task to a new private chat and prints its URL. It checks that Qwen
-received all three packaged skills through native calls, answered in the chat,
-and left the sandbox directory and Files panel empty.
+With the platform running, `python3 scripts/moyai-skills-smoke.py` checks a
+Rust task that needs planning, code simplification and an ADR. Run
+`python3 scripts/moyai-skills-smoke.py --case latency` to check a measurement
+and alerting task, or use `--case arithmetic` to check that a simple calculation
+loads zero workflows. Each command sends one natural-language message to a new
+private chat and prints its URL. It verifies Qwen's selection, the instructions
+returned by the native loader, the inline answer and the untouched sandbox.
 Marketplace registration and native chat loading were checked on 2026-11-18
 with LiteLLM 1.109.1 and Pydantic AI 2.55.0. See the
 [LiteLLM marketplace API](https://docs.litellm.ai/docs/tutorials/claude_code_plugin_marketplace)
@@ -89,7 +96,7 @@ both service groups and distinguishes resident models from downloaded artifacts.
 
 The former development/review/research workspace runtimes are retired from the
 default Compose stack. Moyai keeps its existing files and conversations. The
-separate, destructive `make purge-legacy-agents` migration removes only the
+separate, one-time migration in `scripts/reconcile-agents.py --purge-data` removes only the
 retired profiles' volumes, memory database, local state and dedicated keys; it
 requires the gateway and database to be running. See [platform operations](docs/platform-operations.md).
 
@@ -109,23 +116,7 @@ repository defaults and reports that fallback. Docker Desktop remains running;
 macOS may retain reclaimable file cache after inference allocations are released.
 Verified 2026-11-16 with Docker CLI 29.9.3 and Docker Model Runner 1.2.9.
 
-Use the native Codex sidebar in VS Code while keeping the generated provider,
-credentials, sessions, and MCP configuration isolated from your normal
-`~/.codex`:
-
-```sh
-make vscode-install
-make vscode-check
-make vscode-smoke
-make vscode
-```
-
-The install target is a one-time connected step. Daily use is `make up` followed
-by `make vscode`. Open **Codex: Open Codex Sidebar** from the Command Palette and
-keep execution on **Local**. See the [VS Code workflow](docs/vscode.md) for the
-security boundary and troubleshooting.
-
-The terminal client remains available with the same generated configuration:
+To use the optional Codex terminal client with the local gateway:
 
 ```sh
 source .local/client.env
@@ -141,9 +132,6 @@ make help
 make doctor
 make status
 make logs
-make vscode
-make vscode-check
-make vscode-smoke
 make smoke-test
 make verify
 make index REPO=/absolute/path/to/repository
@@ -283,7 +271,6 @@ Docker Model Runner uses llama.cpp with automatic Metal acceleration on Apple Si
 - [Threat model and security design](docs/security.md)
 - [Risk register](docs/risks.md)
 - [Offline operation](docs/offline.md)
-- [Native VS Code workflow](docs/vscode.md)
 - [Local Moyai coding MVP](docs/moyai-local.md)
 - [Opt-in connected mode](docs/connected.md)
 - [GitHub issue to a verified Moyai draft PR](docs/moyai-github-issues.md)

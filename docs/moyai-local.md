@@ -22,7 +22,6 @@ the former development/review/research A2A profiles are retired. Its
 the public `make up` / `make down` commands manage both projects together. Existing
 conversations and volumes need no migration. Initial image/package builds require
 downloads; the execution services have private internal runtime networks.
-`make moyai-up` remains a compatibility alias for `make up`.
 
 Open [Moyai](http://127.0.0.1:8787) and sign in as `admin`. Its generated password
 is in the Git-ignored `.local/moyai/admin-password`. Upstream requires at least

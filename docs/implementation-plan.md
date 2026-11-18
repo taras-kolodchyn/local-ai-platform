@@ -63,7 +63,6 @@ Exit criteria:
 Deliverables:
 
 - Codex config with `wire_api = "responses"`, workspace-write sandbox, and on-request approvals.
-- Native VS Code bootstrap using the official extension, isolated `CODEX_HOME`, and a bundled-runtime doctor check.
 - Hermes custom provider config targeting the same LiteLLM alias.
 - Tests for tool calls, streaming, `AGENTS.md`, shell execution, multi-file edits, and test execution.
 

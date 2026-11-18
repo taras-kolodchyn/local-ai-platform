@@ -14,16 +14,14 @@
     {
       "name": "documentation-and-adrs",
       "description": "Record architecture decisions and check documentation against the implementation."
-    }
-  ],
-  "marketplace_only": [
+    },
     {
       "name": "api-and-interface-design",
       "description": "Design public interfaces, type contracts and API boundaries."
     },
     {
       "name": "browser-testing-with-devtools",
-      "description": "Inspect UI behavior, rendering and network activity with Chrome DevTools MCP."
+      "description": "Diagnose browser UI behavior from local DevTools traces, console logs and network evidence."
     },
     {
       "name": "ci-cd-and-automation",
@@ -104,7 +102,7 @@
     },
     {
       "name": "using-agent-skills",
-      "description": "Discover available workflows and select one for the current task."
+      "description": "Explain the available workflows when asked about the skill catalog or how to choose among skills."
     }
   ]
 }

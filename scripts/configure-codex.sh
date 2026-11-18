@@ -11,4 +11,3 @@ mv "$temp" .local/codex/config.toml
 chmod 600 .local/codex/config.toml
 ok "Codex configuration generated at .local/codex/config.toml"
 info "Use: source .local/client.env && CODEX_HOME=\"$ROOT_DIR/.local/codex\" codex"
-info "VS Code: make vscode-install && make vscode"

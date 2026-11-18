@@ -23,13 +23,33 @@ payload=$(jq -cn '{
   }
 }')
 
-response=$(curl --fail --silent --show-error \
-  --request POST http://127.0.0.1:4000/key/generate \
-  --header "Authorization: Bearer $LITELLM_MASTER_KEY" \
-  --header 'Content-Type: application/json' \
-  --data "$payload")
+client_key=''
+if [[ -s .local/litellm-connected-api-key ]]; then
+  candidate=$(read_secret_file .local/litellm-connected-api-key)
+  fingerprint=$(printf '%s' "$candidate" | shasum -a 256 | cut -d ' ' -f 1)
+  lookup=$(curl --silent --show-error --write-out $'\n%{http_code}' \
+    --header "Authorization: Bearer $LITELLM_MASTER_KEY" \
+    "http://127.0.0.1:4000/key/info?key=$fingerprint")
+  case "${lookup##*$'\n'}" in
+    200)
+      jq -e --argjson wanted "$payload" '.info.key_alias == $wanted.key_alias and
+        (.info.models | sort) == ($wanted.models | sort) and
+        (.info.object_permission.mcp_servers | sort) == ($wanted.object_permission.mcp_servers | sort) and
+        .info.object_permission.mcp_tool_permissions == $wanted.object_permission.mcp_tool_permissions' \
+        <<< "${lookup%$'\n'*}" >/dev/null || die "Stored connected key has an unexpected owner or tool scope"
+      client_key=$candidate ;;
+    404) ;; # A reset of the gateway database also resets its key registry.
+    *) die "Could not verify the stored connected key" ;;
+  esac
+fi
 
-client_key=$(jq -r '.key // empty' <<< "$response")
+if [[ -z "$client_key" ]]; then
+  response=$(curl --fail --silent --show-error \
+    --request POST http://127.0.0.1:4000/key/generate \
+    --header "Authorization: Bearer $LITELLM_MASTER_KEY" \
+    --header 'Content-Type: application/json' --data "$payload")
+  client_key=$(jq -r '.key // empty' <<< "$response")
+fi
 [[ "$client_key" == sk-* ]] || die "LiteLLM did not return a connected-mode virtual key"
 
 umask 077
@@ -40,4 +60,4 @@ printf '%s' "$client_key" > .local/litellm-connected-api-key
   printf 'export GITHUB_MCP_AUTHORIZATION=%q\n' "$GITHUB_MCP_AUTHORIZATION"
 } > .local/connected-client.env
 chmod 600 .local/litellm-connected-api-key .local/connected-client.env
-ok "Connected-mode scoped LiteLLM key generated (values not displayed)"
+ok "Connected-mode scoped LiteLLM key is ready"

@@ -21,6 +21,8 @@ class ProvisioningTest(unittest.TestCase):
                     'mcp_servers': ['custom-readonly']}}]
             if route == '/team/update':
                 updates.append(body['object_permission'])
+            if route.startswith('/key/info?'):
+                return {'info': {'key_alias': 'workspace-store-provisioning', 'team_id': module.TEAM}}
             return {}
         with tempfile.TemporaryDirectory() as directory:
             local = Path(directory)
@@ -31,6 +33,26 @@ class ProvisioningTest(unittest.TestCase):
         self.assertEqual(updates[0]['agents'], ['unrelated-agent'])
         self.assertEqual(updates[0]['vector_stores'], ['retained-store'])
         self.assertIn('custom-readonly', updates[0]['mcp_servers'])
+
+    def test_provisioning_recovers_a_missing_owner_key_after_volume_reset(self):
+        from unittest.mock import Mock, patch
+
+        def admin(method, route, body=None):
+            if route == '/team/list':
+                return []
+            if route.startswith('/key/info?'):
+                raise RuntimeError('Gateway GET /key/info returned 404')
+            if route == '/key/generate':
+                return {'key': 'replacement'}
+            return {}
+
+        with tempfile.TemporaryDirectory() as directory, patch.object(module, 'LOCAL', Path(directory)):
+            key_path = Path(directory) / 'workspace-owner-key'
+            key_path.write_text('stale')
+            with patch.object(module, 'gateway', Mock()) as gateway:
+                module.owner_request(admin)
+            gateway.assert_called_once_with('replacement')
+            self.assertEqual(key_path.read_text(), 'replacement')
 
     def test_reconcile_twice_keeps_ids_and_existing_records(self):
         records = []
@@ -64,37 +86,6 @@ class ProvisioningTest(unittest.TestCase):
             module.private_write(path, 'fixture-verifier')
             self.assertEqual(path.stat().st_ino, inode)
             self.assertEqual(path.stat().st_mode & 0o777, 0o600)
-
-    def test_existing_profile_keys_receive_new_store_permissions(self):
-        import json
-        from unittest.mock import patch
-        calls = []
-        def request(method, route, body=None):
-            calls.append((route, body))
-            return {'key': 'fixture-key'}
-        with tempfile.TemporaryDirectory() as d:
-            local = Path(d)
-            (local / 'litellm-master-key').write_text('fixture-master')
-            registry = local / 'workspace-registry.json'
-            registry.write_text(json.dumps({'stores': {'first': 'vs_first'}}))
-            with patch.object(module, 'LOCAL', local), patch.object(module, 'gateway', return_value=request), \
-                 patch.object(module, 'owner_request'), patch.object(module.subprocess, 'run') as run:
-                run.return_value.returncode = 0
-                run.return_value.stdout = ''
-                module.profiles()
-                calls.clear()
-                registry.write_text(json.dumps({'stores': {'first': 'vs_first', 'second': 'vs_second'}}))
-                module.profiles()
-            updates = [body for route, body in calls if route == '/key/update']
-            self.assertEqual(len(updates), 3)
-            self.assertFalse(any(route == '/key/generate' for route, _ in calls))
-            for update in updates:
-                self.assertEqual(update['object_permission']['vector_stores'], ['vs_first', 'vs_second'])
-                self.assertEqual([s['index_name'] for s in update['metadata']['allowed_vector_store_indexes']],
-                                 ['vs_first', 'vs_second'])
-            for profile in ('development', 'review', 'research'):
-                self.assertFalse((local / 'profiles' / profile / 'caller.key').exists())
-                self.assertEqual(len((local / 'profiles' / profile / 'caller.sha256').read_text()), 64)
 
     def test_catalog_registers_pinned_sources_without_duplicates(self):
         records = []
@@ -130,7 +121,7 @@ class ProvisioningTest(unittest.TestCase):
 
         module.provision_skill_catalog(request, manifest)
         module.provision_skill_catalog(request, manifest)
-        all_skills = manifest['skills'] + manifest['marketplace_only']
+        all_skills = manifest['skills']
         self.assertEqual(len({skill['name'] for skill in all_skills}), 25)
         self.assertEqual(len(records), len(all_skills) + 1)
         by_catalog_name = {row['name']: row for row in records[1:]}
@@ -139,10 +130,10 @@ class ProvisioningTest(unittest.TestCase):
             self.assertEqual(row['source'], {'source': 'git-subdir', 'url': manifest['source'] + '.git',
                                              'path': 'skills/' + skill['name'], 'sha': manifest['commit']})
             self.assertEqual(row['author']['name'], manifest['author'])
-        for row in records[1:1 + len(manifest['skills'])]:
-            name = row['name']
+            name = skill['name']
             header = (root / name / 'SKILL.md').read_text().split('---\n')[1].splitlines()
             self.assertIn('name: ' + name, header)
+            self.assertIn('offline adaptation', row['description'])
         records[1]['source'] = records[0]['source'].copy()
         with self.assertRaisesRegex(ValueError, records[1]['name']):
             module.provision_skill_catalog(request, manifest)
@@ -167,26 +158,32 @@ class ProvisioningTest(unittest.TestCase):
         self.assertIn('/skills/test-driven-development', records[1]['homepage'])
         self.assertNotIn('offline adaptation', records[1]['description'])
 
-    def test_routes_associate_existing_profile_keys_with_registered_ids(self):
-        import json
-        from unittest.mock import patch
-        calls = []
-        profiles = ('development', 'review', 'research')
+    def test_promoting_a_marketplace_skill_updates_only_managed_metadata_once(self):
+        manifest = json.loads((module.ROOT / 'integrations/moyai/skills/catalog.json').read_text())
+        skill = next(row for row in manifest['skills'] if row.get('catalog_name'))
+        manifest['skills'] = [skill]
+        old = {
+            'name': skill['catalog_name'],
+            'source': {'source': 'git-subdir', 'url': manifest['source'] + '.git',
+                       'sha': manifest['commit'], 'path': 'skills/' + skill['name']},
+            'enabled': False, 'version': '2.3.1', 'domain': 'Engineering', 'namespace': 'workflows',
+            'keywords': ['local-workspace', 'upstream-workflow'],
+            'description': skill['description'] + ' Catalog installation retrieves the pinned upstream skill.',
+        }
+        changes = []
+
         def request(method, route, body=None):
-            calls.append((route, body))
-            if route == '/v1/agents':
-                return [{'agent_name': 'workspace-' + name, 'agent_id': 'route-' + name} for name in profiles]
-            return {}
-        with tempfile.TemporaryDirectory() as d:
-            local=Path(d)
-            (local/'litellm-master-key').write_text('test-master')
-            (local/'workspace-client-key').write_text('test-console')
-            (local/'workspace-registry.json').write_text(json.dumps({'stores': {}}))
-            for name in profiles:
-                home=local/'profiles'/name; home.mkdir(parents=True)
-                (home/'gateway.key').write_text('test-' + name)
-            with patch.object(module, 'LOCAL', local), patch.object(module, 'gateway', return_value=request), patch.object(module, 'owner_request'):
-                module.routes()
-            associated={body['key']:body['agent_id'] for route,body in calls
-                        if route=='/key/update' and 'agent_id' in body}
-            self.assertEqual(associated, {'test-'+name:'route-'+name for name in profiles})
+            if method == 'GET':
+                return {'plugins': [old]}
+            self.assertEqual((method, route), ('PUT', '/claude-code/plugins/' + skill['catalog_name']))
+            self.assertEqual(set(body), {'source', 'version', 'domain', 'namespace', 'description', 'keywords'})
+            for key in ('source', 'version', 'domain', 'namespace'):
+                self.assertEqual(body[key], old[key])
+            changes.append(body)
+            old.update(body)
+
+        module.provision_skill_catalog(request, manifest)
+        module.provision_skill_catalog(request, manifest)
+        self.assertEqual(len(changes), 1)
+        self.assertIn('offline adaptation', old['description'])
+        self.assertFalse(old['enabled'])

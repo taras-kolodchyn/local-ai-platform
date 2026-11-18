@@ -149,10 +149,11 @@ report with source citations and download links. Do not ask questions or delegat
         progress = client.request(f'/api/sessions/{session}/progress/{turn}?include_activity=true')
         record['progress'] = progress
         completed = {tool['name'] for tool in progress.get('tools',[]) if tool.get('status') == 'completed'}
+        require(task['phase'] == 'completed', f"Turn ended in repository phase {task['phase']}; see its native tool history")
         bodies = {}
         listed = {row['id']:row for row in client.request(f'/api/sessions/{session}/files')}
         for path in ('repository-results/changes.patch','repository-results/test-report.json','repository-results/result.json'):
-            native = task.get('files',{}).get(path,{})
+            native = (task.get('files') or {}).get(path,{})
             require(native.get('id') in listed, 'Missing authenticated native Files entry')
             data = client.request('/api/files/' + native['id'],raw=True)
             digest = hashlib.sha256(data).hexdigest()
@@ -214,7 +215,7 @@ def main():
         access = gateway_access_guards(binding)
         (directory/'gateway-access.json').write_text(json.dumps(access,indent=2)+'\n')
         guards = json.loads(compose('exec','-T','moyai','python',
-                                   '/opt/moyai-local/tests/exercise_repository_runtime.py'))
+                                   '/opt/moyai-local/tests/exercise_repository_runtime.py', json.dumps(binding)))
         (directory/'runtime-guards.json').write_text(json.dumps(guards,indent=2)+'\n')
         with ResourceSampler(directory/'resources.jsonl'):
             for number in range(1,args.runs+1):

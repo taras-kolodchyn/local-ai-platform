@@ -25,9 +25,7 @@ if component == 'moyai':
             raise SystemExit('Core gateway must start before Moyai')
         state['moyai'] = args == ['up']
 elif component == 'dependency':
-    if args == ['workspace-up.sh']:
-        state['workspace'] = True
-    elif args == ['scripts/reconcile-agents.py', '--stop-runtimes']:
+    if args == ['scripts/reconcile-agents.py', '--stop-runtimes']:
         state['workspace'] = False
 elif component == 'docker' and args[0] == 'compose':
     if os.getenv('COMPOSE_PROJECT_NAME', 'local-ai-platform') != 'local-ai-platform' or os.getenv('COMPOSE_FILE', '').endswith('unrelated.yaml'):
@@ -97,7 +95,7 @@ class PlatformLifecycleTests(unittest.TestCase):
         (self.scripts / 'moyai.sh').write_text('#!/bin/sh\nexec "$TASK_PYTHON" "$TASK_DRIVER" moyai "$@"\n')
         for name in ('bootstrap.sh', 'ensure-docker.sh', 'pull-model.sh', 'doctor.sh',
                      'provision-client-key.sh', 'configure-codex.sh', 'configure-hermes.sh',
-                     'smoke-test.sh', 'workspace-up.sh'):
+                     'smoke-test.sh',):
             (self.scripts / name).write_text(
                 '#!/bin/sh\nexec "$TASK_PYTHON" "$TASK_DRIVER" dependency ' + name + '\n')
         self.env = os.environ | {'PATH': str(binaries) + os.pathsep + os.environ['PATH'],
@@ -111,22 +109,19 @@ class PlatformLifecycleTests(unittest.TestCase):
     def calls(self):
         return [json.loads(line) for line in self.events.read_text().splitlines()]
 
-    def test_up_and_compatibility_alias_start_only_moyai_then_verify_the_complete_stack(self):
-        for target in ('up', 'moyai-up'):
-            with self.subTest(target=target):
-                self.events.write_text('')
-                self.state_file.write_text(json.dumps(self.initial | {'core': False, 'moyai': False}))
-                result = self.run_make(target)
-                self.assertEqual(result.returncode, 0, result.stderr)
-                state = json.loads(self.state_file.read_text())
-                self.assertTrue(state['core'] and state['moyai'])
-                calls = self.calls()
-                self.assertEqual(calls.count(['moyai', 'up']), 1)
-                self.assertNotIn(['dependency', 'workspace-up.sh'], calls)
-                self.assertLess(calls.index(['dependency', 'scripts/provision-workspace.py', 'moyai-skills']),
-                                calls.index(['moyai', 'up']))
-                self.assertFalse(state['workspace'])
-                self.assertLess(calls.index(['moyai', 'up']), calls.index(['dependency', 'smoke-test.sh']))
+    def test_up_starts_only_moyai_then_verifies_the_complete_stack(self):
+        self.events.write_text('')
+        self.state_file.write_text(json.dumps(self.initial | {'core': False, 'moyai': False}))
+        result = self.run_make('up')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        state = json.loads(self.state_file.read_text())
+        self.assertTrue(state['core'] and state['moyai'])
+        calls = self.calls()
+        self.assertEqual(calls.count(['moyai', 'up']), 1)
+        self.assertLess(calls.index(['dependency', 'scripts/provision-workspace.py', 'moyai-skills']),
+                        calls.index(['moyai', 'up']))
+        self.assertFalse(state['workspace'])
+        self.assertLess(calls.index(['moyai', 'up']), calls.index(['dependency', 'smoke-test.sh']))
 
     def test_up_fails_when_the_required_moyai_start_fails(self):
         self.assertNotEqual(self.run_make('up', FAIL_MOYAI='1').returncode, 0)

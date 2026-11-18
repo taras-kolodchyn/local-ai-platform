@@ -78,12 +78,16 @@ class EngineeringSkills:
                 return force_call(request, tools[LOAD], f'Load the skill {name} now.', 'id', {'enum': [name]})
         if SELECT_SKILLS in tools and self.needs_selection(ctx, request.messages):
             catalog = '\n'.join(f'{name}: {self.catalog[name]}' for name in available)
-            prompt = ('Choose every listed workflow needed for the requested deliverables. A multi-part task can '
-                      'need several workflows. Choose an empty list for unrelated tasks. If the user asks to use '
-                      'specific skills, select those. Do not carry out the task in this step.\n'
-                      f'Available workflows:\n{catalog}\n\nUser task:\n{ctx.prompt}')
-            return force_call(request, tools[SELECT_SKILLS], prompt, 'skills',
-                              {'items': {'type': 'string', 'enum': available}, 'maxItems': len(available)})
+            prompt = ('You are a sparse intent classifier. Match the verb and object of each explicit request '
+                      'to the primary output of exactly one catalog entry. Constraints, examples, criteria and '
+                      'details of that output do not count as additional requests. Return one ID per distinct '
+                      'match, in order. If none match, return an empty array. Select a further ID only if you '
+                      'can point to a separate requested artifact or action that every selected entry misses. '
+                      'When the user expressly names a workflow, include it.\n\n'
+                      f'Catalog:\n{catalog}\n\nRequest:\n{ctx.prompt}')
+            # Qwen can copy IDs from a second catalog in the tool schema. Check the
+            # model's choices against the offered capabilities when the call returns.
+            return force_call(request, tools[SELECT_SKILLS], prompt)
         for name in selected_ids(request.messages, ctx.run_id) or ():
             if name in available:
                 return force_call(request, tools[LOAD], f'Load the skill {name} now.', 'id', {'enum': [name]})
@@ -94,8 +98,14 @@ class EngineeringSkills:
         choice = (request.model_settings or {}).get('tool_choice')
         calls = response.tool_calls
         if len(tools) == 1 and choice == [tools[0].name]:
-            if tools[0].name == SELECT_SKILLS and (len(calls) != 1 or calls[0].tool_name != SELECT_SKILLS):
-                raise ModelRetry('Return the requested selection using the native selection tool.')
+            if tools[0].name == SELECT_SKILLS:
+                if len(calls) != 1 or calls[0].tool_name != SELECT_SKILLS:
+                    raise ModelRetry('Return the requested selection using the native selection tool.')
+                offered = request.model_request_parameters.deferred_capability_ids.intersection(self.catalog)
+                skills = calls[0].args_as_dict().get('skills')
+                if (not isinstance(skills, list) or any(not isinstance(name, str) or name not in offered
+                        or name in ctx.active_capability_ids for name in skills)):
+                    raise ModelRetry('Select only IDs from the offered engineering workflows.')
             if tools[0].name == LOAD and tools[0].tool_kind == 'capability-load':
                 ids = tools[0].parameters_json_schema['properties']['id'].get('enum', [])
                 if len(ids) == 1 and (len(calls) != 1 or calls[0].tool_name != LOAD

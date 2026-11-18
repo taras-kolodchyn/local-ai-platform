@@ -65,7 +65,7 @@ def request(key, route, body=None, *, method=None):
 
 def check_ui(key):
     if request(key, '/get/ui_settings')['values'].get('moyai_url') != 'http://127.0.0.1:8787':
-        raise ProvisionError('LiteLLM Moyai UI link is not local; run make moyai-up to reconnect it')
+        raise ProvisionError('LiteLLM Moyai UI link is not local; run make up to reconnect it')
 
 
 def connect_ui(key):

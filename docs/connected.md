@@ -13,7 +13,7 @@ chmod 600 .env.connected
 make connected-up
 ```
 
-`make connected-up` refuses the placeholder, starts only `github-mcp`, creates a separate LiteLLM virtual key with access to the three reviewed MCP servers, generates isolated Codex/Hermes configs, lists the exposed GitHub tools, rejects write-like tool names, and verifies that the authorization value did not enter service logs.
+`make connected-up` refuses the placeholder, starts only `github-mcp`, provisions a separate LiteLLM virtual key with access to the three reviewed MCP servers, generates isolated Codex/Hermes configs, checks the nine exposed GitHub tools against the read-only allowlist and verifies that the authorization value did not enter service logs.
 
 Run the connected Codex profile without changing the normal `~/.codex`:
 
@@ -30,7 +30,7 @@ make connected-down
 
 ## Enforced boundaries
 
-- `github-mcp` uses `ghcr.io/github/github-mcp-server:v1.12.2`, runs with a read-only root filesystem and no host port, and exists only in the `connected` profile.
+- `github-mcp` uses `ghcr.io/github/github-mcp-server:v1.14.0`, runs with a read-only root filesystem and no host port, and exists only in the `connected` profile.
 - LiteLLM forwards the caller-specific `Authorization` header only to the `github` MCP server.
 - Both LiteLLM and GitHub MCP enforce a named tool allowlist. GitHub MCP also receives its read-only and lockdown headers on every request.
 - Connected clients use a different LiteLLM virtual key and configuration directory from offline clients.
