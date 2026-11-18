@@ -30,7 +30,7 @@ class WorkflowTests(unittest.IsolatedAsyncioTestCase):
         ts = self.cap.get_toolset()
         self.assertEqual(ts.id, 'local_repository_tools_v1')
         self.assertEqual(set(ts.tools), {'list_repositories','open_repository','open_github_issue','search_repository',
-            'begin_repository_changes','run_repository_checks','finish_repository_task','repository_task_status'})
+            'begin_repository_changes','run_repository_checks','review_repository_documentation','finish_repository_task','repository_task_status'})
         defs = [ToolDefinition(name=n) for n in ['shell','write_file','open_repository','finish_repository_task']]
         self.assertEqual([t.name for t in await self.cap.prepare_tools(self.ctx,defs)],
                          ['shell','write_file','open_repository'])

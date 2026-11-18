@@ -26,6 +26,12 @@ class RepositoryCompletionTests(unittest.IsolatedAsyncioTestCase):
         response = await cap.wrap_model_request(ctx, request_context=request, handler=AsyncMock())
         self.assertEqual(response.parts[0].tool_name, 'run_repository_checks')
         command['descendants_stopped'] = True
+        task.update(verified_tree='tree', binding={'snapshot_id':'snapshot'})
+        task['receipts'][0].update(tree_hash='tree', operation_id='check')
+        response = await cap.wrap_model_request(ctx, request_context=request, handler=AsyncMock())
+        self.assertEqual(response.parts[0].tool_name, 'review_repository_documentation')
+        task['documentation_reviews'] = [{'verdict':'approved','findings':[],'tree_hash':'tree',
+                                          'snapshot_id':'snapshot','check_operation':'check'}]
         response = await cap.wrap_model_request(ctx, request_context=request, handler=AsyncMock())
         self.assertEqual(response.parts[0].tool_name, 'finish_repository_task')
 

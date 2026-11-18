@@ -49,6 +49,25 @@ class IssuePublishingTests(unittest.TestCase):
         self.manifest = {'files':[row(b'old\n')]}
         self.digest = sha256(publisher.canonical([row(b'new\n')])).hexdigest()
 
+    def test_publisher_binds_documentation_approval_to_exact_final_artifacts(self):
+        from copy import deepcopy
+        review = {'verdict':'approved', 'tree_hash':'tree', 'snapshot_id':'source', 'check_operation':'check',
+                  'patch_sha256':sha256(self.patch).hexdigest(), 'model':'local-qwen', 'findings':[],
+                  'evidence':[{'location':'src/lib.rs:1', 'text':'new'}]}
+        task = {'verified_tree':'tree','binding':{'snapshot_id':'source'},'documentation_reviews':[review],
+                'receipts':[{'tree_hash':'tree','operation_id':'check'}]}
+        report = {'documentation_reviews':[deepcopy(review)]}
+        publisher.verify_documentation_review(task, report, self.patch)
+        for change in ({'tree_hash':'old'},{'snapshot_id':'other'},{'check_operation':'earlier'},
+                       {'verdict':'changes_requested'},{'findings':['unresolved']},{'evidence':[]}):
+            stale = dict(review, **change)
+            with self.assertRaises(publisher.Refused):
+                publisher.verify_documentation_review(dict(task, documentation_reviews=[stale]),
+                                                      {'documentation_reviews':[stale]}, self.patch)
+        for receipt, patch in [({}, self.patch), (report, self.patch+b'altered')]:
+            with self.assertRaises(publisher.Refused):
+                publisher.verify_documentation_review(task, receipt, patch)
+
     def test_publish_reconstructs_pinned_full_tree_and_confines_paths(self):
         tree, entries = publisher.reproduce(self.repo,self.base,self.manifest,self.patch,self.digest)
         self.assertEqual(entries[0]['path'],publisher.PROJECT+'/src/lib.rs')
