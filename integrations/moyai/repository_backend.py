@@ -431,6 +431,9 @@ class RepositoryBackend:
                     'followed by exact small delays on the other.')
                 if contract == 'interleaved-capped-and-extreme':
                     result['verification_contract'] += ' In each direction include a distinct non-maximum capped attempt, u32::MAX and then both 0 and 2 on the other API.'
+            if (task.get('github_issue') or {}).get('caller_note_required'):
+                result['verification_contract'] += (' The module-level caller note must identify the calculation, the forwarding '
+                    'API, the migration recommendation and why previous calls do not affect the delay. Distinguish inputs from milliseconds.')
         elif task['binding'].get('verification_profile') == 'rust-retry':
             result['verification_contract'] = RUST_RETRY_CONTRACT
         if task.get('receipts'):
@@ -632,7 +635,8 @@ class RepositoryBackend:
         if prior is None:
             def charge(attempt):
                 self.ledger.charge(*scope, 'model', f'{operation}-documentation-review-{attempt}')
-            decision = await review_patch(self.review_client, original, after, patch, charge=charge)
+            decision = await review_patch(self.review_client, original, after, patch, charge=charge,
+                                         caller_note_required=bool(task['github_issue'].get('caller_note_required')))
         else:
             decision = prior
         _, current = scoped_tree(await self.guest(scope, 'tree'), manifest)

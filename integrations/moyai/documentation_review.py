@@ -136,7 +136,45 @@ def policy_finding(text, references):
     return None, None
 
 
-async def review_patch(client, original, candidate, patch, charge=None):
+def retry_delay_floor(line):
+    # The Rust helpers return milliseconds. For this unsigned formula the
+    # smallest result occurs at exponent zero, including when the cap is lower.
+    match = re.fullmatch(r'([\d_]+)_u64\.saturating_mul\(([\d_]+)_u64\.saturating_pow\(\w+\)\)\.min\(([\d_]+)\)', line)
+    if match and int(match[2]) >= 1:
+        return min(int(match[1]), int(match[3]))
+
+
+def caller_note_finding(original, candidate, references, implementation):
+    if not implementation:
+        raise RepositoryError('The requested caller note cannot be verified against the retry implementation.')
+    recommendation = next((loc for loc, line in references.items() if line.startswith('#[deprecated(')
+                           and 'bounded_backoff_ms' in line), None)
+    if not recommendation:
+        raise RepositoryError('Missing source evidence for the requested migration advice.')
+    for path, data in candidate.items():
+        if path in original or not (path.startswith('tests/') and path.endswith('.rs')):
+            continue
+        lines = data.decode().splitlines()
+        text = data.decode()
+        docs = re.findall(r'(?m)^\s*//!([^\n]*)|/\*!([\s\S]*?)\*/|(?m:^\s*#!\[doc\s*=\s*"([^"\n]*)"\])', text)
+        note = ' '.join(part for group in docs for part in group if part).replace(chr(96), '').lower()
+        required = ('bounded_backoff_ms' in note and 'legacy_retry_delay_ms' in note
+                    and re.search(r'\b(?:calculat|comput|implement|evaluat|appl)\w*', note)
+                    and re.search(r'\b(?:delegat|forward|wrap)\w*|\bcalls\s+(?:the\s+)?(?:current|bounded_backoff_ms)', note)
+                    and re.search(r'\b(?:use|switch|replac|prefer|migrat|recommend)\w*', note)
+                    and re.search(r'\b(?:independen|stateless|prior|previous|earlier|history)\w*', note))
+        if required:
+            return None
+        quote = next((line.strip() for line in lines if line.strip().startswith('//!')), '')
+        return {'path':path, 'quote':quote, 'basis':'requested_documentation',
+                'correction':('Complete the module-level caller note. State that each result depends only on its attempt. '
+                              'Identify bounded_backoff_ms as the function that computes the capped delay and deprecated '
+                              'legacy_retry_delay_ms as the function that forwards to it. Recommend bounded_backoff_ms.'),
+                'sources':[implementation, recommendation]}
+    raise RepositoryError('Missing Rust integration target for the requested caller note.')
+
+
+async def review_patch(client, original, candidate, patch, charge=None, *, caller_note_required=False):
     references = reference_lines(original, candidate)
     patch_text = patch.decode()
     passages = prose_passages(patch_text)
@@ -150,6 +188,10 @@ async def review_patch(client, original, candidate, patch, charge=None):
     if implementation:
         data += (f'\nThe implementation at {implementation} computes the capped delay. Only the legacy entry point '
                  'forwards its argument to bounded_backoff_ms. Shared behavior does not make both functions wrappers.')
+    if caller_note_required:
+        data += ('\nVerify the requested module documentation against the code: independent calls, which API computes '
+                 'the delay and which forwards, plus the supported migration. Check that the note distinguishes '
+                 'zero-based input attempts from returned milliseconds.')
     if not references or len(data.encode()) > 40_000:
         raise RepositoryError('The complete documentation review input exceeds the supported scope or lacks sources.')
     fields = {
@@ -177,6 +219,15 @@ async def review_patch(client, original, candidate, patch, charge=None):
                 raise ValueError('Return one completed record_documentation_review tool call.')
             args = json.loads(calls[0].arguments)
             result = assess_passages(args, passages, references, patch_text, implementation)
+            if caller_note_required:
+                missing = caller_note_finding(original, candidate, references, implementation)
+                if missing:
+                    for location in missing.pop('sources'):
+                        row = {'location':location, 'text':references[location]}
+                        if row not in result['evidence']:
+                            result['evidence'].append(row)
+                    result['findings'].append(missing)
+                    result['verdict'] = 'changes_requested'
             return {**result, 'patch_sha256':sha256(patch).hexdigest()}
         except ValueError as exc:
             if attempt:
@@ -211,6 +262,14 @@ def assess_passages(args, passages, references, patch_text, implementation=None)
             policy_correction = ('Correct the direction of delegation. bounded_backoff_ms computes the capped delay. '
                                  'Only deprecated legacy_retry_delay_ms forwards to it. Recommend the current API for callers.')
             basis = 'implementation'
+        if implementation:
+            floor = retry_delay_floor(references[implementation])
+            explicit = re.search(r'\bdelays?\s*\(\s*(\d+)\s*(?:and|,)\s*(\d+)\s*(?:ms)?\s*\)', text, re.I)
+            if explicit and floor is not None and min(int(explicit[1]), int(explicit[2])) < floor:
+                policy_location = implementation
+                policy_correction = (f'Distinguish attempt numbers from returned milliseconds. The smallest delay is '
+                                     f'{floor} ms. Describe the inputs as attempts and use their actual outputs for delays.')
+                basis = 'implementation'
         correction = policy_correction if policy_correction else item.get('correction')
         if policy_correction or not item['supported']:
             if not passage['lines'] or not isinstance(correction, str) or not 0 < len(correction.strip()) <= 1200:

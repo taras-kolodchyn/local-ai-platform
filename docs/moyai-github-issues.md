@@ -24,6 +24,8 @@ For tests-only issues that request interleaved calls and name an extreme attempt
 
 After Rust verification, Moyai sends the candidate diff and numbered implementation and policy lines to a separate local `local-qwen` request. The reviewer has one structured reporting tool. It records a source citation and a judgment for each changed passage in comments, Rustdoc and Markdown. The controller also checks affirmative removal promises and explicit retry-ceiling claims against the pinned policy. For the supported retry implementation it distinguishes the function that computes the delay from the deprecated forwarding wrapper. Deprecation alone only establishes the current API status. A future removal requires an explicit policy.
 
+When a coverage ticket requests a caller note on calculation, forwarding and migration, review also checks for that module documentation. The retry implementation provides a lower bound for millisecond delays. An input attempt described as an output below that bound triggers another edit and verification.
+
 When the reviewer requests changes, the editing agent receives the findings in the same chat. It must change the candidate, rerun the protected checks and obtain approval for the revised tree. The test report contains the review history. The host publisher checks the approval against the pinned snapshot, final Rust receipt, verified tree and downloaded patch hash before creating a draft. The report distinguishes model findings from policy checks and includes the source lines for inspection.
 
 ### Single-message App rehearsal, 2026-11-18

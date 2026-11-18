@@ -129,9 +129,11 @@ def verified_patch(client, job):
     scope = issue_scope(job['number'], job['turn'], job['issue'], job['binding'])
     if job.get('pr'):
         # Preserve the contract recorded by the controller for read-only recovery across upgrades.
-        scope.pop('retry_contract', None)
-        if recorded := (task.get('github_issue') or {}).get('retry_contract'):
-            scope['retry_contract'] = recorded
+        recorded = task.get('github_issue') or {}
+        for key in ('retry_contract', 'caller_note_required'):
+            scope.pop(key, None)
+            if key in recorded:
+                scope[key] = recorded[key]
     require(task['phase'] == 'completed' and not task['pending'] and baseline_established(task)
             and task['binding'] == job['binding']
             and task['github_issue'] == scope,
