@@ -199,7 +199,10 @@ class ProvisioningTest(unittest.TestCase):
                'keywords': [module.TAG], 'source': {'url': 'https://example.invalid'}}
         self.assertEqual(read_marketplace({'plugins': [row, {'name': 'other'}]}),
                          {'test-driven-development': {'description': 'Summary', 'body': 'A local body'}})
-        with self.assertRaises(ValueError):
-            read_marketplace({'plugins': [row, {**row, 'name': 'test-driven-development'}]})
-        with self.assertRaises(ValueError):
-            read_marketplace({'plugins': [{**row, 'description': 'No instructions'}]})
+        healthy = {**row, 'name': 'other-guide'}
+        duplicate = {**row, 'name': 'test-driven-development'}
+        broken = {**row, 'name': 'unfinished-guide', 'description': 'No instructions'}
+        expected = {'other-guide': {'description': 'Summary', 'body': 'A local body'}}
+        for entries in ([row, duplicate, healthy, broken], [healthy, broken, duplicate, row, duplicate]):
+            with self.subTest(entries=[entry['name'] for entry in entries]):
+                self.assertEqual(read_marketplace({'plugins': entries}), expected)

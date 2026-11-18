@@ -1,10 +1,20 @@
-"""Compare native tool returns from one test turn with the instructions delivered by LiteLLM."""
+"""Compare native tool returns with the LiteLLM catalog pinned to that turn."""
+from contextlib import closing
 import json
-from skill_marketplace import fetch_skills
+from pathlib import Path
 import sqlite3
 import sys
 
 from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelResponse, ToolCallPart, ToolReturnPart
+
+
+def recorded_catalog(turn, path=Path('/data/engineering-skills.db')):
+    with closing(sqlite3.connect(path.as_uri() + '?mode=ro', uri=True)) as db:
+        row = db.execute('SELECT digest, payload FROM turns JOIN catalogs USING (digest) WHERE turn=?',
+                         (turn,)).fetchone()
+    if row is None:
+        raise RuntimeError('No pinned LiteLLM skill catalog for the test turn')
+    return row[0], json.loads(row[1])
 
 
 def observe(turn):
@@ -13,7 +23,8 @@ def observe(turn):
                          "ORDER BY seq DESC LIMIT 1", (turn,)).fetchone()
     if row is None:
         raise RuntimeError('No completed native snapshot for the test turn')
-    expected = {name: f"# Skill: {name}\n\n{row['body']}" for name, row in fetch_skills().items()}
+    digest, catalog = recorded_catalog(turn)
+    expected = {name: f"# Skill: {name}\n\n{skill['body']}" for name, skill in catalog.items()}
     calls = {}
     verified = {}
     selections = {}
@@ -42,7 +53,8 @@ def observe(turn):
     if len(accepted) != 1:
         raise RuntimeError('Expected one successful selection from local Qwen in this fresh turn')
     selection_id, selected = next(iter(accepted.items()))
-    return {'selection_id': selection_id, 'selected_skills': selected, 'verified_skill_calls': verified}
+    return {'catalog_size': len(catalog), 'catalog_sha256': digest, 'selection_id': selection_id,
+            'selected_skills': selected, 'verified_skill_calls': verified}
 
 
 if __name__ == '__main__':

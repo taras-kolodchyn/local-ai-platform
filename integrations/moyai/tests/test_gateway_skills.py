@@ -5,6 +5,7 @@ import unittest
 
 from unittest.mock import AsyncMock, patch
 from gateway_skills import GatewayCatalog, pinned_skills
+from observe_skill_calls import recorded_catalog
 from skill_marketplace import TAG, read_marketplace
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart, ToolReturnPart
@@ -61,3 +62,10 @@ class GatewaySkillTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(pinned_skills('one', path, lambda: first), first)
             self.assertEqual(pinned_skills('two', path, lambda: {}), {})
             self.assertEqual(pinned_skills('one', path, lambda: self.fail('Reloaded a pinned turn')), first)
+            first_digest, observed = recorded_catalog('one', path)
+            second_digest, empty = recorded_catalog('two', path)
+            self.assertEqual(observed, first)
+            self.assertEqual(empty, {})
+            self.assertNotEqual(first_digest, second_digest)
+            with self.assertRaisesRegex(RuntimeError, 'No pinned'):
+                recorded_catalog('missing', path)
