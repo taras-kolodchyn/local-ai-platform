@@ -13,6 +13,8 @@ import urllib.request
 ROOT = Path(__file__).resolve().parents[1]
 LOCAL = ROOT / '.local'
 TEAM = 'workspace-knowledge'
+sys.path.insert(0, str(ROOT / 'integrations/moyai'))
+from skill_marketplace import TAG, seed_hash
 
 
 def private_write(path, content):
@@ -62,53 +64,66 @@ def provision_vectors(request, stores, backend_key):
     return result
 
 
-def provision_skill_catalog(request, manifest):
-    """Register upstream discovery references; runtime adaptations stay local."""
+def provision_skill_catalog(request, manifest, text_directory=None):
+    """Seed reviewed guides into the local marketplace and preserve operator edits."""
     existing = {item['name']: item for item in request('GET', '/claude-code/plugins')['plugins']}
-    entries = manifest['skills'] + manifest.get('marketplace_only', [])
-    bundled = {entry['name'] for entry in manifest['skills']}
+    references = manifest.get('marketplace_only', [])
+    entries = manifest['skills'] + references
     for entry in entries:
-        upstream_name = entry['name']
-        name = entry.get('catalog_name', upstream_name)
-        path = 'skills/' + upstream_name
+        slug = entry['name']
+        name = entry.get('catalog_name', slug)
+        path = 'skills/' + slug
         source = {'source': 'git-subdir', 'url': manifest['source'] + '.git',
                   'path': path, 'sha': manifest['commit']}
-        if upstream_name not in bundled:
+        keywords = ['local-workspace', 'reviewed-workflow']
+        if entry in references:
             description = entry['description'] + ' Catalog installation retrieves the pinned upstream skill.'
-        elif 'description' in entry:
-            description = entry['description'] + ' Moyai includes an offline adaptation.'
+            keywords = ['local-workspace', 'upstream-workflow']
+        elif text_directory:
+            document = (text_directory / slug / 'SKILL.md').read_text()
+            header, body = document.removeprefix('---\n').split('\n---\n', 1)
+            summary = entry['description']
+            if header.splitlines() != ['name: ' + slug, 'description: ' + summary] or not body.strip():
+                raise ValueError('Skill manifest differs from SKILL.md: ' + slug)
+            description = summary + '\n\n' + body.strip()
+            keywords += [TAG, seed_hash(description)]
         else:
             description = ('Pinned upstream workflow. Reviewed local adaptation installed for: '
                            + ', '.join(entry['profiles']) + '. Catalog installation retrieves upstream content.')
-        keywords = ['local-workspace', 'reviewed-workflow' if upstream_name in bundled else 'upstream-workflow']
-        if name in existing:
-            current = existing[name]
-            if current['source'] != source:
-                raise ValueError('Existing skill source differs; review catalog entry: ' + name)
-            # Promote only entries created by the previous marketplace-only provisioner.
-            if (upstream_name in bundled and current.get('keywords') == ['local-workspace', 'upstream-workflow']
-                    and (current.get('description') or '').endswith(' Catalog installation retrieves the pinned upstream skill.')):
-                # LiteLLM PUT replaces the entire editable record. Keep the
-                # operator's metadata, including version and installation settings.
-                fields = ('source', 'version', 'author', 'homepage', 'category', 'domain', 'namespace',
-                          'installation_preference')
-                replacement = {key: current[key] for key in fields if key in current}
-                request('PUT', '/claude-code/plugins/' + name, {**replacement, 'description': description, 'keywords': keywords})
+        current = existing.get(name)
+        if current is None:
+            request('POST', '/claude-code/plugins', {
+                'name': name, 'source': source, 'version': '1.0.0', 'description': description,
+                'author': {'name': manifest.get('author', 'Jesse Vincent')}, 'category': 'Development',
+                'homepage': manifest['source'] + '/tree/' + manifest['commit'] + '/' + path, 'keywords': keywords})
             continue
-        request('POST', '/claude-code/plugins', {
-            'name': name, 'source': source, 'version': '1.0.0',
-            'description': description,
-            'author': {'name': manifest.get('author', 'Jesse Vincent')}, 'category': 'Development',
-            'homepage': manifest['source'] + '/tree/' + manifest['commit'] + '/' + path,
-            'keywords': keywords})
+        if current['source'] != source:
+            raise ValueError('Existing skill source differs; review catalog entry: ' + name)
+        previous = current.get('description') or ''
+        tags = current.get('keywords') or []
+        if not text_directory or entry in references or (previous == description and TAG in tags):
+            continue
+        legacy = (previous in {summary + ' Moyai includes an offline adaptation.',
+                               summary + ' Catalog installation retrieves the pinned upstream skill.'}
+                  and tags in (['local-workspace', 'reviewed-workflow'], ['local-workspace', 'upstream-workflow']))
+        if not legacy and (TAG not in tags or seed_hash(previous) not in tags):
+            continue  # This entry is managed by the operator in the dashboard.
+        extra = [tag for tag in tags if tag not in keywords and tag != 'upstream-workflow'
+                 and not tag.startswith('moyai-seed-')]
+        fields = ('source', 'version', 'author', 'homepage', 'category', 'domain', 'namespace',
+                  'installation_preference')
+        replacement = {key: current[key] for key in fields if key in current}
+        request('PUT', '/claude-code/plugins/' + name,
+                {**replacement, 'description': description, 'keywords': keywords + extra})
     return len(entries)
 
 
 def skills(manifest_path='execution/skills/manifest.json'):
-    manifest = json.loads((ROOT / manifest_path).read_text())
+    path = ROOT / manifest_path
+    manifest = json.loads(path.read_text())
     admin = gateway((LOCAL / 'litellm-master-key').read_text().strip())
-    count = provision_skill_catalog(admin, manifest)
-    print(f"{count} workflow sources registered in the LiteLLM Skills catalog")
+    count = provision_skill_catalog(admin, manifest, path.parent if path.name == 'catalog.json' else None)
+    print(f"{count} workflow sources reconciled in the LiteLLM Skills catalog")
 
 
 def owner_request(admin):

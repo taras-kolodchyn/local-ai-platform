@@ -2,7 +2,8 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock
 
-from moyai.agent import PACKAGE_ROOT, bundled_skill_catalog
+from pydantic_ai.capabilities import CombinedCapability
+from gateway_skills import GatewaySkill
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import ModelRequest, ModelResponse, RetryPromptPart, TextPart, ToolCallPart, ToolReturnPart, UserPromptPart
@@ -27,6 +28,7 @@ class SkillCallTests(unittest.IsolatedAsyncioTestCase):
         self.ctx = SimpleNamespace(run_id='root', run_step=1, active_capability_ids=set(),
                                    deps=SimpleNamespace(root_run_id='root', turn_id='turn',
                                                         session_id='s', workspace_key='w'))
+        self.ctx.capabilities = {n: GatewaySkill(n, n, n) for n in (SKILL, 'documentation-and-adrs')}
         self.loader = ToolDefinition(name='load_capability', tool_kind='capability-load',
                                     parameters_json_schema={'type': 'object', 'properties': {'id': {'type': 'string'}},
                                                             'required': ['id'], 'additionalProperties': False})
@@ -174,7 +176,7 @@ class SkillCallTests(unittest.IsolatedAsyncioTestCase):
         calls = []
         task = 'Make a plan for the example.'
         self.workspace.backend.ledger = SimpleNamespace(status=lambda *scope: None)
-        catalog = bundled_skill_catalog(PACKAGE_ROOT / 'skills', '/opt/moyai/skills')
+        catalog = CombinedCapability(list(self.ctx.capabilities.values()))
 
         def respond(messages, info):
             calls.append((info.model_settings or {}).get('tool_choice'))
@@ -198,7 +200,7 @@ class SkillCallTests(unittest.IsolatedAsyncioTestCase):
     async def test_sdk_selection_loads_each_selected_skill_once_and_allows_an_empty_selection(self):
         self.workspace.backend.ledger = SimpleNamespace(status=lambda *scope: None)
         self.ctx.deps.surface = 'web'
-        catalog = bundled_skill_catalog(PACKAGE_ROOT / 'skills', '/opt/moyai/skills')
+        catalog = CombinedCapability(list(self.ctx.capabilities.values()))
         for wanted in ([], [SKILL, 'documentation-and-adrs']):
             choices = []
 

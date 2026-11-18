@@ -1,6 +1,6 @@
-"""Compare native tool returns from one test turn with the packaged instructions."""
+"""Compare native tool returns from one test turn with the instructions delivered by LiteLLM."""
 import json
-from pathlib import Path
+from skill_marketplace import fetch_skills
 import sqlite3
 import sys
 
@@ -13,12 +13,7 @@ def observe(turn):
                          "ORDER BY seq DESC LIMIT 1", (turn,)).fetchone()
     if row is None:
         raise RuntimeError('No completed native snapshot for the test turn')
-    root = Path('/opt/moyai-local/skills')
-    expected = {}
-    for skill in json.loads((root / 'catalog.json').read_text())['skills']:
-        name = skill['name']
-        body = (root / name / 'SKILL.md').read_text().split('---\n', 2)[2].strip()
-        expected[name] = f'# Skill: {name}\n\n{body}'
+    expected = {name: f"# Skill: {name}\n\n{row['body']}" for name, row in fetch_skills().items()}
     calls = {}
     verified = {}
     selections = {}

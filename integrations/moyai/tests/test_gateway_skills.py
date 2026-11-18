@@ -3,18 +3,29 @@ from pathlib import Path
 from types import SimpleNamespace
 import unittest
 
-from moyai.agent import PACKAGE_ROOT, bundled_skill_catalog
+from unittest.mock import AsyncMock, patch
+from gateway_skills import GatewayCatalog, pinned_skills
+from skill_marketplace import TAG, read_marketplace
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import FunctionModel
 
 
-class BundledSkillTests(unittest.IsolatedAsyncioTestCase):
-    async def test_native_catalog_offers_the_packaged_instructions_without_a_workspace(self):
-        packaged = Path(__file__).resolve().parents[1] / 'skills'
+class GatewaySkillTests(unittest.IsolatedAsyncioTestCase):
+    async def test_native_catalog_loads_every_gateway_skill_without_a_workspace(self):
+        packaged = Path('/opt/test-skill-seeds')
         manifest = json.loads((packaged / 'catalog.json').read_text())
-        catalog = bundled_skill_catalog(PACKAGE_ROOT / 'skills', '/opt/moyai/skills')
-        prepared = await catalog.for_run(SimpleNamespace(workspace=None))
+        plugins = []
+        for entry in manifest['skills']:
+            raw = (packaged / entry['name'] / 'SKILL.md').read_text()
+            plugins.append({'name': entry.get('catalog_name', entry['name']), 'keywords': [TAG],
+                            'description': entry['description'] + '\n\n' + raw.split('\n---\n', 1)[1].strip()})
+        fetched = read_marketplace({'plugins': plugins})
+        catalog = GatewayCatalog()
+        reader = patch('gateway_skills.turn_skills', AsyncMock(return_value=fetched))
+        reader.start()
+        self.addCleanup(reader.stop)
+        prepared = await catalog.for_run(SimpleNamespace(run_id='turn'))
         available = {capability.id: capability for capability in prepared.capabilities}
         self.assertEqual(len({entry['name'] for entry in manifest['skills']}), 25)
         for entry in manifest['skills']:
@@ -40,3 +51,13 @@ class BundledSkillTests(unittest.IsolatedAsyncioTestCase):
 
                 result = await Agent(FunctionModel(request_skill), capabilities=[catalog]).run('Load this workflow.')
                 self.assertEqual(result.output, 'loaded')
+
+
+    def test_a_turn_keeps_its_revision_and_a_new_turn_sees_dashboard_changes(self):
+        from tempfile import TemporaryDirectory
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / 'catalog.db'
+            first = {'test': {'description': 'Test', 'body': 'First version'}}
+            self.assertEqual(pinned_skills('one', path, lambda: first), first)
+            self.assertEqual(pinned_skills('two', path, lambda: {}), {})
+            self.assertEqual(pinned_skills('one', path, lambda: self.fail('Reloaded a pinned turn')), first)

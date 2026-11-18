@@ -46,29 +46,31 @@ the old workspace A2A registrations, verifies health, gateway, cache and scoped
 knowledge access, and writes optional Codex/Hermes client examples under `.local/`.
 Those client examples do not register or start additional agents in LiteLLM.
 
-`make up` registers all 25 workflows from Addy Osmani's catalog in the **Skills**
-section of the [local LiteLLM dashboard](http://127.0.0.1:4000/ui). Registration
-uses the checked-in manifest and works offline. Each catalog entry points to its
-skill directory at the [pinned MIT-licensed upstream revision](https://github.com/addyosmani/agent-skills/tree/39b723ceebf81474d0557c1fecd01eddab585563/skills).
-Installing an upstream entry from the marketplace requires access to GitHub.
-The Addy Osmani version of test-driven development appears as
-`addyosmani-test-driven-development` alongside the existing Superpowers entry.
-Moyai packages [local adaptations of all 25 workflows](integrations/moyai/skills).
-To update the instructions Moyai uses, edit the skill's local `SKILL.md` and
-run `make up` to rebuild the image. The LiteLLM dashboard manages marketplace entries.
-Describe the task in a new chat and Qwen selects the relevant instructions
-from the image. The native skill ID for the Addy Osmani TDD workflow is
-`test-driven-development`. The browser workflow can analyze a supplied local
-DevTools trace, and the release workflow can prepare a rollout from local
-evidence. A skill adds instructions within the tools available to the chat.
-Registered repository tasks retain their phase-specific tool restrictions.
-An ordinary web chat uses one local model request to select relevant engineering
-workflows from their descriptions. Qwen loads each selected skill with a separate
-native call before answering the original request. It can select an empty list.
+`make up` seeds the **Skills** section of the [local LiteLLM dashboard](http://127.0.0.1:4000/ui)
+with [25 reviewed, text-only workflows](integrations/moyai/skills) adapted from
+[Addy Osmani’s MIT-licensed catalog](https://github.com/addyosmani/agent-skills/tree/39b723ceebf81474d0557c1fecd01eddab585563/skills).
+At the start of a turn, Moyai reads the enabled text guides from the local
+LiteLLM marketplace. Qwen sees their one-line summaries, selects the relevant
+workflows and loads the selected instructions through native `load_capability`
+calls. A simple question can select zero skills. This works offline, including
+in a fresh chat. The upstream Git links record provenance.
+
+To change a guide, open its LiteLLM Skills entry and edit **Description**.
+The first line is the selection summary. A blank line separates it from the
+Markdown instructions. The `moyai-text-v1` keyword identifies this format.
+Use **Enabled** to control availability. Changes apply on the next turn without
+rebuilding or restarting Moyai. Each turn pins its catalog so retries and worker
+restarts see the same instructions. Re-running `make up` preserves dashboard
+edits and enablement. The marketplace entry `addyosmani-test-driven-development`
+uses the native ID `test-driven-development` in chat.
+
+Skills contribute instructions. Moyai enforces the tool permissions of the active
+chat or repository phase. The browser workflow can interpret a local DevTools
+trace and the release workflow can prepare a rollout from local evidence.
 
 Choose **local-qwen-analysis** in Moyai's model picker for chat-only analysis.
 It uses the same local Qwen through LiteLLM. The profile permits reading and
-listing existing files and loading the selected packaged skills. The workspace
+listing existing files and loading the selected LiteLLM skills. The workspace
 refuses commands and file changes. Plans, proposed code and ADRs go in the
 chat. For a shortcut, start a web message with `/analysis` or end it with
 “без змін у файлах”. Moyai records the analysis profile on the turn and as the

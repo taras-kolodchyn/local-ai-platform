@@ -119,8 +119,8 @@ class ProvisioningTest(unittest.TestCase):
             self.assertEqual(method, 'POST')
             records.append(body)
 
-        module.provision_skill_catalog(request, manifest)
-        module.provision_skill_catalog(request, manifest)
+        module.provision_skill_catalog(request, manifest, root)
+        module.provision_skill_catalog(request, manifest, root)
         all_skills = manifest['skills']
         self.assertEqual(len({skill['name'] for skill in all_skills}), 25)
         self.assertEqual(len(records), len(all_skills) + 1)
@@ -133,10 +133,12 @@ class ProvisioningTest(unittest.TestCase):
             name = skill['name']
             header = (root / name / 'SKILL.md').read_text().split('---\n')[1].splitlines()
             self.assertIn('name: ' + name, header)
-            self.assertIn('offline adaptation', row['description'])
+            expected_body = (root / name / 'SKILL.md').read_text().split('\n---\n', 1)[1].strip()
+            self.assertEqual(row['description'], skill['description'] + '\n\n' + expected_body)
+            self.assertIn(module.TAG, row['keywords'])
         records[1]['source'] = records[0]['source'].copy()
         with self.assertRaisesRegex(ValueError, records[1]['name']):
-            module.provision_skill_catalog(request, manifest)
+            module.provision_skill_catalog(request, manifest, root)
         self.assertEqual(records[1]['source'], records[0]['source'])
 
     def test_catalog_only_entry_can_share_an_upstream_name_with_another_publisher(self):
@@ -182,8 +184,22 @@ class ProvisioningTest(unittest.TestCase):
             changes.append(body)
             old.update(body)
 
-        module.provision_skill_catalog(request, manifest)
-        module.provision_skill_catalog(request, manifest)
+        module.provision_skill_catalog(request, manifest, module.ROOT / 'integrations/moyai/skills')
+        module.provision_skill_catalog(request, manifest, module.ROOT / 'integrations/moyai/skills')
         self.assertEqual(len(changes), 1)
-        self.assertIn('offline adaptation', old['description'])
+        self.assertTrue(old['description'].startswith(skill['description'] + '\n\n'))
+        old['description'] = 'Changed by operator\n\nLocal instructions'
+        module.provision_skill_catalog(request, manifest, module.ROOT / 'integrations/moyai/skills')
+        self.assertEqual(len(changes), 1)
         self.assertFalse(old['enabled'])
+
+    def test_gateway_exposes_only_tagged_text_and_rejects_ambiguous_native_ids(self):
+        from skill_marketplace import read_marketplace
+        row = {'name': 'addyosmani-test-driven-development', 'description': 'Summary\r\n\r\nA local body',
+               'keywords': [module.TAG], 'source': {'url': 'https://example.invalid'}}
+        self.assertEqual(read_marketplace({'plugins': [row, {'name': 'other'}]}),
+                         {'test-driven-development': {'description': 'Summary', 'body': 'A local body'}})
+        with self.assertRaises(ValueError):
+            read_marketplace({'plugins': [row, {**row, 'name': 'test-driven-development'}]})
+        with self.assertRaises(ValueError):
+            read_marketplace({'plugins': [{**row, 'description': 'No instructions'}]})

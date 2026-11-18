@@ -165,7 +165,7 @@ class SessionWorkspace(RepositoryWorkflow):
     async def before_model_request(self, ctx, request_context):
         request = await super().before_model_request(ctx, request_context)
         if analysis_mode.active(ctx):
-            request = analysis_mode.restrict_request(ctx, request, self.engineering_skills.catalog)
+            request = analysis_mode.restrict_request(ctx, request, self.engineering_skills.catalog(ctx))
         elif (getattr(ctx.deps, 'surface', None) == 'web' and ctx.run_id == ctx.deps.root_run_id
                 and any(isinstance(part, ToolReturnPart) and part.tool_name == 'open_repository'
                         and part.outcome == 'success' for message in request.messages if message.run_id == ctx.run_id
@@ -204,8 +204,8 @@ class SessionWorkspace(RepositoryWorkflow):
     async def before_tool_execute(self, ctx, *, call, tool_def, args):
         if analysis_mode.active(ctx) and (tool_def.name not in analysis_mode.TOOLS
                 or call.tool_name != tool_def.name or (tool_def.name == 'load_capability'
-                and (tool_def.tool_kind != 'capability-load' or args.get('id') not in self.engineering_skills.catalog))):
-            raise ToolFailed('The analysis-only profile permits local reads and packaged skills only.')
+                and (tool_def.tool_kind != 'capability-load' or args.get('id') not in self.engineering_skills.catalog(ctx)))):
+            raise ToolFailed('The analysis-only profile permits local reads and enabled gateway skills only.')
         return await super().before_tool_execute(ctx, call=call, tool_def=tool_def, args=args)
 
     async def wrap_model_request(self, ctx, *, request_context, handler):
