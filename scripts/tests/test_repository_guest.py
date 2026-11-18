@@ -19,6 +19,13 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 GUEST = ROOT / 'integrations/moyai/repository_guest.py'
 CONVERSATION = 'a' * 64
+RETRY_CANDIDATE_BASE = """\
+const OWNER_FILTER: &str = "owner = ?";
+
+pub fn legacy_retry_delay_ms(attempt: u32) -> u64 {
+    bounded_backoff_ms(attempt)
+}
+"""
 
 
 class GuestTests(unittest.TestCase):
@@ -334,22 +341,27 @@ class GuestTests(unittest.TestCase):
         self.assertEqual([item['executable'] for item in reply['artifacts']], ['/test/server'])
 
     def test_counterexample_changes_retry_only_and_preserves_other_repairs(self):
-        self.assertTrue(hasattr(self.guest,'counterexample_source'),'retry-only counterexample missing')
-        original=(ROOT/'examples/rust-service/src/lib.rs').read_text()
-        candidate=original.replace("owner = '{owner}'", "owner = ?")+'\npub fn bounded_backoff_ms(attempt: u32) -> u64 { attempt.min(300) as u64 }\n'
-        template=(ROOT/'integrations/moyai/oracles/counterexample_lib.rs').read_text()
-        broken=self.guest.counterexample_source(candidate,template)
-        self.assertIn('owner = ?',broken)
-        self.assertNotIn("owner = '{owner}'",broken)
-        self.assertNotIn('attempt.min(300)',broken)
-        self.assertIn('60_000',broken)
+        candidate = RETRY_CANDIDATE_BASE + """
+pub fn bounded_backoff_ms(attempt: u32) -> u64 { attempt.min(300) as u64 }
+"""
+        template = (ROOT / 'integrations/moyai/oracles/counterexample_lib.rs').read_text()
+        broken = self.guest.counterexample_source(candidate, template)
+        self.assertIn('const OWNER_FILTER: &str = "owner = ?";', broken)
+        self.assertNotIn('attempt.min(300)', broken)
+        self.assertNotIn('bounded_backoff_ms(attempt)', broken)
+        self.assertIn('60_000', broken)
 
     def test_const_helper_keeps_qualifier_in_retry_counterexample(self):
-        candidate=(ROOT/'examples/rust-service/src/lib.rs').read_text()+'\npub const fn bounded_backoff_ms(attempt: u32) -> u64 { if attempt >= 9 { 30_000 } else { 100_u64 << attempt } }\n'
-        template=(ROOT/'integrations/moyai/oracles/counterexample_lib.rs').read_text()
-        broken=self.guest.counterexample_source(candidate,template)
-        self.assertIn('pub const fn bounded_backoff_ms',broken)
-        self.assertIn('60_000',broken)
+        candidate = RETRY_CANDIDATE_BASE + """
+pub const fn bounded_backoff_ms(attempt: u32) -> u64 {
+    if attempt >= 9 { 30_000 } else { 100_u64 << attempt }
+}
+"""
+        template = (ROOT / 'integrations/moyai/oracles/counterexample_lib.rs').read_text()
+        broken = self.guest.counterexample_source(candidate, template)
+        self.assertIn('pub const fn bounded_backoff_ms', broken)
+        self.assertNotIn('30_000', broken)
+        self.assertIn('60_000', broken)
 
     def test_active_or_owner_lost_same_run_scratch_is_not_deleted(self):
         self.imported()
@@ -514,7 +526,6 @@ class GuestTests(unittest.TestCase):
             self.assertFalse(self.guest.mandatory_commands_passed(changed))
 
     def test_multiline_const_retry_parameter_comments_and_trailing_comma(self):
-        original=(ROOT/'examples/rust-service/src/lib.rs').read_text().replace("owner = '{owner}'",'owner = ?')
         template=(ROOT/'integrations/moyai/oracles/counterexample_lib.rs').read_text()
         variants=[('attempt: u32,','attempt'),
                   ('\n /* misleading ) { */ retries /* parameter */ : /* type */ u32, // trailing\n','retries'),
@@ -522,10 +533,12 @@ class GuestTests(unittest.TestCase):
         for parameter,name in variants:
             with self.subTest(parameter=parameter):
                 declaration='pub\nconst fn bounded_backoff_ms( '+parameter+' ) /* fake { */ -> u64 /* another { */ {'
-                candidate=original+'\n'+declaration+' if '+name+' >= 9 { 30_000 } else { 100_u64 << '+name+' } }\n'
+                body = f' if {name} >= 9 {{ 30_000 }} else {{ 100_u64 << {name} }} '
+                candidate = RETRY_CANDIDATE_BASE + declaration + body + '}\n'
                 broken=self.guest.counterexample_source(candidate,template)
                 self.assertIn(declaration,broken)
                 self.assertIn('owner = ?',broken)
+                self.assertNotIn('30_000', broken)
                 self.assertIn('60_000',broken)
                 self.assertIn('100_u64 << '+name,broken)
 
