@@ -30,6 +30,10 @@ def validate_evidence(task, observer, result, report, completed_tools, binding, 
     require(len(receipts) >= 2 and observer.get('receipt_authenticity') == [True] * len(receipts),
             'Every check must have independently authenticated evidence')
     require(report.get('baseline_and_attempts') == receipts, 'Downloaded report differs from controller evidence')
+    require(all(receipt.get('processes_stopped') is True and all(
+                cmd.get('descendants_stopped') is True and cmd.get('process_group_stopped') is True
+                and cmd.get('pipe_drained') is True for cmd in receipt['commands']) for receipt in receipts),
+            'A verification command lacks evidence of descendant cleanup or drained output')
     baseline, final = receipts[0], receipts[-1]
     require(baseline.get('state') == 'failed' and baseline.get('tree_hash') == task.get('original_tree')
             and baseline.get('checks', {}).get('baseline_policy_violation') is True,

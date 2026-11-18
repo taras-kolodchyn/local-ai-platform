@@ -61,7 +61,12 @@ selected generation when another snapshot is registered.
 
 Embedding provenance includes the configured alias, immutable DMR artifact,
 dimensions, input format and chunker implementation. Incompatible generations
-cannot silently reuse embeddings or enter unpinned searches. Native inference
+cannot silently reuse embeddings or enter unpinned searches. The generic MCP
+`get_chunk` lookup applies the same generation and embedding filters as unpinned
+search. It accepts a numeric chunk ID. A legacy chunk is eligible only while its
+repository and branch have no active generation and its embedding fingerprint
+matches. Previously pinned conversations can still search their compatible snapshot
+through the scoped vector store. Native inference
 still runs through Docker Model Runner on macOS; Linux containers do not have
 direct Metal access.
 
@@ -85,10 +90,17 @@ are one hour, 60 model requests, 120 tool calls and four repair validations, wit
 a separate baseline check. The fixed command has its own bounded timeout.
 
 Fresh check receipts are authenticated using a per-operation controller key sent
-only over SSH stdin. Results identify actual executed tests and stopped process
-groups. An unknown outcome stays fenced; a missing response does not authorize
+only over SSH stdin. Each Cargo or test command runs under its own Linux child
+subreaper. It reaps the command and its remaining descendants and reports when
+the kernel confirms it has no children left. The guest also checks that output
+reached EOF. The controller requires both kinds of evidence before settling a
+launched check. A verified issue with an older receipt runs fresh checks before
+delivery. An unknown outcome stays fenced; a missing response does not authorize
 replaying a command. A subsequent authorized turn can reconcile recorded check
 evidence or a provable write postimage. Ambiguous writes remain uncertain.
+
+The supervisor's cleanup and cancellation tests passed on the local Linux
+7.0.14-linuxkit sandbox with Python 3.14.10 on 2026-11-18.
 
 Completed files and workspace data survive a service restart. Running process
 memory does not. The authenticated owner endpoint
@@ -132,7 +144,9 @@ reviewable patch; applying it to the host checkout is an explicit operator step.
 Capacity measurements cover sequential repository tasks. Concurrent Rust checks
 share the sandbox's memory limit and have not been capacity-tested.
 
-Compatibility sources: [Cargo offline and locked execution](https://doc.rust-lang.org/cargo/commands/cargo-test.html),
+Compatibility sources: [Linux child subreapers](https://man7.org/linux/man-pages/man2/PR_SET_CHILD_SUBREAPER.2const.html),
+[waitpid child accounting](https://man7.org/linux/man-pages/man2/wait.2.html),
+[Cargo offline and locked execution](https://doc.rust-lang.org/cargo/commands/cargo-test.html),
 [Cargo vendoring](https://doc.rust-lang.org/cargo/commands/cargo-vendor.html),
 [LiteLLM virtual key permissions](https://docs.litellm.ai/docs/proxy/virtual_keys),
 [pinned LiteLLM route checks](https://github.com/BerriAI/litellm/blob/v1.109.1/litellm/proxy/auth/route_checks.py).

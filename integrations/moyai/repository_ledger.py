@@ -314,6 +314,8 @@ class Ledger:
                     or len(task['receipts']) < 2):
                 return None
             latest = task['receipts'][-1]
+            if not commands_stopped(latest):
+                return None  # Pre-upgrade receipts cannot certify descendant cleanup.
             if latest['state'] == 'passed' and (task['phase'] != 'verified' or task['verified_tree'] != tree):
                 return None  # Every admitted write invalidates a pass, including identical-byte writes.
             if latest['state'] == 'failed':
@@ -365,9 +367,7 @@ class Ledger:
                          and receipt.get('processes_stopped') is True)
             if outcome in {'passed','failed'} and not (outcome == 'failed' and no_launch):
                 validate_checks(receipt)
-            elif outcome not in {'cancelled','timeout','failed'} or not (no_launch or (
-                    isinstance(commands,list) and bool(commands) and receipt.get('processes_stopped') is True
-                    and all(cmd.get('process_group_stopped') is True for cmd in commands))):
+            elif outcome not in {'cancelled','timeout','failed'} or not (no_launch or commands_stopped(receipt)):
                 raise RepositoryError('Verification has no authenticated stopped outcome.')
             self._settle(db, task, operation)
             task['receipts'].append(receipt)
@@ -393,6 +393,8 @@ class Ledger:
             self._active(db, task)
             if task['phase'] not in {'verified','delivering'} or task['verified_tree'] != tree or not tree:
                 raise RepositoryError('Run trusted checks on the current tree before finalizing.')
+            if not task['receipts'] or not commands_stopped(task['receipts'][-1]):
+                raise RepositoryError('Run trusted checks with descendant cleanup evidence before finalizing.')
             return task
 
     def stage_delivery(self, session, authority, tree, artifacts, check_operation):
@@ -401,6 +403,7 @@ class Ledger:
             self._active(db, task)
             if (task['phase'] not in {'verified','delivering'} or tree != task['verified_tree']
                     or not task['receipts'] or task['receipts'][-1]['operation_id'] != check_operation
+                    or not commands_stopped(task['receipts'][-1])
                     or set(artifacts) != set(ARTIFACT_PATHS)
                     or (task['artifacts'] and task['artifacts'] != artifacts)):
                 raise RepositoryError('Finalization requires fresh evidence and the same three artifacts.')
@@ -496,12 +499,20 @@ ORACLE_TESTS = ['legacy_entry_point_retains_shared_policy_compatibility', 'share
                 'shared_policy_is_monotonic_and_bounded', 'shared_policy_starts_at_one_hundred_ms']
 
 
+def commands_stopped(receipt):
+    commands = receipt.get('commands')
+    return (receipt.get('processes_stopped') is True and isinstance(commands, list) and bool(commands)
+            and all(isinstance(cmd, dict) and cmd.get('process_group_stopped') is True
+                    and cmd.get('descendants_stopped') is True and cmd.get('pipe_drained') is True
+                    for cmd in commands))
+
+
 def validate_checks(receipt):
     checks = receipt.get('checks', {})
     commands = receipt.get('commands', [])
     if (receipt.get('profile') != 'rust-retry' or checks.get('protected_unchanged') is not True
             or checks.get('tree_unchanged') is not True or checks.get('verification_inputs_unchanged') is not True
-            or not commands
+            or not commands_stopped(receipt)
             or any(not isinstance(cmd.get('argv'), list) or not cmd['argv']
                    or type(cmd.get('exit_code')) is not int for cmd in commands)):
         raise RepositoryError('Trusted verification commands or protected-tree evidence missing.')

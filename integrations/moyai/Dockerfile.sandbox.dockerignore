@@ -10,5 +10,6 @@
 !integrations/moyai/oracles/
 !integrations/moyai/oracles/**
 !integrations/moyai/repository_guest.py
+!integrations/moyai/command_supervisor.py
 !integrations/moyai/sshd_config
 !integrations/moyai/sandbox-entrypoint.sh

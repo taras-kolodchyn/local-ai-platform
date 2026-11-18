@@ -14,7 +14,7 @@ from temporalio import workflow
 
 from github_issue import ISSUES, PULLS, exchange, issue_number, user_issue
 from repository_backend import NativeFiles, RepositoryBackend, fingerprint, scoped_tree, workspace_path
-from repository_ledger import ARTIFACT_PATHS, RepositoryError, has_change_citation, missing_change_evidence
+from repository_ledger import ARTIFACT_PATHS, RepositoryError, commands_stopped, has_change_citation, missing_change_evidence
 
 ISSUE = 'open_github_issue'
 DISCOVERY = {'list_repositories', 'open_repository', ISSUE}
@@ -159,6 +159,8 @@ class RepositoryWorkflow(AbstractCapability):
             return 'open'
         if (task.get('github_issue') or {}).get('number') != number:
             return 'other'
+        if task['phase'] == 'verified' and (not task.get('receipts') or not commands_stopped(task['receipts'][-1])):
+            return 'recheck'
         return task['phase']
 
     async def authorize_issue_response(self, ctx, request_context):
@@ -202,7 +204,7 @@ class RepositoryWorkflow(AbstractCapability):
 
     async def route_issue(self, ctx, request_context, number):
         phase = await self.github_route(*scope_of(ctx), number)
-        if (phase in ('analyzing','verified','failed') and
+        if (phase in ('analyzing','verified','recheck','failed') and
                 (not workflow.in_workflow() or workflow.patched('local-github-issue-phases-v1'))):
             if phase == 'failed':
                 await self.authorize_issue_response(ctx, request_context)
@@ -214,7 +216,10 @@ class RepositoryWorkflow(AbstractCapability):
                     return ModelResponse(parts=[ToolCallPart(STATUS, {}, tool_call_id='issue-resumed-'+ctx.deps.turn_id)],
                                          finish_reason='tool_call', provider_name='local-controller')
                 phase = 'analyzing'
-            step = FINISH if phase == 'verified' else await self.issue_analysis_step(*scope_of(ctx))
+            if phase == 'analyzing':
+                step = await self.issue_analysis_step(*scope_of(ctx))
+            else:
+                step = CHECK if phase == 'recheck' else FINISH
             if not step:
                 return None
             call_id = f'issue-{step}-{ctx.deps.turn_id}'

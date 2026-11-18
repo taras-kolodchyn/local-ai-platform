@@ -172,7 +172,7 @@ def search_code(
 
 @mcp.tool()
 def get_chunk(chunk_id: int) -> str:
-    """Return one already-indexed chunk by numeric id; this tool cannot read arbitrary files."""
+    """Return an indexed chunk by numeric id if it is visible to unpinned search."""
     if chunk_id <= 0:
         raise ValueError("chunk_id must be positive")
     chunk = db_get_chunk(SETTINGS, chunk_id)

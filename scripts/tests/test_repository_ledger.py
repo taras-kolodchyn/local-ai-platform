@@ -18,12 +18,12 @@ def add_regression(receipt, name='added', counter_exit=101, path='tests/added.rs
     checks['regression_tests_added'] = checks['regression_tests_run'] = len(checks['regression_proofs'])
     if not any(c.get('kind')=='counterexample_build' and c.get('test_path')==path for c in receipt['commands']):
         receipt['commands'].append({'kind':'counterexample_build','test_path':path,'argv':['cargo','test','--no-run'],
-                                    'exit_code':0,'state':'passed','output_truncated':False,'process_group_stopped':True})
+                                    'exit_code':0,'state':'passed','output_truncated':False,'pipe_drained':True,'descendants_stopped':True,'process_group_stopped':True})
     for kind, code in (('regression',0),('regression_counterexample',counter_exit)):
         state='FAILED' if code else 'ok'
         receipt['commands'].append({'kind':kind,'test_path':path,'test_names':[name], 'argv':['/native/test','--exact',name],
                                     'exit_code':code,'expected_exit_code':code,'state':'failed' if code else 'passed',
-                                    'native_completed':True,'output_truncated':False,'process_group_stopped':True,
+                                    'native_completed':True,'output_truncated':False,'pipe_drained':True,'descendants_stopped':True,'process_group_stopped':True,
                                     'output':f'test {name} ... {state}\n\ntest result: {state}. {int(not code)} passed; {int(bool(code))} failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n'})
 
 
@@ -101,6 +101,20 @@ class RepositoryLedgerTests(unittest.TestCase):
         with self.assertRaises(RepositoryError):
             self.ledger.ready_to_finish('s', 'a', 'base')
 
+    def test_group_only_receipt_cannot_settle_any_launched_check(self):
+        from repository_guest import sign_receipt
+        self.ledger.start_check('s', 'a', 'check', 'base')
+        for state in ('passed', 'failed', 'cancelled', 'timeout'):
+            with self.subTest(state=state):
+                receipt = self.receipt('check', 'base', state, baseline=state == 'failed')
+                receipt.pop('receipt_mac')
+                receipt['commands'][0].pop('descendants_stopped')
+                receipt['processes_stopped'] = True
+                signed = sign_receipt(receipt, self.ledger.check_key('s', 'a', 'check'))
+                with self.assertRaises(RepositoryError):
+                    self.ledger.finish_check('s', 'a', 'check', signed, 'base')
+                self.assertEqual(self.ledger.status('s', 'a')['pending'], 'check')
+
     def test_download_hash_compares_actual_bytes(self):
         digest = hashlib.sha256(b'controller bytes').hexdigest()
         verify_artifact(b'controller bytes', digest)
@@ -117,11 +131,11 @@ class RepositoryLedgerTests(unittest.TestCase):
                              'exit_code':101 if kind == 'regression_counterexample' else int(failed), 'native_completed':True,
                              'expected_exit_code':101 if kind == 'regression_counterexample' else 0,'output_truncated':False,
                              'output':'legacy_large_attempt_obeys_documented_ceiling ... FAILED\nleft: 60000\nright: 30000'
-                             if failed else 'test result: ok', 'process_group_stopped': True})
+                             if failed else 'test result: ok', 'pipe_drained': True, 'descendants_stopped': True, 'process_group_stopped': True})
         from repository_ledger import ORACLE_TESTS
         receipt = {'task_id':self.ledger.status('s','a')['task_id'], 'operation_id':operation,
                    'profile':'rust-retry','tree_hash':tree, 'state':outcome, 'ok':outcome == 'passed',
-                   'commands':commands,'checks':{'protected_unchanged':True,'tree_unchanged':True,
+                   'processes_stopped':True,'commands':commands,'checks':{'protected_unchanged':True,'tree_unchanged':True,
                        'verification_inputs_unchanged':True, 'protected_test_names':ORACLE_TESTS,
                        'regression_counterexample_passed':True,'regression_proofs':[], 'baseline_policy_violation':baseline,
                        'project_tests_run':3,'oracle_tests_run':4,'regression_tests_added':1,
@@ -173,6 +187,31 @@ class RepositoryLedgerTests(unittest.TestCase):
         self.assertIsNone(self.ledger.reusable_check('s','a','edited'))
         restarted = Ledger(self.ledger.path,clock=lambda: self.now)
         self.assertEqual(restarted.reusable_check('s','a','repaired'),receipt)
+
+    def test_pre_upgrade_pass_requires_fresh_verification_before_delivery(self):
+        from unittest.mock import patch
+        from repository_guest import sign_receipt
+        from repository_ledger import ARTIFACT_PATHS
+
+        self.implement()
+        self.ledger.start_check('s','a','old','repaired')
+        old = self.receipt('old','repaired','passed')
+        old.pop('receipt_mac')
+        for command in old['commands']:
+            del command['descendants_stopped']
+        old = sign_receipt(old, self.ledger.check_key('s','a','old'))
+        # Populate the database under the previous per-group receipt contract.
+        with patch('repository_ledger.commands_stopped', return_value=True):
+            self.ledger.finish_check('s','a','old',old,'repaired')
+        ledger = Ledger(self.ledger.path, clock=lambda: self.now)
+        self.assertIsNone(ledger.reusable_check('s','a','repaired'))
+        with self.assertRaises(RepositoryError):
+            ledger.ready_to_finish('s','a','repaired')
+        with self.assertRaises(RepositoryError):
+            ledger.stage_delivery('s','a','repaired',dict.fromkeys(ARTIFACT_PATHS, 'digest'),'old')
+        ledger.start_check('s','a','new','repaired')
+        ledger.finish_check('s','a','new',self.receipt('new','repaired','passed'),'repaired')
+        self.assertEqual(ledger.ready_to_finish('s','a','repaired')['receipts'][-1]['operation_id'], 'new')
 
     def test_check_reuse_never_bypasses_authority_pending_terminal_or_deadline(self):
         self.implement()

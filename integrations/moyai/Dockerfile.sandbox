@@ -38,6 +38,7 @@ COPY --from=rust-assets /prepare/verifier/Cargo.lock /opt/local-repository/oracl
 COPY --from=rust-assets /prepare/probe/Cargo.lock /opt/local-repository/oracles/Baseline.lock
 COPY integrations/moyai/oracles /opt/local-repository/oracles
 COPY integrations/moyai/repository_guest.py /opt/local-repository/guest.py
+COPY integrations/moyai/command_supervisor.py /opt/local-repository/command_supervisor.py
 COPY integrations/moyai/sshd_config /etc/ssh/sshd_config
 COPY integrations/moyai/sandbox-entrypoint.sh /usr/local/bin/moyai-sandbox
 ENV PATH="/opt/rust/bin:${PATH}" CARGO_HOME=/opt/rust-cargo CARGO_NET_OFFLINE=true
