@@ -5,7 +5,7 @@
 //! The schedule starts at 100 ms and doubles each time, capping at 30,000 ms.
 //!
 //! Migration note: Callers should use `bounded_backoff_ms` directly.
-//! The legacy entry point `legacy_retry_delay_ms` will be removed in a future release.
+//! The deprecated `legacy_retry_delay_ms` delegates to the same capped implementation.
 //! During migration, both functions behave identically.
 //!
 //! The schedule is:
