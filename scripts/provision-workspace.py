@@ -73,20 +73,24 @@ def provision_skill_catalog(request, manifest):
             if existing[name]['source'] != source:
                 raise ValueError('Existing skill source differs; review catalog entry: ' + name)
             continue
+        if 'description' in entry:
+            description = entry['description'] + ' Moyai includes an offline adaptation.'
+        else:
+            description = ('Pinned upstream workflow. Reviewed local adaptation installed for: '
+                           + ', '.join(entry['profiles']) + '. Catalog installation retrieves upstream content.')
         request('POST', '/claude-code/plugins', {
             'name': name, 'source': source, 'version': '1.0.0',
-            'description': 'Pinned upstream workflow. Reviewed local adaptation installed for: '
-                           + ', '.join(entry['profiles']) + '. Catalog installation retrieves upstream content.',
-            'author': {'name': 'Jesse Vincent'}, 'category': 'Development',
+            'description': description,
+            'author': {'name': manifest.get('author', 'Jesse Vincent')}, 'category': 'Development',
             'homepage': manifest['source'] + '/tree/' + manifest['commit'] + '/skills/' + name,
             'keywords': ['local-workspace', 'reviewed-workflow']})
 
 
-def skills():
-    manifest = json.loads((ROOT / 'execution/skills/manifest.json').read_text())
+def skills(manifest_path='execution/skills/manifest.json'):
+    manifest = json.loads((ROOT / manifest_path).read_text())
     admin = gateway((LOCAL / 'litellm-master-key').read_text().strip())
     provision_skill_catalog(admin, manifest)
-    print('Three workflow sources registered in dashboard catalog')
+    print(f"{len(manifest['skills'])} workflow sources registered in the LiteLLM Skills catalog")
 
 
 def owner_request(admin):
@@ -263,7 +267,8 @@ def routes():
 
 
 if __name__ == '__main__':
-    modes = {'vectors': vectors, 'profiles': profiles, 'routes': routes, 'skills': skills}
+    modes = {'vectors': vectors, 'profiles': profiles, 'routes': routes, 'skills': skills,
+             'moyai-skills': lambda: skills('integrations/moyai/skills/catalog.json')}
     if len(sys.argv) != 2 or sys.argv[1] not in modes:
-        raise SystemExit('Usage: provision-workspace.py vectors|profiles|routes|skills')
+        raise SystemExit('Usage: provision-workspace.py vectors|profiles|routes|skills|moyai-skills')
     modes[sys.argv[1]]()

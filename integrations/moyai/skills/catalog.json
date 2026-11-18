@@ -1,0 +1,19 @@
+{
+  "source": "https://github.com/addyosmani/agent-skills",
+  "commit": "39b723ceebf81474d0557c1fecd01eddab585563",
+  "author": "Addy Osmani",
+  "skills": [
+    {
+      "name": "planning-and-task-breakdown",
+      "description": "Break a change into ordered, independently verifiable tasks."
+    },
+    {
+      "name": "code-simplification",
+      "description": "Simplify working code while preserving observable behavior."
+    },
+    {
+      "name": "documentation-and-adrs",
+      "description": "Record architecture decisions and check documentation against the implementation."
+    }
+  ]
+}

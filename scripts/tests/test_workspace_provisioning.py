@@ -1,4 +1,5 @@
 import importlib.util
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -111,6 +112,36 @@ class ProvisioningTest(unittest.TestCase):
         self.assertEqual(records[0]['source']['sha'], 'a' * 40)
         self.assertEqual(records[0]['source']['path'], 'skills/systematic-debugging')
         self.assertIn('adaptation', records[0]['description'])
+
+    def test_moyai_catalog_matches_packaged_skills_and_preserves_existing_entries(self):
+        root = module.ROOT / 'integrations/moyai/skills'
+        manifest = json.loads((root / 'catalog.json').read_text())
+        self.assertRegex(manifest['commit'], r'^[0-9a-f]{40}$')
+        self.assertEqual(sorted(skill['name'] for skill in manifest['skills']),
+                         sorted(path.parent.name for path in root.glob('*/SKILL.md')))
+        records = [{'name': 'operator-skill', 'source': {'source': 'github', 'repo': 'example/other'}}]
+
+        def request(method, route, body=None):
+            self.assertEqual(route, '/claude-code/plugins')
+            if method == 'GET':
+                return {'plugins': records}
+            self.assertEqual(method, 'POST')
+            records.append(body)
+
+        module.provision_skill_catalog(request, manifest)
+        module.provision_skill_catalog(request, manifest)
+        self.assertEqual(len(records), len(manifest['skills']) + 1)
+        for row in records[1:]:
+            name = row['name']
+            header = (root / name / 'SKILL.md').read_text().split('---\n')[1].splitlines()
+            self.assertIn('name: ' + name, header)
+            self.assertEqual(row['source'], {'source': 'git-subdir', 'url': manifest['source'] + '.git',
+                                             'path': 'skills/' + name, 'sha': manifest['commit']})
+            self.assertEqual(row['author']['name'], manifest['author'])
+        records[1]['source'] = records[0]['source'].copy()
+        with self.assertRaisesRegex(ValueError, records[1]['name']):
+            module.provision_skill_catalog(request, manifest)
+        self.assertEqual(records[1]['source'], records[0]['source'])
 
     def test_routes_associate_existing_profile_keys_with_registered_ids(self):
         import json

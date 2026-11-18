@@ -1,17 +1,35 @@
 """Per-conversation workspaces on the dedicated local SSH sandbox."""
 import asyncio
+from functools import cached_property
 from pathlib import PurePosixPath
+import re
 
-from pydantic_ai.workspaces import Workspace
+from pydantic_ai.capabilities import durable_operation
+from pydantic_ai.exceptions import ModelRetry, ToolFailed
+from pydantic_ai.messages import RetryPromptPart
+from pydantic_ai.workspaces import ReadOnlyWorkspace, Workspace
 from pydantic_ai_harness.ssh_workspace import SSHWorkspaceBackend
 from temporalio import workflow
 
+import analysis_mode
+from engineering_skills import EngineeringSkills, SELECT_SKILLS, force_call
 from local_config import workspace_directory
 from repository_backend import SSH_ARGS, projected_tree_hash, scoped_tree
 from repository_ledger import RepositoryError
 from repository_workflow import RepositoryWorkflow, WRITES, identity, scope_of
 
 DESTINATION = 'ssh://agent@moyai-sandbox:22'
+LIST_RETRY = 'Call list_repositories through the native tool to discover registered repositories.'
+LIST_MARKUP = re.compile(r'(?:^|\n)[ \t]*(?:<tool_call>\s*)?<function=list_repositories>\s*'
+                         r'</function>\s*(?:</tool_call>)?\s*\Z')
+
+
+def discovery_tool(ctx, request):
+    if (getattr(ctx.deps, 'surface', None) == 'web' and ctx.run_id == ctx.deps.root_run_id
+            and isinstance(ctx.prompt, str) and re.search(r'\brepository_id\s+[\w-]+', ctx.prompt)
+            and (request.model_settings or {}).get('tool_choice') in (None, 'auto', 'required')
+            and (not workflow.in_workflow() or workflow.patched('local-native-repository-list-retry-v1'))):
+        return next((t for t in request.model_request_parameters.function_tools if t.name == 'list_repositories'), None)
 
 
 class SessionBackend(SSHWorkspaceBackend):
@@ -28,6 +46,32 @@ class SessionBackend(SSHWorkspaceBackend):
                 raise RuntimeError('Could not create the local conversation workspace')
             self.ready = True
         return await super().working_dir()
+
+
+class AnalysisSessionBackend:
+    """Expose an absent chat directory as an immutable empty workspace."""
+
+    def __init__(self, directory):
+        self.directory = directory
+        self.session = SSHWorkspaceBackend(DESTINATION, working_dir=directory, ssh_args=SSH_ARGS)
+        self.ref = self.session.ref
+        self.selected = None
+
+    async def backing(self):
+        if self.selected is None:
+            empty = SSHWorkspaceBackend(DESTINATION, working_dir='/opt/moyai-analysis-empty', ssh_args=SSH_ARGS)
+            status = await empty.run(['test', '-d', self.directory], timeout=15)
+            if status.exit_code not in (0, 1):
+                raise RuntimeError('Could not inspect the analysis workspace')
+            self.selected = self.session if status.exit_code == 0 else empty
+        return self.selected
+
+    async def working_dir(self):
+        return await (await self.backing()).working_dir()
+
+    async def run(self, command, **kwargs):
+        # The enclosing ReadOnlyWorkspace only reaches this backend for SDK file reads.
+        return await (await self.backing()).run(command, **kwargs)
 
 
 class RepositoryFileWorkspace(Workspace):
@@ -70,6 +114,81 @@ class RepositoryFileWorkspace(Workspace):
 
 
 class SessionWorkspace(RepositoryWorkflow):
+    def __init__(self, backend=None):
+        super().__init__(backend)
+        self.engineering_skills = EngineeringSkills()
+
+    @cached_property
+    def registered_tools(self):
+        tools = super().registered_tools
+        tools.add_function(self.engineering_skills.select, name=SELECT_SKILLS)
+        return tools
+
+    @durable_operation('analysis_workspace_has_files')
+    async def analysis_workspace_has_files(self, session: str, authority: str) -> bool:
+        path = workspace_directory(session, authority)
+        observer = SSHWorkspaceBackend(DESTINATION, working_dir='/opt/moyai-analysis-empty', ssh_args=SSH_ARGS)
+        probe = 'import os,sys; p=sys.argv[1]; print(int(os.path.isdir(p) and bool(os.listdir(p))))'
+        result = await observer.run(['python', '-I', '-c', probe, path], timeout=15)
+        if result.exit_code or result.stdout.strip() not in {'0', '1'}:
+            raise RuntimeError('Could not inspect the analysis directory')
+        return result.stdout.strip() == '1'
+
+    async def prepare_tools(self, ctx, tool_defs):
+        offered = await super().prepare_tools(ctx, tool_defs)
+        if analysis_mode.active(ctx):
+            offered = [tool for tool in offered if tool.name in analysis_mode.TOOLS]
+            if any(t.name in {'list_files', 'read_file'} for t in offered) and not await self.analysis_workspace_has_files(*scope_of(ctx)):
+                offered = [tool for tool in offered if tool.name not in {'list_files', 'read_file'}]
+        if any(tool.name == SELECT_SKILLS for tool in offered) and not self.engineering_skills.needs_selection(ctx, ctx.messages):
+            return [tool for tool in offered if tool.name != SELECT_SKILLS]
+        return offered
+
+    async def before_model_request(self, ctx, request_context):
+        request = await super().before_model_request(ctx, request_context)
+        if analysis_mode.active(ctx):
+            request = analysis_mode.restrict_request(ctx, request, self.engineering_skills.catalog)
+        last = request.messages[-1].parts if request.messages else []
+        if last and isinstance(last[-1], RetryPromptPart) and not last[-1].tool_name and last[-1].content == LIST_RETRY:
+            listing = discovery_tool(ctx, request)
+            if listing:
+                return force_call(request, listing, LIST_RETRY)
+        prepared = self.engineering_skills.prepare(ctx, request)
+        # The SDK adds the deferred loader after prepare_tools. Never force it
+        # past the repository controller's phase-specific tool policy.
+        if prepared is not request and await self.phase(*scope_of(ctx)) is not None:
+            return request
+        return prepared
+
+    async def before_tool_execute(self, ctx, *, call, tool_def, args):
+        if analysis_mode.active(ctx) and (tool_def.name not in analysis_mode.TOOLS
+                or call.tool_name != tool_def.name or (tool_def.name == 'load_capability'
+                and (tool_def.tool_kind != 'capability-load' or args.get('id') not in self.engineering_skills.catalog))):
+            raise ToolFailed('The analysis-only profile permits local reads and packaged skills only.')
+        return await super().before_tool_execute(ctx, call=call, tool_def=tool_def, args=args)
+
+    async def wrap_model_request(self, ctx, *, request_context, handler):
+        if analysis_mode.active(ctx):
+            # Repository completion and issue intake can have controller-side effects.
+            return await handler(request_context)
+        return await super().wrap_model_request(ctx, request_context=request_context, handler=handler)
+
+    async def after_model_request(self, ctx, *, request_context, response):
+        if analysis_mode.active(ctx):
+            response = analysis_mode.chat_response(ctx, response)
+        else:
+            response = await super().after_model_request(ctx, request_context=request_context, response=response)
+        if response.text and not response.tool_calls:
+            match = LIST_MARKUP.search(response.text)
+            if match and response.text[:match.start()].count('```') % 2 == 0 and discovery_tool(ctx, request_context):
+                raise ModelRetry(LIST_RETRY)
+        try:
+            return self.engineering_skills.validate(ctx, request_context, response)
+        except ModelRetry:
+            if await self.phase(*scope_of(ctx)) is None:
+                raise
+            return response
+
     def get_instructions(self):
         return [
             'Local coding profile: your files and shell commands run as a nonroot user in a local Linux '
@@ -98,7 +217,12 @@ class SessionWorkspace(RepositoryWorkflow):
         ]
 
     def get_workspace(self, ctx, *, ref):
-        backend = SessionBackend(workspace_directory(ctx.deps.session_id, ctx.deps.workspace_key))
+        directory = workspace_directory(ctx.deps.session_id, ctx.deps.workspace_key)
+        if analysis_mode.active(ctx):
+            # Reading a new chat must not provision a working directory via mkdir.
+            readonly = ReadOnlyWorkspace(Workspace(AnalysisSessionBackend(directory)))
+            return readonly if ref is None or ref == readonly.ref else None
+        backend = SessionBackend(directory)
         if ref is not None and ref != backend.ref:
             return None
         return RepositoryFileWorkspace(backend, ctx, self.backend)

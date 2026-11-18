@@ -4,6 +4,7 @@ import json
 import sqlite3
 import sys
 
+from moyai.agent import RunScope
 from moyai.models import Session
 from pydantic import TypeAdapter
 from pydantic_ai.workspaces import WorkspaceRef
@@ -11,6 +12,28 @@ from pydantic_ai_harness.ssh_workspace import SSHWorkspaceBackend
 
 from local_config import workspace_directory
 from moyai_workspace import DESTINATION, SSH_ARGS
+
+
+async def observe_analysis_directory(session_id):
+    # This smoke creates a new private chat without connections. Derive its path
+    # even if the agent never requested a workspace or published a reference.
+    with sqlite3.connect('file:/data/moyai.db?mode=ro', uri=True) as db:
+        row = db.execute(f'SELECT owner_id, visibility FROM "{Session.__tablename__}" WHERE id=?',
+                         (session_id,)).fetchone()
+    if not row or row[1] != 'private':
+        raise RuntimeError('Expected a private smoke session')
+    scope = RunScope(session_id, '', row[0], 'local-qwen-analysis', visibility=row[1])
+    path = workspace_directory(session_id, scope.workspace_key)
+    backend = SSHWorkspaceBackend(DESTINATION, working_dir='/workspace', ssh_args=SSH_ARGS)
+    code = '''import json, os, sys
+path = sys.argv[1]
+exists = os.path.lexists(path)
+print(json.dumps({"exists": exists, "entries": sorted(os.listdir(path)) if exists else []}))
+'''
+    result = await backend.run(['python', '-I', '-c', code, path], timeout=15)
+    if result.exit_code:
+        raise RuntimeError('Independent sandbox observation failed')
+    print(result.stdout.strip())
 
 
 async def observe(session_id):
@@ -38,4 +61,4 @@ print(json.dumps({'directory':str(Path.cwd()),'uid':os.geteuid(),'files':files})
 
 
 if __name__ == '__main__':
-    asyncio.run(observe(sys.argv[1]))
+    asyncio.run(observe_analysis_directory(sys.argv[2]) if sys.argv[1] == '--analysis' else observe(sys.argv[1]))

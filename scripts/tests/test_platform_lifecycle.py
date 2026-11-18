@@ -123,6 +123,8 @@ class PlatformLifecycleTests(unittest.TestCase):
                 calls = self.calls()
                 self.assertEqual(calls.count(['moyai', 'up']), 1)
                 self.assertNotIn(['dependency', 'workspace-up.sh'], calls)
+                self.assertLess(calls.index(['dependency', 'scripts/provision-workspace.py', 'moyai-skills']),
+                                calls.index(['moyai', 'up']))
                 self.assertFalse(state['workspace'])
                 self.assertLess(calls.index(['moyai', 'up']), calls.index(['dependency', 'smoke-test.sh']))
 
