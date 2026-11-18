@@ -12,7 +12,13 @@ The first execution profile covers the retry policy in `examples/rust-service` i
 
 The App transport uses GitHub REST API version `2026-03-10`. The registration and authentication flow was checked against GitHub documentation on 2026-11-18. [Manifest registration](https://docs.github.com/en/apps/sharing-github-apps/registering-a-github-app-from-a-manifest) · [App JWTs](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-json-web-token-jwt-for-a-github-app) · [Installation access tokens](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-an-installation-access-token-for-a-github-app)
 
-### Verified App run, 2026-11-18
+### Single-message App rehearsal, 2026-11-18
+
+The operator pasted the URL of issue #10 into an empty private Moyai web chat. This was the only user message. In 2m 32s, one turn retrieved the retry policy, reproduced the 60,000 ms baseline, edited the Rust implementation and tests, delivered three Files links and returned the draft PR. GitHub identifies `moyai-local-348144ed[bot]` as the author of both the commit and the draft. [Issue #10](https://github.com/taras-kolodchyn/local-ai-platform/issues/10) · [Draft PR #11](https://github.com/taras-kolodchyn/local-ai-platform/pull/11) · [Published commit](https://github.com/taras-kolodchyn/local-ai-platform/commit/1f9cc341f2c9e967e5d63416f0b127884bd69074)
+
+The first repair validation passed seven project tests and four protected tests. Two of the five new tests also failed against the old 60,000 ms behavior. An independent local observer authenticated both check receipts and reapplied the 1,757-byte patch to the pinned source. Its result matched the verified workspace. One authenticated localhost request fetched the completed patch in 7.46 ms. Its SHA-256 was `ba3254960ebdbc9a55c2c612c5fac30b16433d7667fc070baa7164b78de543bc`. GitHub Actions passed on the published commit. [CI for PR #11](https://github.com/taras-kolodchyn/local-ai-platform/actions/runs/44290097035)
+
+### Earlier App run with a resumed chat, 2026-11-18
 
 The private installation selected one repository. Moyai received [issue #6](https://github.com/taras-kolodchyn/local-ai-platform/issues/6) in a private web chat. The first turn exhausted its budget during planning. The controller now uses the Rust profile's native plan when the saved plan lacks the required acceptance criterion or marks every step complete before editing. Resubmitting the same URL can reopen an exhausted analysis once, within the original deadline, after the host confirms the claim and the controller verifies the pristine source tree.
 

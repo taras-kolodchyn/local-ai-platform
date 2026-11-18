@@ -20,6 +20,8 @@ _spec.loader.exec_module(_guards)
 SCANNER_VERSION = 'repository-source-v1'
 MAX_FILES = 5000
 MAX_BYTES = 100_000_000
+MAX_SOURCE_BYTES = 1_000_000
+MAX_CATALOG_BYTES = 1 << 20  # The context bridge reads catalogs up to 1 MiB.
 
 
 def canonical(value):
@@ -54,8 +56,8 @@ def reject_git_execution(root):
             raise ValueError('Configured external Git filter is unsupported for source inspection')
 
 
-def git_blob_dirty(root):
-    """Compare index/HEAD metadata and raw bytes; never run conversion drivers.
+def clean_source_hashes(root, commit):
+    """Return the filtered hashes of a clean subtree at commit, or None if dirty.
 
     Unlike status, ls-tree/ls-files do not compare working bytes through Git's
     mutable filter configuration. Raw line-ending differences are conservative
@@ -70,29 +72,35 @@ def git_blob_dirty(root):
         if mode == b'160000':
             raise ValueError('Selected source contains a submodule')
         if stage != b'0':
-            return True
+            return None
         index[name] = (mode, oid)
     head = {}
-    for entry in git(root, 'ls-tree', '-r', '-z', 'HEAD', '--', '.').split(b'\0'):
+    for entry in git(root, 'ls-tree', '-r', '-z', commit, '--', '.').split(b'\0'):
         if entry:
             header, name = entry.split(b'\t', 1)
             mode, kind, oid = header.split()
             head[name] = (mode, oid)
     if index != head or git(root, 'ls-files', '--others', '--exclude-standard', '-z'):
-        return True
+        return None
     algorithm = git(root, 'rev-parse', '--show-object-format').strip().decode('ascii')
     if algorithm not in {'sha1', 'sha256'}:
         raise ValueError('Unsupported Git object format')
     track_mode = git(root, 'config', '--type=bool', '--default=true', '--get', 'core.filemode').strip() == b'true'
+    hashes = {}
     for name, (mode, oid) in index.items():
-        if not working_blob_matches(root, Path(os.fsdecode(name)), mode, oid, algorithm, track_mode):
-            return True
-    return False
+        path = os.fsdecode(name)
+        blob = inspect_working_blob(root, Path(path), mode, algorithm, track_mode)
+        if blob is None or blob[0] != oid:
+            return None
+        if blob[1] is not None:
+            hashes[path] = blob[1]
+    return hashes
 
 
-def working_blob_matches(root, relative, index_mode, expected_oid, algorithm, track_mode):
-    """Inspect actual type/mode, then stream a regular blob without Git filters."""
+def inspect_working_blob(root, relative, index_mode, algorithm, track_mode):
+    """Read the Git object ID and, for eligible source, its snapshot hash in one pass."""
     directory = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    source_hash = None
     try:
         for component in relative.parts[:-1]:
             child = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory)
@@ -101,39 +109,44 @@ def working_blob_matches(root, relative, index_mode, expected_oid, algorithm, tr
         info = os.stat(relative.name, dir_fd=directory, follow_symlinks=False)
         if index_mode == b'120000':
             if not stat.S_ISLNK(info.st_mode):
-                return False
+                return None
             raw = os.fsencode(os.readlink(relative.name, dir_fd=directory))
             digest = hashlib.new(algorithm, b'blob ' + str(len(raw)).encode() + b'\0' + raw)
         else:
             if not stat.S_ISREG(info.st_mode):
-                return False
+                return None
             if track_mode and bool(info.st_mode & stat.S_IXUSR) != (index_mode == b'100755'):
-                return False
+                return None
             descriptor = os.open(relative.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
             with os.fdopen(descriptor, 'rb') as stream:
                 opened = os.fstat(stream.fileno())
                 if not stat.S_ISREG(opened.st_mode) or (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino):
-                    return False
+                    return None
                 digest = hashlib.new(algorithm, b'blob ' + str(opened.st_size).encode() + b'\0')
                 remaining = opened.st_size
+                source = bytearray() if remaining <= MAX_SOURCE_BYTES and source_path_allowed(relative) else None
                 while remaining:
                     block = stream.read(min(64 * 1024, remaining))
                     if not block:
-                        return False
+                        return None
                     digest.update(block)
+                    if source is not None:
+                        source.extend(block)
                     remaining -= len(block)
                 if stream.read(1):
-                    return False
+                    return None
                 after = os.fstat(stream.fileno())
                 if (after.st_size, after.st_mtime_ns, after.st_ctime_ns) != (opened.st_size, opened.st_mtime_ns, opened.st_ctime_ns):
-                    return False
+                    return None
+                if source is not None and source_content_allowed(source):
+                    source_hash = hashlib.sha256(source).hexdigest()
         current = os.stat(relative.name, dir_fd=directory, follow_symlinks=False)
         if (current.st_dev, current.st_ino, current.st_mode, current.st_mtime_ns, current.st_ctime_ns) != (info.st_dev, info.st_ino, info.st_mode, info.st_mtime_ns, info.st_ctime_ns):
-            return False
-        return digest.hexdigest().encode() == expected_oid
+            return None
+        return digest.hexdigest().encode(), source_hash
     except OSError as exc:
         if exc.errno in {errno.ENOENT, errno.ENOTDIR, errno.EINVAL, errno.ELOOP}:
-            return False  # Genuine missing/type-replaced entries are dirty.
+            return None  # Genuine missing/type-replaced entries are dirty.
         raise
     finally:
         os.close(directory)
@@ -163,9 +176,29 @@ def read_source(root, relative):
         with os.fdopen(descriptor, 'rb') as stream:
             if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
                 return None
-            return stream.read(1_000_001)
+            return stream.read(MAX_SOURCE_BYTES + 1)
     finally:
         os.close(directory)
+
+
+def source_path_allowed(relative):
+    denied = _guards.DENIED | {'secret', 'credential', 'coverage'}
+    if relative.is_absolute() or not relative.parts or any(
+            part == '..' or part.startswith('.') or part.lower() in denied for part in relative.parts):
+        return False
+    if relative.stem.lower() in (_guards.DENIED | {'secret', 'credential'}):
+        return False
+    return relative.suffix in _guards.EXTENSIONS or relative.name in {
+        'Cargo.lock', 'Makefile', 'Dockerfile', 'Containerfile'}
+
+
+def source_content_allowed(raw):
+    if len(raw) > MAX_SOURCE_BYTES or b'\0' in raw:
+        return False
+    try:
+        return _guards.PATTERN.search(raw.decode('utf-8')) is None
+    except UnicodeError:
+        return False
 
 
 def stage_sources(root, stage, paths):
@@ -173,26 +206,16 @@ def stage_sources(root, stage, paths):
     total = count = 0
     for name in sorted(set(paths)):
         relative = Path(name)
-        if relative.is_absolute() or not relative.parts or any(
-            p in {'.', '..'} or p.startswith('.') or p.lower() in (_guards.DENIED | {'secret', 'credential', 'coverage'}) for p in relative.parts
-        ) or relative.stem.lower() in (_guards.DENIED | {'secret', 'credential'}):
-            continue
-        if relative.suffix not in _guards.EXTENSIONS and relative.name not in {
-            'Cargo.lock', 'Makefile', 'Dockerfile', 'Containerfile'
-        }:
+        if not source_path_allowed(relative):
             continue
         source = root / relative
         if any(p.is_symlink() for p in [source, *source.parents]):
             continue
         try:
             raw = read_source(root, relative)
-            if raw is None or len(raw) > 1_000_000 or b'\0' in raw:
+            if raw is None or not source_content_allowed(raw):
                 continue
-            text = raw.decode('utf-8')
-            if _guards.PATTERN.search(text):
-                continue
-        except (FileNotFoundError, UnicodeError):
-            # Deleted tracked files and policy-excluded binary text are omitted.
+        except FileNotFoundError:
             continue
         except OSError as exc:
             if exc.errno == errno.ELOOP:
@@ -214,6 +237,7 @@ def prepare_snapshot(repo: Path, catalog: Path, verification_profile: str,
         raise ValueError('Expected a source directory and supported verification profile')
     if unversioned:
         identity = str(root)
+        clean_hashes = None
         metadata = {'branch': 'unversioned', 'head': 'unversioned', 'dirty': True, 'subtree': ''}
         paths = walk_source_paths(root)
     else:
@@ -226,8 +250,8 @@ def prepare_snapshot(repo: Path, catalog: Path, verification_profile: str,
         identity = str((root / common).resolve()) + '\0' + subtree
         metadata = {'branch': os.fsdecode(git(root, 'branch', '--show-current')).strip() or 'detached',
             'head': os.fsdecode(git(root, 'rev-parse', 'HEAD')).strip(),
-            'dirty': git_blob_dirty(root),
             'subtree': subtree}
+        clean_hashes = clean_source_hashes(root, metadata['head'])
         paths = [os.fsdecode(p) for p in git(root, 'ls-files', '-co', '--exclude-standard', '-z').split(b'\0') if p]
     repo_id = repository_id or 'repo_' + hashlib.sha256(identity.encode()).hexdigest()[:24]
     if not repo_id.startswith('repo_') or not repo_id.replace('_', '').isalnum():
@@ -245,6 +269,7 @@ def prepare_snapshot(repo: Path, catalog: Path, verification_profile: str,
         files = [{'path': p.relative_to(source).as_posix(),
                   'sha256': hashlib.sha256(p.read_bytes()).hexdigest(), 'size': p.stat().st_size}
                  for p in [source / name for name in sorted(walk_source_paths(source))]]
+        metadata['dirty'] = clean_hashes != {row['path']: row['sha256'] for row in files}
         manifest = {'schema_version': 1, 'repository_id': repo_id, 'name': root.name,
             'git': metadata, 'files': files, 'scanner_version': SCANNER_VERSION,
             'verification_profile': verification_profile}
@@ -294,13 +319,16 @@ def register_catalog(catalog: Path, manifest: dict, indexed: dict, *, before_pub
             raise ValueError('Immutable indexed generation record conflicts')
         if previous is None:
             history.append(row)
+        data['repositories'] = sorted([r for r in data['repositories'] if r['repository_id'] != row['repository_id']] + [row], key=lambda r: r['repository_id'])
+        encoded = canonical(data) + b'\n'
+        if len(encoded) > MAX_CATALOG_BYTES:
+            raise ValueError('Repository catalog exceeds the context bridge size limit')
         if before_publish is not None:
             before_publish(row)
-        data['repositories'] = sorted([r for r in data['repositories'] if r['repository_id'] != row['repository_id']] + [row], key=lambda r: r['repository_id'])
         with tempfile.NamedTemporaryFile(dir=catalog, delete=False) as stream:
             temp = Path(stream.name)
             os.fchmod(stream.fileno(), 0o644)
-            stream.write(canonical(data) + b'\n')
+            stream.write(encoded)
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temp, target)

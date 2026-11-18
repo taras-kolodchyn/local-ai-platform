@@ -87,6 +87,71 @@ class RepositorySnapshotTests(unittest.TestCase):
         for row in manifest['files']:
             self.assertEqual(row['sha256'], hashlib.sha256((staged / row['path']).read_bytes()).hexdigest())
 
+    def test_temporary_edit_or_omission_during_copy_is_dirty_even_after_restore(self):
+        from unittest.mock import patch
+        module = load()
+        original_stage = module.stage_sources
+        path = self.root / 'src/lib.rs'
+        original = path.read_bytes()
+        for contents in (b'pub fn edited() {}\n', None):
+            with self.subTest(contents=contents):
+                def stage(*args):
+                    if contents is None:
+                        path.unlink()
+                    else:
+                        path.write_bytes(contents)
+                    try:
+                        return original_stage(*args)
+                    finally:
+                        path.write_bytes(original)
+                with patch.object(module, 'stage_sources', side_effect=stage):
+                    manifest = module.prepare_snapshot(self.root, self.catalog, 'rust-retry')
+                staged = self.catalog / 'snapshots' / manifest['snapshot_id'] / 'source/src/lib.rs'
+                self.assertEqual(staged.read_bytes() if staged.exists() else None, contents)
+                self.assertEqual(git(self.root, 'status', '--porcelain'), '')
+                self.assertTrue(manifest['git']['dirty'])
+
+    def test_provenance_uses_captured_commit_if_head_changes_before_index_inspection(self):
+        from unittest.mock import patch
+        module = load()
+        pinned = git(self.root, 'rev-parse', 'HEAD')
+        original_git = module.git
+        def switch_after_pin(root, *args, **kwargs):
+            result = original_git(root, *args, **kwargs)
+            if args == ('rev-parse', 'HEAD'):
+                (self.root / 'src/lib.rs').write_text('pub fn newer() {}\n')
+                git(self.root, 'commit', '-qam', 'new base')
+            return result
+        with patch.object(module, 'git', side_effect=switch_after_pin):
+            manifest = module.prepare_snapshot(self.root, self.catalog, 'rust-retry')
+        self.assertEqual(manifest['git']['head'], pinned)
+        self.assertTrue(manifest['git']['dirty'])
+
+    def test_full_catalog_remains_readable_after_oversize_registration_is_refused(self):
+        from unittest.mock import Mock
+        module = load()
+        manifest = self.prepare()
+        indexed = {'repository_id': manifest['repository_id'], 'snapshot_id': manifest['snapshot_id'],
+            'store_id': 'vs_old', 'generation_id': 'gen_old'}
+        module.register_catalog(self.catalog, manifest, indexed)
+        target = self.catalog / 'catalog.json'
+        catalog = json.loads(target.read_bytes())
+        catalog['padding'] = ''
+        limit = 1 << 20  # ContextBridge accepts an inclusive 1 MiB wire limit.
+        catalog['padding'] = 'x' * (limit - len(module.canonical(catalog)) - 1)
+        full = module.canonical(catalog) + b'\n'
+        self.assertEqual(len(full), limit)
+        target.write_bytes(full)
+        provision = Mock()
+        module.register_catalog(self.catalog, manifest, indexed, before_publish=provision)
+        provision.assert_called_once()
+        provision.reset_mock()
+        with self.assertRaisesRegex(ValueError, 'catalog'):
+            module.register_catalog(self.catalog, manifest,
+                indexed | {'store_id': 'vs_new', 'generation_id': 'gen_new'}, before_publish=provision)
+        provision.assert_not_called()
+        self.assertEqual(target.read_bytes(), full)
+
     def test_catalog_retains_old_pins_and_failed_registration_keeps_current(self):
         module = load()
         first = self.prepare()
