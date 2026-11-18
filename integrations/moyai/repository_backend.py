@@ -425,9 +425,12 @@ class RepositoryBackend:
         if task['binding'].get('verification_profile') == 'rust-retry-tests':
             result['verification_contract'] = ('Add a new tests/*.rs integration target covering the issue requirements. '
                 'Preserve every original file. New tests must pass the correct implementation and detect the old ceiling.')
-            if (task.get('github_issue') or {}).get('retry_contract') == 'interleaved-extremes':
+            contract = (task.get('github_issue') or {}).get('retry_contract')
+            if contract:
                 result['verification_contract'] += (' Check both call orders with u32::MAX on one entry point '
                     'followed by exact small delays on the other.')
+                if contract == 'interleaved-capped-and-extreme':
+                    result['verification_contract'] += ' In each direction include a distinct non-maximum capped attempt, u32::MAX and then both 0 and 2 on the other API.'
         elif task['binding'].get('verification_profile') == 'rust-retry':
             result['verification_contract'] = RUST_RETRY_CONTRACT
         if task.get('receipts'):

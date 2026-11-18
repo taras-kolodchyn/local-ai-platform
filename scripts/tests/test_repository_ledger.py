@@ -423,6 +423,10 @@ class RepositoryLedgerTests(unittest.TestCase):
             runs.extend([dict(build,kind='interleaving_build',trigger=trigger),
                          dict(template,kind='interleaving_test',trigger=trigger)])
         submit()
+        with self.assertRaises(RepositoryError):
+            validate_checks(receipt, retry_contract='interleaved-capped-and-extreme')
+        receipt['checks']['retry_contract'] = 'interleaved-capped-and-extreme'
+        validate_checks(receipt, retry_contract='interleaved-capped-and-extreme')
         runs[-1]['output'] = 'no executed tests'
         with self.assertRaises(RepositoryError):
             submit()

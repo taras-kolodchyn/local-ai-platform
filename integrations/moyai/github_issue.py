@@ -24,7 +24,9 @@ def issue_scope(number, turn, issue, binding):
     text = (issue.get('title','') + '\n' + issue.get('body','')).lower()
     if (binding.get('verification_profile') == 'rust-retry-tests' and 'interleav' in text
             and ('u32::max' in text or re.search(r'\bextreme (?:attempt|input)s?\b', text))):
-        scope['retry_contract'] = 'interleaved-extremes'
+        separate_cap = re.search(r'\b(?:capped (?:attempt|input)|ordinary cap|non-maximum capped)', text)
+        both_small = re.search(r'\b0\s*(?:,|and|&)\s*2\b', text)
+        scope['retry_contract'] = 'interleaved-capped-and-extreme' if separate_cap and both_small else 'interleaved-extremes'
     return scope
 
 

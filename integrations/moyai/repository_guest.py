@@ -476,7 +476,7 @@ def counterexample_source(candidate, operator_template):
     return candidate
 
 
-def interleaving_source(candidate, trigger):
+def interleaving_source(candidate, trigger, *, separate_cap=False):
     # Preserve the real bounded calculation and introduce state leakage in just one direction.
     names = ('bounded_backoff_ms','legacy_retry_delay_ms')
     if trigger not in names:
@@ -485,13 +485,30 @@ def interleaving_source(candidate, trigger):
     pure = candidate[opening:end]
     for name in names:
         _, opening, end, argument = function_span(candidate, name)
-        if name == trigger:
-            prefix = f'if {argument} == u32::MAX {{ __MOYAI_EXTREME.set(true); }}'
-        else:
-            prefix = f'if {argument} <= 2 && __MOYAI_EXTREME.get() {{ return 30_000; }}'
-        candidate = candidate[:opening] + '{' + prefix + f' __moyai_pure_delay({argument})' + '}' + candidate[end:]
-    return (candidate + f'\nfn __moyai_pure_delay({arg}: u32) -> u64 {pure}\n'
-            'std::thread_local! { static __MOYAI_EXTREME: std::cell::Cell<bool> = const {std::cell::Cell::new(false)}; }\n')
+        call = f'__moyai_probe({str(name == trigger).lower()}, {argument}, __moyai_pure_delay({argument}))'
+        candidate = candidate[:opening] + '{' + call + '}' + candidate[end:]
+    # Each native test runs as its own process. For the richer contract arm the
+    # fault only after a distinct, non-maximum capped call and a maximum input.
+    require_cap = str(separate_cap).lower()
+    instrument = """
+std::thread_local! {
+    static __MOYAI_STATE: std::cell::Cell<(bool,bool,u8)> = const {std::cell::Cell::new((false,false,0))};
+}
+fn __moyai_probe(trigger: bool, attempt: u32, delay: u64) -> u64 {
+    let (ordinary, extreme, mut small) = __MOYAI_STATE.get();
+    if !trigger && extreme && attempt <= 2 {
+        if !REQUIRE_CAP { return 30_000; }
+        if ordinary {
+            small |= match attempt { 0 => 1, 2 => 2, _ => 0 };
+            if small == 3 { return 30_000; }
+        }
+    }
+    __MOYAI_STATE.set((ordinary || (trigger && attempt != u32::MAX && delay == 30_000),
+                       extreme || (trigger && attempt == u32::MAX), small));
+    delay
+}
+"""
+    return candidate + f'\nfn __moyai_pure_delay({arg}: u32) -> u64 {pure}\n' + instrument.replace('REQUIRE_CAP', require_cap)
 
 
 def passed_test_names(output):
@@ -633,7 +650,7 @@ class Guest:
             raise ValueError('invalid receipt key')
         if request['profile'] not in ('rust-retry', 'rust-retry-tests') or type(request['timeout_seconds']) not in (int, float) or not 1 <= request['timeout_seconds'] <= 300:
             raise ValueError('invalid fixed profile or timeout')
-        if 'retry_contract' in request and (request['retry_contract'] != 'interleaved-extremes'
+        if 'retry_contract' in request and (request['retry_contract'] not in ('interleaved-extremes','interleaved-capped-and-extreme')
                 or request['profile'] != 'rust-retry-tests'):
             raise ValueError('unknown retry acceptance contract')
         if state_path.exists():
@@ -1104,11 +1121,13 @@ class Guest:
                     repaired_result=native(repaired,project_env,[identity],'regression',test_path=name) if repaired else None
                     counter_result=native(broken,counter_env,[identity],'regression_counterexample',passed=None,test_path=name) if broken else None
                     proofs.append(regression_proof(name,identity,repaired_result,broken is not None,counter_result))
-            if changed_tests and request.get('retry_contract') == 'interleaved-extremes':
+            if changed_tests and request.get('retry_contract'):
+                checks['retry_contract'] = request['retry_contract']
+                separate_cap = request['retry_contract'] == 'interleaved-capped-and-extreme'
                 detected = []
                 for trigger in ('bounded_backoff_ms','legacy_retry_delay_ms'):
                     root, target = scratch/trigger, scratch/'targets'/trigger
-                    files = {**source,'src/lib.rs':interleaving_source(source['src/lib.rs'].decode(), trigger).encode()}
+                    files = {**source,'src/lib.rs':interleaving_source(source['src/lib.rs'].decode(), trigger, separate_cap=separate_cap).encode()}
                     self.materialize(root, files)
                     inputs.append((root,{p:hashlib.sha256(v).hexdigest() for p,v in files.items()}))
                     compiled, env = build(root, target, 'interleaving_build')
@@ -1147,9 +1166,10 @@ class Guest:
                 receipt['error']=('Every added test must pass the candidate and complete on the compiled counterexample; at least one must fail its 60,000 ms policy. See regression_proofs for each identity.')
             receipt['state']='passed' if (checks['oracle_passed'] and checks['regression_counterexample_passed'] and checks['project_tests_run']>0 and mandatory_commands_passed(commands) and not receipt['launch_errors']) else 'failed'
             if changed_tests and request.get('retry_contract') and len(checks['extreme_interleaving_detected']) != 2:
+                extra = ' Include a distinct non-maximum capped call and assert both 0 and 2 on the opposite API in each sequence.' if separate_cap else ''
                 receipt.update(state='failed', failure_code='extreme_interleaving',
                     error='Exercise u32::MAX on each retry entry point and assert exact small delays on the other '
-                          'in both call orders. The new tests must detect both cross-call state regressions.')
+                          'in both call orders. The new tests must detect both cross-call state regressions.' + extra)
         except TimeoutError:
             receipt['state']='timeout'
         except InterruptedError:

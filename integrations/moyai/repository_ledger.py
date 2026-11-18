@@ -581,7 +581,9 @@ def validate_checks(receipt, *, retry_contract=None):
                    or type(cmd.get('exit_code')) is not int for cmd in commands)):
         raise RepositoryError('Trusted verification commands or protected-tree evidence missing.')
     if receipt['state'] == 'passed':
-        if retry_contract == 'interleaved-extremes' or 'extreme_interleaving_detected' in checks:
+        if retry_contract == 'interleaved-capped-and-extreme' and checks.get('retry_contract') != retry_contract:
+            raise RepositoryError('Missing evidence for a distinct non-maximum capped input.')
+        if retry_contract or 'extreme_interleaving_detected' in checks:
             triggers = {'bounded_backoff_ms','legacy_retry_delay_ms'}
             added = {(p['path'],p['test_name']) for p in checks.get('regression_proofs', [])}
             builds = {c.get('trigger') for c in commands if c.get('kind') == 'interleaving_build' and c['exit_code'] == 0}

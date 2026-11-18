@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import AsyncMock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'integrations/moyai'))
-from documentation_review import MODEL, assess_passages, prose_passages, reference_lines, review_patch
+from documentation_review import MODEL, assess_passages, prose_passages, reference_lines, retry_implementation, review_patch
 from repository_ledger import RepositoryError
 
 
@@ -39,6 +39,21 @@ class DocumentationReviewTests(unittest.IsolatedAsyncioTestCase):
                             ('No policy specifies whether the legacy API will be removed.', self.refs),
                             ('The legacy API delegates to the current one.', self.refs)]:
             self.assertEqual(self.decide(claim, refs)['verdict'], 'approved')
+
+    def test_only_the_legacy_wrapper_delegates_in_the_verified_implementation(self):
+        files = {'src/lib.rs': b'pub fn bounded_backoff_ms(n: u32) -> u64 {\n'
+                 b' 100_u64.saturating_mul(2_u64.saturating_pow(n)).min(30_000)\n}\n'
+                 b'pub fn legacy_retry_delay_ms(n: u32) -> u64 {\n bounded_backoff_ms(n)\n}\n'}
+        refs = reference_lines(files,files)
+        loc = retry_implementation(files,refs)
+        self.assertEqual(loc,'src/lib.rs:2')
+        for claim, expected in [('Both functions delegate to the same capped implementation.','changes_requested'),
+                                ('Both functions share the same capped behavior.','approved')]:
+            patch = self.diff(claim)
+            args = {'assessments':[{'passage':'C1','source':loc,'source_fact':'The current API caps the result.',
+                                    'supported':True,'correction':''}]}
+            decision = assess_passages(args,prose_passages(patch),refs,patch,loc)
+            self.assertEqual(decision['verdict'],expected)
 
     def test_cap_is_compared_in_the_same_units_against_the_pinned_retry_policy(self):
         refs = {**self.refs,'docs/api.md:4':'The retry delay has a ceiling of 30,000 milliseconds.'}

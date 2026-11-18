@@ -127,8 +127,11 @@ def verified_patch(client, job):
     session = job['session']
     task = client.request(f'/api/sessions/{session}/repository-task')
     scope = issue_scope(job['number'], job['turn'], job['issue'], job['binding'])
-    if job.get('pr') and 'retry_contract' not in (task.get('github_issue') or {}):
-        scope.pop('retry_contract', None)  # Read-only recovery of a previously published draft.
+    if job.get('pr'):
+        # Preserve the contract recorded by the controller for read-only recovery across upgrades.
+        scope.pop('retry_contract', None)
+        if recorded := (task.get('github_issue') or {}).get('retry_contract'):
+            scope['retry_contract'] = recorded
     require(task['phase'] == 'completed' and not task['pending'] and baseline_established(task)
             and task['binding'] == job['binding']
             and task['github_issue'] == scope,

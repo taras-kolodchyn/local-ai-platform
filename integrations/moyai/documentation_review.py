@@ -99,6 +99,28 @@ def delay_caps(text):
         yield value * (1000 if match[2].lower().startswith('s') else 1)
 
 
+def retry_implementation(candidate, references):
+    from repository_guest import function_span
+    source = candidate.get('src/lib.rs', b'').decode()
+    try:
+        _, current, end, _ = function_span(source, 'bounded_backoff_ms')
+        _, legacy, last, argument = function_span(source, 'legacy_retry_delay_ms')
+    except ValueError:
+        return None
+    body = source[legacy + 1:last - 1].strip().removesuffix(';').strip()
+    if body != f'bounded_backoff_ms({argument})':
+        return None
+    for offset, line in enumerate(source[current:end].splitlines()):
+        location = f'src/lib.rs:{source.count(chr(10), 0, current) + 1 + offset}'
+        if '.saturating_mul(' in line and '.min(' in line and location in references:
+            return location
+    return None
+
+
+BOTH_FORWARD = re.compile(r'\b(?:both|the two)\s+(?:(?:public|retry|api)\s+)*(?:functions|apis|entry points|helpers)'
+                          r'\s+(?:both\s+)?(?:delegate|forward|are wrappers|call the same helper)\b', re.I)
+
+
 def policy_finding(text, references):
     policy = {key:line for key, line in references.items() if key.rsplit(':', 1)[0].endswith('.md')}
     if removal_promise(text) and not any(removal_promise(line) for line in policy.values()):
@@ -122,8 +144,12 @@ async def review_patch(client, original, candidate, patch, charge=None):
     if not passages:
         passages['C1'] = {'path':None, 'lines':[]}
     source_text = '\n'.join(f'{key} | {value}' for key, value in references.items())
+    implementation = retry_implementation(candidate, references)
     claim_text = '\n'.join(f"{key} ({item['path']}): " + ' '.join(item['lines']) for key, item in passages.items())
     data = f'Repository sources:\n{source_text}\n\nCandidate diff:\n{patch_text}\n\nPassages to check:\n{claim_text}'
+    if implementation:
+        data += (f'\nThe implementation at {implementation} computes the capped delay. Only the legacy entry point '
+                 'forwards its argument to bounded_backoff_ms. Shared behavior does not make both functions wrappers.')
     if not references or len(data.encode()) > 40_000:
         raise RepositoryError('The complete documentation review input exceeds the supported scope or lacks sources.')
     fields = {
@@ -150,7 +176,7 @@ async def review_patch(client, original, candidate, patch, charge=None):
             if response.status != 'completed' or len(calls) != 1 or calls[0].name != tool['name']:
                 raise ValueError('Return one completed record_documentation_review tool call.')
             args = json.loads(calls[0].arguments)
-            result = assess_passages(args, passages, references, patch_text)
+            result = assess_passages(args, passages, references, patch_text, implementation)
             return {**result, 'patch_sha256':sha256(patch).hexdigest()}
         except ValueError as exc:
             if attempt:
@@ -158,7 +184,7 @@ async def review_patch(client, original, candidate, patch, charge=None):
             instructions = INSTRUCTIONS + '\nCorrect the previous response format: ' + str(exc)
 
 
-def assess_passages(args, passages, references, patch_text):
+def assess_passages(args, passages, references, patch_text, implementation=None):
     if not isinstance(args, dict) or not isinstance(args.get('assessments'), list):
         raise ValueError('Supply all passage assessments.')
     recorded, sources, findings = {}, [], []
@@ -179,12 +205,18 @@ def assess_passages(args, passages, references, patch_text):
         record = {**passage, 'source':source, 'source_fact':fact, 'model_supported':item['supported']}
         text = ' '.join(line.lstrip(' /!*') for line in passage['lines'])
         policy_correction, policy_location = policy_finding(text, references)
+        basis = 'pinned_policy' if policy_correction else 'model_review'
+        if implementation and BOTH_FORWARD.search(text.replace(chr(96), '')):
+            policy_location = implementation
+            policy_correction = ('Correct the direction of delegation. bounded_backoff_ms computes the capped delay. '
+                                 'Only deprecated legacy_retry_delay_ms forwards to it. Recommend the current API for callers.')
+            basis = 'implementation'
         correction = policy_correction if policy_correction else item.get('correction')
         if policy_correction or not item['supported']:
             if not passage['lines'] or not isinstance(correction, str) or not 0 < len(correction.strip()) <= 1200:
                 raise ValueError('A finding requires a changed passage and a concrete correction.')
             finding = {'path':passage['path'], 'quote':passage['lines'][-1][:1200], 'correction':correction,
-                       'basis':'pinned_policy' if policy_correction else 'model_review'}
+                       'basis':basis}
             findings.append(finding)
             record['finding'] = finding
         if policy_location:
