@@ -37,7 +37,7 @@ def registrations(root, candidate=None):
     if catalog.get('schema_version') != 1:
         raise ValueError('Unsupported repository catalog')
     rows = list(catalog.get('indexed_generations', []))
-    if candidate is not None:
+    if candidate is not None and candidate not in rows:
         rows.append(candidate)
     if len(rows) > 1000:
         raise ValueError('Repository catalog limit exceeded')

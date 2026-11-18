@@ -84,6 +84,14 @@ class ContextProvisioningTests(unittest.TestCase):
         self.assertEqual(len(self.keys), 1)
         self.assertEqual(key_file.stat().st_mode & 0o777, 0o600)
 
+    def test_full_catalog_allows_reconciliation_of_an_existing_generation(self):
+        rows = [self.row | {'generation_id': f'gen_{i}'} for i in range(1000)]
+        (self.local / 'repositories/catalog.json').write_text(json.dumps({
+            'schema_version': 1, 'repositories': [], 'indexed_generations': rows}))
+        self.assertEqual(len(self.module.registrations(self.root, rows[-1])), 1000)
+        with self.assertRaisesRegex(ValueError, 'catalog limit'):
+            self.module.registrations(self.root, self.row)
+
     def test_native_http_404_creates_missing_owner_and_replaces_missing_key(self):
         home = self.local / 'moyai'; home.mkdir()
         (home/'context-gateway-key').write_text('missing-key')
