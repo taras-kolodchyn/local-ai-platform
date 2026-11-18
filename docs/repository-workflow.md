@@ -113,6 +113,14 @@ make repository-smoke RESTART=1
 make verify
 ```
 
+Repository acceptance stages `examples/rust-service` from the local Git commit
+`553a11afb886c01cd6d0d07cce6963a10534b8b3`, the last `main` before PR #14.
+It uses a temporary detached checkout and the stable catalog ID
+`repo_smoke_rust_retry`. A full clone contains this commit. For a shallow clone,
+run `git fetch --depth=1 origin 553a11afb886c01cd6d0d07cce6963a10534b8b3`
+once while connected before running the demo offline.
+The receipt records the source commit and subtree under `fixture_git`.
+
 Repository acceptance uses actual local-model turns in fresh conversations. It
 checks scoped context, native planning/edit/check tool receipts, signed baseline
 and repaired results, downloaded hashes, patch applicability, current workspace

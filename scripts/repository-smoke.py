@@ -204,11 +204,12 @@ def main():
     report_path = directory/'result.json'
     report_path.write_text(json.dumps(summary,indent=2)+'\n')
     try:
-        registration = subprocess.run([sys.executable,'scripts/prepare-repository.py','--repo',str(source)],
-                                     check=True,capture_output=True,text=True,timeout=1800)
+        registration = subprocess.run([sys.executable,'scripts/prepare-repository.py','--smoke-fixture'],
+                                     check=True,stdout=subprocess.PIPE,text=True,timeout=1800)
         binding = json.loads(registration.stdout); summary['binding'] = binding
         snapshot = ROOT/'.local/repositories/snapshots'/binding['snapshot_id']
         manifest = json.loads((snapshot/'manifest.json').read_text())
+        summary['fixture_git'] = manifest['git']
         client = MoyaiClient(); client.login()
         access = gateway_access_guards(binding)
         (directory/'gateway-access.json').write_text(json.dumps(access,indent=2)+'\n')
