@@ -27,6 +27,30 @@ class IssuePublishingTests(unittest.TestCase):
             self.assertEqual(scope(text,'rust-retry'), basic)
         self.assertEqual(scope('Check an extreme attempt','rust-retry-tests'), basic)
 
+    def test_restart_requires_ended_owner_turn_and_no_artifacts_or_remote_publication(self):
+        github = Mock(operator_issue=29, installation=SimpleNamespace(app_id=1))
+        client = Mock()
+        job = {'number':29,'session':'previous','turn':'turn','base':'base','binding':{'snapshot_id':'s'}}
+        old = {'session':{'owner_id':'owner','active_turn':None,'visibility':'private','surface':'web'},
+               'turns':[{'id':'turn','actor_id':'owner','status':'completed'}]}
+        task = {'phase':'verified','pending':None,'artifacts':{},'binding':job['binding'],
+                'github_issue':{'turn':'turn','number':29}}
+        client.request.side_effect = lambda url: task if url.endswith('repository-task') else old
+        github.api.return_value = []
+        host = publisher.Publisher(github,client,{},job['binding'],restart_from='previous')
+        audit = host.restart_unpublished(job,'owner')
+        self.assertEqual(audit[0]['session'],'previous')
+        for obj, key, value in [(job,'commit','head'),(old['session'],'active_turn','running'),
+                                (task,'artifacts',{'patch':'hash'}),(task,'phase','delivering')]:
+            with patch.dict(obj,{key:value}), self.assertRaises(publisher.Refused):
+                host.restart_unpublished(job,'owner')
+        for owner, grant in [('other','previous'),('owner','unrelated')]:
+            with patch.object(host,'restart_from',grant), self.assertRaises(publisher.Refused):
+                host.restart_unpublished(job,owner)
+        github.api.side_effect = [[],[{'state':'closed'}]]
+        with self.assertRaises(publisher.Refused):
+            host.restart_unpublished(job,'owner')
+
     def test_only_direct_root_web_issue_url(self):
         deps = SimpleNamespace(root_run_id='t', visibility='private', surface='web')
         ctx = SimpleNamespace(run_id='t', deps=deps, prompt=ISSUES+'6')

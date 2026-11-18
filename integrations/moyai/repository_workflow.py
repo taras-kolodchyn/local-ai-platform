@@ -12,7 +12,7 @@ from pydantic_ai.messages import ModelResponse, RetryPromptPart, TextPart, ToolC
 from pydantic_ai.toolsets import FunctionToolset
 from temporalio import workflow
 
-from github_issue import ISSUES, PULLS, exchange, issue_number, issue_scope, user_issue
+from github_issue import ISSUES, PULLS, exchange, issue_number, issue_scope, private_issue_root, user_issue
 from repository_backend import NativeFiles, RepositoryBackend, coverage_path, fingerprint, scoped_tree, workspace_path
 from repository_ledger import ARTIFACT_PATHS, RepositoryError, approved_review, baseline_established, commands_stopped, has_change_citation, missing_change_evidence
 
@@ -160,6 +160,27 @@ class RepositoryWorkflow(AbstractCapability):
         links='\n'.join(f"- [{p.split('/')[-1]}](/api/files/{quote(files[p]['id'],safe='')})" for p in ARTIFACT_PATHS)
         return 'Repository task completed. Trusted checks passed on the delivered tree.\n\n'+links
 
+    @durable_operation('continued_issue')
+    async def continued_issue(self, session: str, authority: str, actor: str, turn: str) -> int | None:
+        task = self.backend.ledger.status(session, authority)
+        ticket = (task or {}).get('github_issue') or {}
+        if task and task.get('attached_actor_id') == actor and ticket.get('turn') == turn:
+            return ticket['number']
+        return None
+
+    async def issue_for_request(self, ctx):
+        number = user_issue(ctx)
+        segment = getattr(ctx.deps, 'history_segment', 0)
+        if number or type(segment) is not int or segment < 1 or not private_issue_root(ctx):
+            return number
+        if ctx.run_id != f'{ctx.deps.turn_id}:segment:{segment}':
+            return None
+        if workflow.in_workflow() and not workflow.patched('local-github-issue-checkpoint-v1'):
+            return None
+        # Moyai substitutes a checkpoint prompt for the initial URL. Only resume
+        # an already attached issue for the same private owner and logical turn.
+        return await self.continued_issue(*scope_of(ctx), ctx.deps.actor_id, ctx.deps.turn_id)
+
     @durable_operation('github_route')
     async def github_route(self, session: str, authority: str, number: int) -> str:
         task = self.backend.ledger.status(session, authority)
@@ -297,7 +318,7 @@ class RepositoryWorkflow(AbstractCapability):
                 and (not workflow.in_workflow() or workflow.patched('local-repository-completion-v1'))):
             message = await self.completion_message(*scope_of(ctx),ctx.deps.turn_id)
             github_version = not workflow.in_workflow() or workflow.patched('local-github-issue-v1')
-            number = user_issue(ctx) if github_version else None
+            number = await self.issue_for_request(ctx) if github_version else None
             if not message and number:
                 if not workflow.in_workflow() or workflow.patched('local-github-issue-intake-v2'):
                     routed = await self.route_issue(ctx, request_context, number)
@@ -330,10 +351,15 @@ class RepositoryWorkflow(AbstractCapability):
         return await handler(request_context)
 
     async def after_model_request(self, ctx, *, request_context, response):
-        number = user_issue(ctx)
+        number = await self.issue_for_request(ctx)
         if (number and response.text and not response.tool_calls
-                and (not workflow.in_workflow() or workflow.patched('local-github-issue-implementation-output-v1'))
-                and await self.github_route(*scope_of(ctx), number) == 'implementing'):
+                and (not workflow.in_workflow() or workflow.patched('local-github-issue-implementation-output-v1'))):
+            phase = await self.github_route(*scope_of(ctx), number)
+            if ((phase in ('verified','delivering') or phase.startswith('review/'))
+                    and (not workflow.in_workflow() or workflow.patched('local-github-issue-checkpoint-v1'))):
+                raise ModelRetry('Complete the independent documentation review and native Files delivery before reporting success.')
+            if phase != 'implementing':
+                return response
             # The native graph records the retry and enforces the turn's output retry limit.
             raise ModelRetry('This issue is still implementing. Inspect the source, last check result and any documentation review findings. '
                              'Use the native edit tools for any missing repair or regression tests, then call '
@@ -368,7 +394,7 @@ class RepositoryWorkflow(AbstractCapability):
             return [t for t in tool_defs if t.name not in REPOSITORY]
         phase = await self.phase(*scope_of(ctx))
         root = ctx.run_id == ctx.deps.root_run_id
-        ticket = user_issue(ctx)
+        ticket = await self.issue_for_request(ctx)
         if ticket and phase in (None, 'preparing'):
             return [t for t in tool_defs if t.name == ISSUE]
         if phase is None:

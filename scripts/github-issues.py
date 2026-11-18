@@ -197,10 +197,14 @@ def reproduce(repo, base, manifest, patch, verified):
         return staged('write-tree').decode().strip(), entries
 
 
+def issue_branch(number, installation):
+    prefix = f'codex/app-{installation.app_id}' if installation else 'codex'
+    return f'{prefix}/issue-{number}'
+
+
 def publish(api, repo, manifest, job, patch, digest, checks, save, *, installation=None):
     number, base = job['number'], job['base']
-    prefix = f'codex/app-{installation.app_id}' if installation else 'codex'
-    branch = f'{prefix}/issue-{number}'
+    branch = issue_branch(number, installation)
     coverage = manifest.get('verification_profile') == 'rust-retry-tests'
     title = 'Add Rust retry integration coverage' if coverage else 'Fix the Rust example retry ceiling'
     def refs():
@@ -255,7 +259,8 @@ def publish(api, repo, manifest, job, patch, digest, checks, save, *, installati
 
 
 class Publisher:
-    def __init__(self, github, client, manifest, binding):
+    def __init__(self, github, client, manifest, binding, *, restart_from=None):
+        self.restart_from = restart_from
         self.github, self.client = github, client
         self.manifest, self.binding = manifest, binding
 
@@ -271,12 +276,35 @@ class Publisher:
                       and issue_number(m['content']) == number for m in chat['messages'])
         require(own_url, 'A direct operator issue URL is required.')
 
+        return current['owner_id']
+
+    def restart_unpublished(self, job, owner):
+        require(self.restart_from == job['session'] and self.github.operator_issue == job['number']
+                and self.github.installation is not None, 'No restart grant for this issue and conversation.')
+        require(not any(job.get(k) for k in ('pr','tree','commit')), 'The existing publication cannot be replaced.')
+        previous = self.client.request(f"/api/sessions/{job['session']}?include_messages=false")
+        chat = previous['session']
+        require(chat['owner_id'] == owner and not chat['active_turn'] and chat['visibility'] == 'private'
+                and chat['surface'] == 'web' and not chat.get('swarm_id') and not chat.get('parent_session_id')
+                and any(t['id'] == job['turn'] and t['actor_id'] == owner and t['status'] in ('completed','failed')
+                        for t in previous['turns']), 'The earlier private owner turn has not settled.')
+        task = self.client.request(f"/api/sessions/{job['session']}/repository-task")
+        require(task['phase'] == 'verified' and not task['pending'] and not task['artifacts']
+                and task['binding'] == job['binding'] and task['github_issue']['turn'] == job['turn']
+                and task['github_issue']['number'] == job['number'], 'Only an undelivered checked task can restart.')
+        branch = issue_branch(job['number'], self.github.installation)
+        refs = self.github.api('git/matching-refs/heads/' + branch)
+        prs = self.github.api('pulls?state=all&head=' + REPO.split('/')[0] + ':' + branch)
+        require(not prs and not any(r['ref'] == 'refs/heads/' + branch for r in refs),
+                'An issue branch or PR already exists. The claim cannot be replaced.')
+        return [*job.get('prior_attempts', []), {k:job[k] for k in ('session','turn','base','binding')}]
+
     def dispatch(self, request):
         number, session, turn = (request[k] for k in ('number','session','turn'))
         require(type(number) is int and 0 < number < 10**10, 'Invalid issue number.')
         require(all(str(uuid.UUID(v)) == v for v in (session, turn)), 'Invalid conversation identity.')
         require(self.github.operator_issue in (None, number), 'Issue outside the operator grant.')
-        self.authorize_turn(number, session, turn)
+        owner = self.authorize_turn(number, session, turn)
         claim_directory = STATE
         if self.github.installation is not None:
             claim_directory = STATE / f'app-{self.github.installation.app_id}'
@@ -290,16 +318,26 @@ class Publisher:
             require(job['binding'].get('verification_profile', 'rust-retry') == self.binding.get('verification_profile', 'rust-retry'),
                     'The granted profile differs from the original issue binding.')
         if action == 'open':
+            ticket = None
+            prior_attempts = []
+            if job and job['session'] != session and self.restart_from:
+                ticket = self.github.ticket(number)
+                require(ticket == job['issue'], 'The issue changed since intake.')
+                prior_attempts = self.restart_unpublished(job, owner)
+                job = None  # Replaced atomically only after the new base and requirements are validated.
             if job:
                 require(job['session'] == session, 'This issue already belongs to another Moyai conversation.')
                 require(self.github.ticket(number) == job['issue'], 'The issue changed since intake. Review its updated scope.')
                 require(self.github.api('commits/main')['sha'] == job['base'], 'GitHub main moved since intake.')
             else:
-                ticket = self.github.ticket(number)
+                if ticket is None:
+                    ticket = self.github.ticket(number)
                 require(self.github.api('commits/main')['sha'] == self.manifest['git']['head'],
                         'GitHub main moved. Restart the publisher to index the new base.')
                 job = {'number':number, 'session':session, 'turn':turn, 'base':self.manifest['git']['head'],
                        'binding':self.binding, 'issue':ticket}
+                if prior_attempts:
+                    job['prior_attempts'] = prior_attempts
                 save(job)
             return {'issue':job['issue'], 'binding':job['binding'], 'turn':job['turn']}
         require(action == 'publish' and job and job['session'] == session, 'Publication has no matching operator issue claim.')
@@ -369,7 +407,11 @@ def main():
     parser.add_argument('--operator-issue', type=int, default=os.environ.get('MOYAI_OPERATOR_ISSUE') or None, help='Limit the selected publisher identity to one operator-approved issue.')
     parser.add_argument('--profile', choices=('rust-retry', 'rust-retry-tests'),
                         default=os.environ.get('MOYAI_ISSUE_PROFILE') or 'rust-retry')
+    parser.add_argument('--restart-unpublished-from', type=uuid.UUID, default=os.environ.get('MOYAI_RESTART_UNPUBLISHED_FROM'),
+                        help='Allow the same owner to restart one checked but undelivered App issue from this exact previous session.')
     args = parser.parse_args()
+    if args.restart_unpublished_from and not (args.app and args.operator_issue):
+        parser.error('restart requires the GitHub App scoped to one operator-approved issue')
     if args.profile == 'rust-retry-tests' and not args.operator_issue:
         parser.error('the tests-only publisher requires one operator-approved issue')
     os.chdir(ROOT)
@@ -397,7 +439,7 @@ def main():
         client = MoyaiClient()
         subprocess.run([*COMPOSE, 'up', '--detach', '--no-deps', '--build', '--wait', 'moyai'], cwd=ROOT, check=True)
         client.login()
-        serve(Publisher(github, client, manifest, binding), exchange)
+        serve(Publisher(github, client, manifest, binding, restart_from=str(args.restart_unpublished_from) if args.restart_unpublished_from else None), exchange)
 
 
 if __name__ == '__main__':
