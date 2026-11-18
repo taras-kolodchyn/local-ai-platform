@@ -19,6 +19,7 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'integrations/moyai'))
+from github_app import AppError, Installation, request as app_request
 from client import MoyaiClient
 from github_issue import ISSUES, REPO, atomic_json, issue_number
 from repository_backend import bounded_read, canonical, editable
@@ -53,18 +54,21 @@ def git(repo, *args, data=None, index=None):
 
 
 class GitHub:
-    def __init__(self, operator_issue=None):
+    def __init__(self, operator_issue=None, *, installation=None):
         self.operator_issue = operator_issue
+        self.installation = installation
 
     def api(self, endpoint, body=None):
-        env = {**os.environ, 'GH_PROMPT_DISABLED':'1', 'GH_NO_UPDATE_NOTIFIER':'1'}
+        if self.installation is not None:
+            return self.installation.api(endpoint, body)
         if self.operator_issue is None:
             path = STATE / 'installation-token'
             require(path.is_file() and not path.is_symlink() and path.stat().st_mode & 0o077 == 0,
                     'Provide a private GitHub installation-token file or select one issue with --operator-issue.')
             token = path.read_text().strip()
             require(bool(token), 'The dedicated GitHub token is empty.')
-            env['GH_TOKEN'] = token
+            return app_request('/repos/' + REPO + '/' + endpoint, token, body)
+        env = {**os.environ, 'GH_PROMPT_DISABLED':'1', 'GH_NO_UPDATE_NOTIFIER':'1'}
         args = ['gh', 'api', '--hostname', 'github.com', '-H', 'X-GitHub-Api-Version: 2026-03-10',
                 'repos/' + REPO + '/' + endpoint]
         if body is not None:
@@ -170,9 +174,10 @@ def reproduce(repo, base, manifest, patch, verified):
         return staged('write-tree').decode().strip(), entries
 
 
-def publish(api, repo, manifest, job, patch, digest, checks, save):
+def publish(api, repo, manifest, job, patch, digest, checks, save, *, installation=None):
     number, base = job['number'], job['base']
-    branch = f'codex/issue-{number}'
+    prefix = f'codex/app-{installation.app_id}' if installation else 'codex'
+    branch = f'{prefix}/issue-{number}'
     def refs():
         return [r['object']['sha'] for r in api(f'git/matching-refs/heads/{branch}') if r['ref'] == 'refs/heads/' + branch]
     tree, entries = reproduce(repo, base, manifest, patch, digest)
@@ -209,7 +214,13 @@ def publish(api, repo, manifest, job, patch, digest, checks, save):
             and pr['head']['ref'] == branch and pr['base']['ref'] == BASE
             and pr['head']['repo']['full_name'] == pr['base']['repo']['full_name'] == REPO,
             'GitHub did not confirm the expected open draft at the verified commit.')
-    return {'number':pr['number'], 'head':head}
+    result = {'number':pr['number'], 'head':head}
+    if installation is not None:
+        author = pr.get('user') or {}
+        require(author.get('type') == 'Bot' and author.get('login') == installation.bot,
+                'The draft PR author differs from the registered GitHub App bot.')
+        result.update(author=author['login'], app_id=installation.app_id)
+    return result
 
 
 class Publisher:
@@ -228,7 +239,11 @@ class Publisher:
                 and current['active_turn'] == turn and not current.get('swarm_id') and not current.get('parent_session_id')
                 and any(t['id'] == turn and t['status'] == 'running' and t['actor_id'] == current['owner_id']
                         and not t.get('parent_turn') for t in chat['turns']), 'The originating private turn is no longer running.')
-        jobfile = STATE / f'issue-{number}.json'
+        claim_directory = STATE
+        if self.github.installation is not None:
+            claim_directory = STATE / f'app-{self.github.installation.app_id}'
+            claim_directory.mkdir(mode=0o700, exist_ok=True)
+        jobfile = claim_directory / f'issue-{number}.json'
         job = json.loads(jobfile.read_text()) if jobfile.exists() else None
         def save(value):
             atomic_json(jobfile, value)
@@ -257,7 +272,8 @@ class Publisher:
         require(manifest['git']['head'] == job['base'] and manifest['git']['subtree'] == PROJECT
                 and not manifest['git']['dirty'], 'The snapshot differs from the pinned GitHub source.')
         require(self.github.api('commits/main')['sha'] == job['base'], 'GitHub main moved since verification.')
-        result = publish(self.github.api, STATE/'sources'/job['base'], manifest, job, patch, digest, checks, save)
+        result = publish(self.github.api, STATE/'sources'/job['base'], manifest, job, patch, digest, checks, save,
+                         installation=self.github.installation)
         save({**job, 'pr':result})
         return result
 
@@ -289,7 +305,7 @@ def serve(publisher, exchange):
                 try:
                     response = {'result':publisher.dispatch(request)}
                 except Exception as exc:
-                    reason = str(exc) if isinstance(exc, Refused) else type(exc).__name__
+                    reason = str(exc) if isinstance(exc, (Refused, AppError)) else type(exc).__name__
                     print(f'Issue operation {request["action"]} failed: {reason}', flush=True)
                     response = {'error':reason}
                 atomic_json(reply, {**response, 'lease':lease})
@@ -302,7 +318,8 @@ def serve(publisher, exchange):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--operator-issue', type=int, default=os.environ.get('MOYAI_OPERATOR_ISSUE') or None, help='Use the signed-in host gh account for this one issue only.')
+    parser.add_argument('--app', action='store_true', help='Use only the private GitHub App installation.')
+    parser.add_argument('--operator-issue', type=int, default=os.environ.get('MOYAI_OPERATOR_ISSUE') or None, help='Limit the selected publisher identity to one operator-approved issue.')
     args = parser.parse_args()
     os.chdir(ROOT)
     STATE.mkdir(exist_ok=True, parents=True, mode=0o700)
@@ -314,7 +331,7 @@ def main():
     with (STATE/'publisher.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
-        github = GitHub(args.operator_issue)
+        github = GitHub(args.operator_issue, installation=Installation() if args.app else None)
         if args.operator_issue is not None:
             github.ticket(args.operator_issue)
         print('Preparing the pinned GitHub main snapshot and its local context index…', flush=True)

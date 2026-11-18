@@ -2,6 +2,7 @@ from hashlib import sha256
 import importlib.util
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import uuid
 import unittest
@@ -9,6 +10,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 MODULE = Path(__file__).resolve().parents[1] / 'github-issues.py'
+sys.path.insert(0, str(MODULE.parent))
 spec = importlib.util.spec_from_file_location('github_issues', MODULE)
 publisher = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(publisher)
@@ -87,13 +89,45 @@ class IssuePublishingTests(unittest.TestCase):
         refs[0]['object']['sha'] = 'f'*40
         with self.assertRaisesRegex(ValueError,'different head'): publish()
 
+    def test_app_publish_reconciles_only_its_branch_and_bot_author(self):
+        installation = SimpleNamespace(app_id=42, bot='moyai-test[bot]')
+        job = {'number':6, 'base':self.base, 'commit':'a'*40}
+        branch = 'codex/app-42/issue-6'
+        side = {'ref':branch,'sha':job['commit'],'repo':{'full_name':publisher.REPO}}
+        author = {'type':'User','login':'operator'}
+        def api(endpoint, body=None):
+            self.assertIsNone(body)
+            if endpoint == 'git/matching-refs/heads/'+branch:
+                return [{'ref':'refs/heads/'+branch,'object':{'sha':job['commit']}}]
+            self.assertTrue(endpoint.endswith(':'+branch))
+            return [{'head':side,'base':{**side,'ref':'main'},'state':'open','draft':True,'number':9,'user':author}]
+        def reconcile():
+            return publisher.publish(api, self.repo, self.manifest, job, self.patch, self.digest, {}, Mock(),
+                                     installation=installation)
+        with self.assertRaisesRegex(ValueError,'author'):
+            reconcile()
+        author.update(type='Bot',login='other[bot]')
+        with self.assertRaisesRegex(ValueError,'author'):
+            reconcile()
+        author['login'] = installation.bot
+        self.assertEqual(reconcile(), {'number':9, 'head':job['commit'], 'author':installation.bot, 'app_id':42})
+
+    def test_issue_limit_does_not_enable_personal_identity_in_app_mode(self):
+        installation = Mock()
+        github = publisher.GitHub(6, installation=installation)
+        with patch.object(publisher,'run',side_effect=AssertionError):
+            github.api('issues/6')
+            installation.api.assert_called_once_with('issues/6', None)
+            with self.assertRaisesRegex(ValueError,'another issue'):
+                github.ticket(7)
+
     def test_intake_pins_only_original_operator_message_and_allows_same_chat_recovery(self):
         session_id, turn = str(uuid.uuid4()), str(uuid.uuid4())
         request = dict(action='open', number=6, session=session_id, turn=turn)
         detail = {'session':{'visibility':'private', 'surface':'web', 'owner_id':'actor', 'active_turn':turn},
                   'turns':[{'id':turn, 'status':'running', 'actor_id':'actor'}],
                   'messages':[{'role':'user', 'content':ISSUES+'6', 'turn_id':turn, 'is_self':True}]}
-        github, client = Mock(operator_issue=6), Mock()
+        github, client = Mock(operator_issue=6, installation=None), Mock()
         github.ticket.return_value = {'title':'Retry', 'body':'Repair'}
         github.api.return_value = {'sha':self.base}
         client.request.return_value = detail

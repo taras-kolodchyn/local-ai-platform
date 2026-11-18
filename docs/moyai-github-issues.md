@@ -2,7 +2,17 @@
 
 The first execution profile covers the retry policy in `examples/rust-service` in `taras-kolodchyn/local-ai-platform`. Moyai runs the model, retrieval, edits and trusted Rust checks locally. A separate foreground process on the Mac reads the issue and publishes the verified result to GitHub.
 
-## Run it
+## Run as a private GitHub App
+
+1. Start the platform with `make up`. On the Mac run `make github-app-setup` and open the printed loopback URL in a browser signed in as the repository owner.
+2. Confirm **Create GitHub App**, follow **Install GitHub App**, choose **Only select repositories**, and select **taras-kolodchyn/local-ai-platform**. The manifest requests Issues read, Contents write and Pull requests write. If GitHub first asks you to sign in, complete sign-in and reopen the local form if needed. The setup callback saves the signing key on the Mac under `.local/github-issues/app/` with mode 0600. The browser and Moyai receive no private key.
+3. Start `make github-app-issues ISSUE=6`. This grants the publisher one issue under the App identity. For multiple eligible issues, omit `ISSUE` and apply the `moyai:rust-retry` label to the tickets. Wait for the ready message.
+4. Paste the full issue URL into a new private Moyai chat. For the same issue, subsequent attempts use this chat. The host checks the actual installation selection, signs a short-lived RS256 JWT, exchanges it for a repository-scoped token and refreshes it near expiry. It calls GitHub REST directly. The model and sandbox receive neither GitHub credentials nor a GitHub CLI.
+5. The draft targets `main` from `codex/app-<id>/issue-<number>`. Each App has its own local claims and branch namespace. Before returning the PR, the publisher checks its head and GitHub's recorded author type and login against the registered App bot. Stop the foreground publisher with Ctrl+C. Run `make up` to restore the offline controller.
+
+The App transport uses GitHub REST API version `2026-03-10`. The registration and authentication flow was checked against GitHub documentation on 2026-11-18. [Manifest registration](https://docs.github.com/en/apps/sharing-github-apps/registering-a-github-app-from-a-manifest) · [App JWTs](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-json-web-token-jwt-for-a-github-app) · [Installation access tokens](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-an-installation-access-token-for-a-github-app)
+
+## Run with the operator account
 
 1. Start the platform with `make up`.
 2. For a single approved Rust retry issue, run `make github-issues ISSUE=6`, substituting the issue number. This explicitly authorizes the signed-in host `gh` account for that issue. Wait for “GitHub issue publisher ready”. First startup indexes the example at the current GitHub `main` commit. Enabling the extra mount can recreate the Moyai controller, so let active turns settle first.

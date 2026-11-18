@@ -141,3 +141,11 @@ purge-legacy-agents: ## Delete retired workspace profile data and keys; requires
 github-issues: export MOYAI_OPERATOR_ISSUE := $(value ISSUE)
 github-issues: ## Run the opt-in Moyai issue publisher (ISSUE=N limits host gh authorization to one issue)
 	@python3 scripts/github-issues.py
+
+.PHONY: github-app-setup github-app-issues
+github-app-setup: ## Register the private Moyai GitHub App on localhost
+	@python3 scripts/register-github-app.py
+
+github-app-issues: export MOYAI_OPERATOR_ISSUE := $(value ISSUE)
+github-app-issues: ## Publish as the GitHub App, optionally scoped to ISSUE=N
+	@python3 scripts/github-issues.py --app
