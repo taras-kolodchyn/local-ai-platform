@@ -14,7 +14,7 @@ The App transport uses GitHub REST API version `2026-03-10`. The registration an
 
 ### Add coverage to a passing Rust example
 
-Run `make github-app-issues ISSUE=N PROFILE=rust-retry-tests` and submit the issue URL in an empty private chat. After intake Qwen sees the issue title and body and chooses the primary guide for this bounded task from the local LiteLLM catalog pinned to the turn. It may select an empty list. Moyai loads the chosen guide through a native tool call.
+Run `make github-app-issues ISSUE=N PROFILE=rust-retry-tests` and submit the issue URL in an empty private chat. After intake Qwen sees the issue title and body and chooses any number of distinct guides from the local LiteLLM catalog pinned to the turn, including none. Moyai loads each selected guide through a native tool call before continuing repository analysis.
 
 The coverage profile requires a passing original implementation and preserves every original file. The agent may add integration targets under `examples/rust-service/tests/`. Verification runs the project and protected tests. Each new test must pass on the candidate and complete on the compiled 60,000 ms counterexample. At least one must detect the counterexample. The App opens a draft at the pinned base. The operator reviews the assertions and CI before merging and checking issue closure and CI on `main`.
 

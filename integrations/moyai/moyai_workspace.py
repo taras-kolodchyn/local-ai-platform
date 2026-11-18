@@ -225,8 +225,6 @@ class SessionWorkspace(RepositoryWorkflow):
             step = self.engineering_skills.issue_step(ctx, getattr(ctx, 'messages', ()))
             if step and ((step == SELECT_SKILLS and call.tool_name == step) or
                          (call.tool_name == LOAD and tool_def.tool_kind == 'capability-load' and args.get('id') == step)):
-                if call.tool_name == SELECT_SKILLS and len(args.get('skills', [])) > 1:
-                    raise ModelRetry('Choose the single primary guide for this issue or return an empty list.')
                 if await self.admit_issue_skill(*scope_of(ctx), user_issue(ctx), identity(ctx, call.tool_call_id)):
                     return args
         if analysis_mode.active(ctx) and (tool_def.name not in analysis_mode.TOOLS
