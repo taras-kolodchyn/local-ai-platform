@@ -19,6 +19,12 @@ from github_issue import ISSUES, issue_number, user_issue
 
 
 class IssuePublishingTests(unittest.TestCase):
+    def test_only_the_explicit_caller_note_request_adds_the_migration_contract(self):
+        issue = {'title':'Rust coverage', 'body':'Include a caller note: which API computes, which forwards, and migration.'}
+        scope = publisher.issue_scope(34,'turn',issue,{'verification_profile':'rust-retry-tests'})
+        self.assertTrue(scope['caller_note_required'])
+        self.assertNotIn('caller_note_required',publisher.issue_scope(34,'turn',issue,{'verification_profile':'rust-retry'}))
+
     def test_issue_scope_selects_extreme_interleaving_only_for_the_tests_profile(self):
         basic = {'number':29,'turn':'turn'}
         scope = lambda text, profile: publisher.issue_scope(29,'turn',{'title':text},{'verification_profile':profile})

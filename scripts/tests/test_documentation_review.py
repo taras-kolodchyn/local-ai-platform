@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import AsyncMock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'integrations/moyai'))
-from documentation_review import MODEL, assess_passages, prose_passages, reference_lines, retry_implementation, review_patch
+from documentation_review import MODEL, caller_note_finding, assess_passages, prose_passages, reference_lines, retry_implementation, review_patch
 from repository_ledger import RepositoryError
 
 
@@ -54,6 +54,30 @@ class DocumentationReviewTests(unittest.IsolatedAsyncioTestCase):
                                     'supported':True,'correction':''}]}
             decision = assess_passages(args,prose_passages(patch),refs,patch,loc)
             self.assertEqual(decision['verdict'],expected)
+
+    def test_inputs_cannot_be_documented_as_impossible_delays(self):
+        loc = 'src/lib.rs:1'
+        refs = {loc:'100_u64.saturating_mul(2_u64.saturating_pow(attempt)).min(30_000)'}
+        args = {'assessments':[{'passage':'C1','source':loc,'source_fact':'Minimum 100 ms.',
+                                'supported':True,'correction':''}]}
+        for claim, expected in [('The small delays (0 and 2) are computed independently.','changes_requested'),
+                                ('Attempts 0 and 2 have delays (100 and 400 ms).','approved')]:
+            patch = self.diff(claim)
+            decision = assess_passages(args, prose_passages(patch), refs, patch, loc)
+            self.assertEqual(decision['verdict'], expected)
+
+    def test_requested_caller_note_requires_module_docs_and_real_migration_evidence(self):
+        loc = 'src/lib.rs:2'
+        refs = {loc:'100_u64.saturating_mul(2_u64.saturating_pow(n)).min(30_000)',
+                'src/lib.rs:4':'#[deprecated(note = "replace with the shared bounded_backoff_ms policy")]'}
+        note = ('//! Each call is independent. bounded_backoff_ms computes the delay.\n'
+                '//! legacy_retry_delay_ms forwards to it. Use bounded_backoff_ms.\n')
+        for contents, missing in [('//! The results are independent.\n', True),
+                                  (note.replace('//!', '//'), True), (note, False)]:
+            finding = caller_note_finding({}, {self.path:contents.encode()}, refs, loc)
+            self.assertEqual(bool(finding), missing)
+            if finding:
+                self.assertEqual(finding['sources'], [loc, 'src/lib.rs:4'])
 
     def test_cap_is_compared_in_the_same_units_against_the_pinned_retry_policy(self):
         refs = {**self.refs,'docs/api.md:4':'The retry delay has a ceiling of 30,000 milliseconds.'}
