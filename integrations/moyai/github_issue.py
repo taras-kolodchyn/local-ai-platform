@@ -28,11 +28,15 @@ def issue_scope(number, turn, issue, binding):
     return scope
 
 
-def user_issue(ctx):
+def private_issue_root(ctx):
     deps = ctx.deps
-    if (ctx.run_id == deps.root_run_id and getattr(deps, 'visibility', None) == 'private'
+    return (ctx.run_id == deps.root_run_id and getattr(deps, 'visibility', None) == 'private'
             and getattr(deps, 'surface', None) == 'web' and not getattr(deps, 'swarm_id', None)
-            and not getattr(deps, 'delegation_depth', 0) and not getattr(deps, 'delegation_generated', False)):
+            and not getattr(deps, 'delegation_depth', 0) and not getattr(deps, 'delegation_generated', False))
+
+
+def user_issue(ctx):
+    if private_issue_root(ctx):
         return issue_number(getattr(ctx, 'prompt', None))
     return None
 

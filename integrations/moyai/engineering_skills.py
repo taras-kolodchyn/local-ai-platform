@@ -83,7 +83,8 @@ class EngineeringSkills:
         return next((name for name in chosen or [] if name in available), None)
 
     def needs_selection(self, ctx, messages):
-        return (ctx.run_id == ctx.deps.root_run_id and getattr(ctx.deps, 'surface', None) == 'web'
+        return (not getattr(ctx.deps, 'history_segment', 0) and ctx.run_id == ctx.deps.root_run_id
+                and getattr(ctx.deps, 'surface', None) == 'web'
                 and isinstance(ctx.prompt, str)
                 and not re.search(r'\b(?:repository_id|open_repository)\b', ctx.prompt)
                 and any(name not in ctx.active_capability_ids for name in self.catalog(ctx))

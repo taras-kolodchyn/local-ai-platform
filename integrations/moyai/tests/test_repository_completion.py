@@ -35,6 +35,24 @@ class RepositoryCompletionTests(unittest.IsolatedAsyncioTestCase):
         response = await cap.wrap_model_request(ctx, request_context=request, handler=AsyncMock())
         self.assertEqual(response.parts[0].tool_name, 'finish_repository_task')
 
+    async def test_checkpoint_prompt_routes_review_only_for_the_original_private_owner_turn(self):
+        task = {'phase':'verified','github_issue':{'number':29,'turn':'turn'}, 'attached_actor_id':'actor',
+                'verified_tree':'tree','binding':{'snapshot_id':'snap'},
+                'receipts':[{'operation_id':'checked','tree_hash':'tree','processes_stopped':True,
+                    'commands':[{'pipe_drained':True,'process_group_stopped':True,'descendants_stopped':True}]}]}
+        cap, ctx = self.setup_capability(task)
+        ctx.run_id = ctx.deps.root_run_id = 'turn:segment:1'
+        ctx.deps.history_segment, ctx.deps.actor_id = 1, 'actor'
+        ctx.deps.surface, ctx.deps.visibility = 'web','private'
+        ctx.prompt = 'Continue from the native checkpoint.'
+        response = await cap.wrap_model_request(ctx,request_context=SimpleNamespace(messages=[]),handler=AsyncMock())
+        self.assertEqual(response.parts[0].tool_name, 'review_repository_documentation')
+        for field, value in [('actor_id','other'),('visibility','shared'),('turn_id','other'),
+                             ('delegation_depth',1),('history_segment',0)]:
+            from unittest.mock import patch
+            with patch.object(ctx.deps,field,value,create=True):
+                self.assertIsNone(await cap.issue_for_request(ctx))
+
     async def test_implementing_issue_retries_premature_final_answer_with_native_limit(self):
         from github_issue import ISSUES
         from pydantic_ai.exceptions import UnexpectedModelBehavior
