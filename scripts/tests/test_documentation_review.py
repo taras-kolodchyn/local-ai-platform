@@ -23,6 +23,34 @@ class DocumentationReviewTests(unittest.IsolatedAsyncioTestCase):
     def diff(self, line):
         return f'--- /dev/null\n+++ b/{self.path}\n@@ -0,0 +1 @@\n+//! {line}\n'
 
+    async def test_approved_formula_citation_cannot_override_false_concrete_examples(self):
+        path = Path(__file__).resolve().parents[2]/'examples/rust-service/src/lib.rs'
+        candidate = {'src/lib.rs':path.read_bytes()}
+        formula = retry_implementation(candidate, reference_lines(candidate, candidate))
+        patch = self.diff('Attempt 0 and 65536 both return 100 ms (low 16 bits: 0)').encode()
+        patch += (b'+//! - Attempt 8 and 65544 both return 25,600 ms (low 16 bits: 8)\n'
+                  b'+//! - Attempt 65536 and 65537 both return 30,000 ms (low 16 bits: 0, but high bits differ)\n'
+                  b'+    assert_eq!(bounded_backoff_ms(65536), 30_000);\n')
+        item = {'passage':'C1','source':formula,'source_fact':'The formula caps at 30,000 ms.',
+                'supported':True,'correction':''}
+        call = SimpleNamespace(type='function_call',name='record_documentation_review',
+                               arguments=json.dumps({'assessments':[item]}))
+        create = AsyncMock(return_value=SimpleNamespace(status='completed',output=[call]))
+        client = SimpleNamespace(responses=SimpleNamespace(create=create))
+        report = await review_patch(client, candidate, candidate, patch)
+        self.assertEqual(report['verdict'],'changes_requested')
+        self.assertIn('"65536": 30000', create.await_args.kwargs['input'])
+        finding, = report['findings']
+        for fact in ('65536 returns 30000 ms','65544 returns 30000 ms','bits of 65537 equal 1',
+                     'attempts 65536 and 65537 match'):
+            self.assertIn(fact, finding['correction'])
+        for claim in ('Attempts 0 and 65_536 return 100 ms and 30 seconds respectively.',
+                      'Attempts 8 and 65,544 return 25,600 ms and 30,000 ms respectively.',
+                      'Attempts 4294967294 and 4294967295 both return 30 seconds.',
+                      'If the input wrapped, attempts 0 and 65536 both return 100 ms.'):
+            result = await review_patch(client, candidate, candidate, self.diff(claim).encode())
+            self.assertEqual(result['verdict'],'approved',claim)
+
     def test_sources_exclude_new_test_prose_and_changed_policy(self):
         original = {'docs/api.md':b'Original policy\nRemoved text\n'}
         candidate = {'docs/api.md':b'New policy\nOriginal policy\n', self.path:b'//! Self citation\n',

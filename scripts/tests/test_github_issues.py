@@ -74,12 +74,17 @@ class IssuePublishingTests(unittest.TestCase):
             (directory/'manifest.json').write_text('{"verification_profile":"rust-retry-tests"}')
             path = root/'job'
             with (patch.object(publisher,'ROOT',root), patch.object(publisher,'reproduce', return_value=(tree,[])),
+                  patch.object(publisher,'check_merge_examples'),
                   patch.object(publisher,'verified_patch',return_value=(b'patch','digest',checks)),
                   patch.object(publisher,'verified_ci',return_value=42)):
                 for field, value in [('auto_merge',False),('commit','foreign')]:
                     path.write_text(json.dumps({**job,field:value}))
                     with self.assertRaises(publisher.Refused): publisher.merge_verified_issue(gh,None,path)
                 path.write_text(json.dumps(job))
+                with patch.object(publisher,'check_merge_examples',side_effect=publisher.Refused('numeric example')), \
+                        self.assertRaisesRegex(publisher.Refused, 'numeric example'):
+                    publisher.merge_verified_issue(gh,None,path)
+                gh.api.assert_not_called()
                 for change in [{'head':{**live['head'],'sha':'new'}},{'base':{**live['base'],'sha':'new'}},
                                {'body':'Closes #100'},{'user':{'login':'someone','type':'User'}}]:
                     with patch.dict(live,change), self.assertRaises(publisher.Refused):

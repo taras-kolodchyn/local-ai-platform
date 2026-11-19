@@ -193,13 +193,74 @@ def asserts_byte_conversion(text):
     return False
 
 
-def direct_retry_exponent(candidate):
+def direct_retry_formula(candidate):
     from repository_guest import function_span
     source = candidate['src/lib.rs'].decode()
     _, opening, end, argument = function_span(source, 'bounded_backoff_ms')
     # Match the whole body: an earlier cast or rebinding changes what the exponent means.
     formula = RETRY_FORMULA.fullmatch(source[opening + 1:end - 1].strip())
-    return formula is not None and formula['exponent'] == argument
+    return formula if formula and formula['exponent'] == argument else None
+
+
+# Explicit one- and two-input examples in Rustdoc, including a common return
+# value and paired outputs. Unparsed prose still goes through the model review.
+EXAMPLE_INTEGER = r'(?:[0-9]{1,3}(?:,[0-9]{3}){1,6}|[0-9][0-9_]{0,19})'
+EXAMPLE_DELAY = r'(?:milliseconds?|ms|seconds?|s)\b'
+RETRY_EXAMPLE = re.compile(
+    rf'\battempts?\s+(?P<a>{EXAMPLE_INTEGER})(?:\s+and\s+(?P<b>{EXAMPLE_INTEGER}))?'
+    rf'\s+(?:both\s+|each\s+)?(?:returns?|yields?|produces?)\s+'
+    rf'(?P<x>{EXAMPLE_INTEGER})\s*(?P<unit>{EXAMPLE_DELAY})'
+    rf'(?:\s+and\s+(?P<y>{EXAMPLE_INTEGER})\s*(?P<unit2>{EXAMPLE_DELAY}))?', re.I)
+LOW_BITS = re.compile(rf'\s*\(low\s+(\d{{1,2}})\s+bits\s*:\s*({EXAMPLE_INTEGER})\b', re.I)
+
+
+def example_delay(formula, attempt):
+    start, factor, cap = (int(formula[k]) for k in (1, 2, 'cap'))
+    # For a u64 factor >= 2 every exponent >= 64 saturates. Zero and one
+    # also preserve their result at that bounded exponent.
+    return min(cap, start * factor**min(attempt, 64))
+
+
+def retry_example_errors(passages, formula):
+    if formula is None:
+        return {}
+    def integer(value):
+        return int(value.replace('_', '').replace(',', ''))
+    def milliseconds(value, unit):
+        return integer(value) * (1000 if unit.lower().startswith('s') else 1)
+    errors = {}
+    for key, passage in passages.items():
+        text = ' '.join(line.lstrip(' /!*').replace(chr(96), '') for line in passage['lines'])
+        corrections = []
+        for match in RETRY_EXAMPLE.finditer(text):
+            prefix = re.split(r'[.!?;]|\s-\s', text[:match.start()])[-1]
+            if re.search(r"\b(if|unless|hypothetically|would|counterexample|incorrect|wrong|previously|not)\b", prefix, re.I):
+                continue
+            inputs = [integer(i) for i in (match['a'], match['b']) if i is not None]
+            if any(i > 2**32-1 for i in inputs):
+                continue
+            x = milliseconds(match['x'], match['unit'])
+            outputs = [x] if len(inputs) == 1 else [x, milliseconds(match['y'], match['unit2']) if match['y'] else x]
+            for attempt, reported in zip(inputs, outputs):
+                expected = example_delay(formula, attempt)
+                if reported != expected:
+                    corrections.append(f'Attempt {attempt} returns {expected} ms, not {reported} ms.')
+            bits = LOW_BITS.match(text, match.end())
+            if bits and 1 <= int(bits[1]) <= 32:
+                width = int(bits[1])
+                for attempt in inputs:
+                    low = attempt & ((1 << width) - 1)
+                    if low != integer(bits[2]):
+                        corrections.append(f'The low {width} bits of {attempt} equal {low}.')
+                high = re.match(r',\s*(?:but\s+)?high bits (differ|match)\b', text[bits.end():], re.I)
+                if high and len(inputs) == 2:
+                    same = inputs[0] >> width == inputs[1] >> width
+                    if same != (high[1].lower() == 'match'):
+                        relation = 'match' if same else 'differ'
+                        corrections.append(f'Above bit {width-1}, attempts {inputs[0]} and {inputs[1]} {relation}.')
+        if corrections:
+            errors[key] = ' '.join(dict.fromkeys(corrections))
+    return errors
 
 
 def retry_delay_floor(line):
@@ -256,8 +317,10 @@ async def review_patch(client, original, candidate, patch, charge=None, *, calle
     prose = {key:' '.join(line.lstrip(' /!*') for line in item['lines']) for key, item in passages.items()}
     claim_text = '\n'.join(f"{key} ({passages[key]['path']}): {text}" for key, text in prose.items())
     narrowing = set()
-    if implementation and direct_retry_exponent(candidate):
+    formula = direct_retry_formula(candidate) if implementation else None
+    if formula:
         narrowing = {key for key, text in prose.items() if asserts_byte_conversion(text)}
+    example_errors = retry_example_errors(passages, formula)
     data = f'Repository sources:\n{source_text}\n\nCandidate diff:\n{patch_text}\n\nPassages to check:\n{claim_text}'
     if implementation:
         data += (f'\nThe implementation at {implementation} computes the capped delay. Only the legacy entry point '
@@ -266,6 +329,16 @@ async def review_patch(client, original, candidate, patch, charge=None, *, calle
         data += (f'\nFor numeric retry passages {", ".join(sorted(numeric))}, set source to a calculation line '
                  f'from {", ".join(formula_sources)}. Explain the relevant computed value or bound in source_fact. '
                  'Assess whether the documented numbers actually follow from the formula.')
+    if example_errors:
+        data += (f'\nExplicit example mismatches computed from {implementation}: ' +
+                 json.dumps(example_errors) + '. Request corrections for each affected passage.')
+    if numeric and formula:
+        inputs = {int(n.replace('_', '')) for n in re.findall(
+            r'\b(?:bounded_backoff_ms|legacy_retry_delay_ms)\(\s*(\d[\d_]{0,13})\s*\)', patch_text)}
+        values = {n:example_delay(formula, n) for n in sorted(inputs)[:64] if n <= 2**32-1}
+        if values:
+            data += (f'\nActual retry outputs from {implementation} (attempt: milliseconds): ' + json.dumps(values)
+                     + '. Check each input and output in prose, including bullets and statements about pairs.')
     if narrowing:
         data += (f'\nTrace the input at {implementation}: saturating_pow takes the original u32 attempt and '
                  'the legacy wrapper forwards it unchanged. The following passages assert that this input is '
@@ -303,7 +376,8 @@ async def review_patch(client, original, candidate, patch, charge=None, *, calle
                 raise ValueError('Return one completed record_documentation_review tool call.')
             args = json.loads(calls[0].arguments)
             result = assess_passages(args, passages, references, patch_text, implementation,
-                                     numeric=numeric, formula_sources=formula_sources, narrowing=narrowing)
+                                     numeric=numeric, formula_sources=formula_sources, narrowing=narrowing,
+                                     example_errors=example_errors)
             if caller_note_required:
                 missing = caller_note_finding(original, candidate, references, implementation)
                 if missing:
@@ -321,7 +395,7 @@ async def review_patch(client, original, candidate, patch, charge=None, *, calle
 
 
 def assess_passages(args, passages, references, patch_text, implementation=None, *, numeric=(), formula_sources=(),
-                    narrowing=()):
+                    narrowing=(), example_errors=None):
     if not isinstance(args, dict) or not isinstance(args.get('assessments'), list):
         raise ValueError('Supply all passage assessments.')
     recorded, sources, findings = {}, [], []
@@ -363,6 +437,10 @@ def assess_passages(args, passages, references, patch_text, implementation=None,
             policy_location = implementation
             policy_correction = (f'At {implementation}, saturating_pow uses the original u32 attempt. '
                                  'Remove the claimed conversion to a byte or describe it as a hypothetical regression.')
+            basis = 'implementation'
+        if example_errors and key in example_errors:
+            policy_location = implementation
+            policy_correction = example_errors[key][:1200]
             basis = 'implementation'
         correction = policy_correction if policy_correction else item.get('correction')
         if policy_correction or not item['supported']:
