@@ -25,6 +25,8 @@ Contributors can run only the Rust retry regression integration target using:
 cargo test --locked --manifest-path examples/rust-service/Cargo.toml --test retry_regression
 ```
 
+Both `bounded_backoff_ms` and `legacy_retry_delay_ms` are checked against the 30,000 ms ceiling.
+
 ## Running the router construction test
 
 Contributors can run the `health` integration target that checks that the application router can be constructed using:
