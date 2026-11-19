@@ -16,3 +16,11 @@ cargo test
 cargo run
 curl http://127.0.0.1:8080/health
 ```
+
+## Running focused Rust retry tests
+
+Contributors can run only the Rust retry regression integration target using:
+
+```sh
+cargo test --locked --manifest-path examples/rust-service/Cargo.toml --test retry_regression
+```
