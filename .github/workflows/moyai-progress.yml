@@ -1,0 +1,177 @@
+name: Moyai issue progress
+
+on:
+  issues:
+    types: [opened, labeled]
+  create:
+  pull_request_target:
+    types: [opened, reopened]
+    branches: [main]
+  issue_comment:
+    types: [created]
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  link:
+    if: >-
+      github.event_name == 'pull_request_target' &&
+      github.event.pull_request.user.id == 358212412 &&
+      github.event.pull_request.base.ref == 'main' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      startsWith(github.event.pull_request.head.ref, 'codex/moyai-issue-')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    permissions:
+      pull-requests: write
+      issues: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Link the matching pilot issue in Development
+        shell: bash
+        run: |
+          set -euo pipefail
+          api="repos/$GH_REPO"
+          branch=$(jq -r .pull_request.head.ref "$GITHUB_EVENT_PATH")
+          [[ $branch =~ ^codex/moyai-issue-([1-9][0-9]*)$ ]] || exit 0
+          n=${BASH_REMATCH[1]}
+          pr=$(jq -r .pull_request.number "$GITHUB_EVENT_PATH")
+          gh api "$api/issues/$n" | jq -e --arg owner "${GH_REPO%/*}" '
+            .state == "open" and .pull_request == null and .user.login == $owner and
+            any(.labels[]; .name == "moyai:ready")' > /dev/null
+          # Only upgrade the exact pilot body. Preserve any other author-written description.
+          body=$(gh api "$api/pulls/$pr" --jq '.body // ""')
+          if [[ "$body" == "Refs #$n" ]]; then
+            gh api --method PATCH "$api/pulls/$pr" -f body="Closes #$n" --silent
+          fi
+
+  progress:
+    if: >-
+      (github.event_name == 'issues' && github.event.issue.user.login == github.repository_owner &&
+       contains(github.event.issue.labels.*.name, 'moyai:ready') &&
+       (github.event.action == 'opened' || github.event.label.name == 'moyai:ready')) ||
+      (github.event_name == 'create' && github.event.ref_type == 'branch' &&
+       github.event.sender.id == 358212412 && startsWith(github.event.ref, 'codex/moyai-issue-')) ||
+      (github.event_name == 'pull_request_target' && github.event.pull_request.user.id == 358212412 &&
+       github.event.pull_request.head.repo.full_name == github.repository &&
+       startsWith(github.event.pull_request.head.ref, 'codex/moyai-issue-')) ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request &&
+       github.event.comment.user.id == 358212412 && startsWith(github.event.comment.body, 'MOYAI-')) ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request' &&
+       github.event.workflow_run.path == '.github/workflows/ci.yml' &&
+       github.event.workflow_run.head_repository.full_name == github.repository &&
+       startsWith(github.event.workflow_run.head_branch, 'codex/moyai-issue-'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    concurrency:
+      # Duplicate deliveries share a group. Independent stages keep their own events.
+      group: moyai-progress-${{ github.event_name }}-${{ github.event.issue.number || github.event.ref || github.event.pull_request.number || github.event.workflow_run.id }}-${{ github.event.comment.id || 'stage' }}
+      cancel-in-progress: false
+    permissions:
+      issues: write
+      pull-requests: read
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Record a confirmed milestone on the source issue
+        shell: bash
+        run: |
+          set -euo pipefail
+          api="repos/$GH_REPO"
+          event="$GITHUB_EVENT_PATH"
+          pr=""
+          branch=""
+          case "$GITHUB_EVENT_NAME" in
+            issues)
+              n=$(jq -r .issue.number "$event")
+              key=queued
+              message="**Черга Moyai.** Задачу додано з міткою \`moyai:ready\`. Коли Developer створить робочу гілку, тут з’явиться запис про початок роботи."
+              ;;
+            create)
+              branch=$(jq -r .ref "$event")
+              key=started
+              message="**Developer взяв задачу в роботу.** Створено [робочу гілку]($GITHUB_SERVER_URL/$GH_REPO/tree/$branch). Наступний крок — підготувати зміну та відкрити PR."
+              ;;
+            pull_request_target|issue_comment|workflow_run)
+              case "$GITHUB_EVENT_NAME" in
+                pull_request_target) pr=$(jq -r .pull_request.number "$event") ;;
+                issue_comment) pr=$(jq -r .issue.number "$event") ;;
+                workflow_run)
+                  branch=$(jq -r .workflow_run.head_branch "$event")
+                  [[ $branch =~ ^codex/moyai-issue-([1-9][0-9]*)$ ]] || exit 0
+                  sha=$(jq -r .workflow_run.head_sha "$event")
+                  pr=$(gh api -X GET "$api/pulls" -f head="${GH_REPO%/*}:$branch" -f base=main -f state=all |
+                    jq -r --arg sha "$sha" '[.[] | select(.head.sha == $sha)] | if length == 1 then first.number else empty end')
+                  [[ -n $pr ]] || exit 0
+                  ;;
+              esac
+              detail=$(gh api "$api/pulls/$pr")
+              jq -e --arg repo "$GH_REPO" '.user.id == 358212412 and .base.ref == "main" and
+                .head.repo.full_name == $repo' <<<"$detail" >/dev/null || exit 0
+              branch=$(jq -r .head.ref <<<"$detail")
+              head=$(jq -r .head.sha <<<"$detail")
+              link="[PR #$pr]($GITHUB_SERVER_URL/$GH_REPO/pull/$pr)"
+              case "$GITHUB_EVENT_NAME" in
+                pull_request_target)
+                  key="pr-$pr"
+                  message="**Developer відкрив $link.** Зміну передано на незалежну перевірку Verifier."
+                  ;;
+                issue_comment)
+                  line=$(jq -r '.comment.body | split("\n")[0] | sub("\r$"; "")' "$event")
+                  [[ $line =~ ^MOYAI-(REVIEWING|VERIFIED|CHANGES-REQUESTED)\ ([a-f0-9]{40})$ ]] || exit 0
+                  verdict=${BASH_REMATCH[1]}
+                  sha=${BASH_REMATCH[2]}
+                  [[ $sha == "$head" ]] || exit 0
+                  url=$(jq -r .comment.html_url "$event")
+                  key="$verdict-$pr-$sha"
+                  if [[ $verdict != REVIEWING ]]; then key="$key-$(jq -r .comment.id "$event")"; fi
+                  case "$verdict" in
+                    REVIEWING) message="**Verifier розпочав рев’ю.** Перевіряє $link на коміті \`${sha:0:8}\` за критеріями цього issue. [Запис у PR]($url)." ;;
+                    VERIFIED|CHANGES-REQUESTED)
+                      jq -e '.comment.body | split("\n")[1:] | any(test("[^[:space:]]"))' "$event" >/dev/null || exit 0
+                      if [[ $verdict == VERIFIED ]]; then
+                        message="**Verifier схвалив $link** на коміті \`${sha:0:8}\`. [Що саме перевірено]($url). GitHub Actions перевіряє CI перед merge."
+                      else
+                        message="**Verifier повернув $link на доопрацювання.** [Конкретні зауваження]($url) стосуються коміту \`${sha:0:8}\`. Наступний крок за Developer."
+                      fi
+                      ;;
+                  esac
+                  ;;
+                workflow_run)
+                  run=$(jq -r .workflow_run.id "$event")
+                  attempt=$(jq -r .workflow_run.run_attempt "$event")
+                  result=$(jq -r .workflow_run.conclusion "$event")
+                  url=$(jq -r .workflow_run.html_url "$event")
+                  key="pr-ci-$run-$attempt"
+                  if [[ $result == success ]]; then
+                    message="**CI для $link пройшов** на коміті \`${head:0:8}\`. [Результати перевірок]($url)."
+                  else
+                    message="**CI для $link завершився зі статусом \`$result\`** на коміті \`${head:0:8}\`. [Журнал перевірок]($url). Цей результат блокує автоматичний merge."
+                  fi
+                  ;;
+              esac
+              ;;
+          esac
+          if [[ -n $branch ]]; then
+            [[ $branch =~ ^codex/moyai-issue-([1-9][0-9]*)$ ]] || exit 0
+            n=${BASH_REMATCH[1]}
+          fi
+          gh api "$api/issues/$n" | jq -e --arg owner "${GH_REPO%/*}" '
+            .user.login == $owner and .pull_request == null and any(.labels[]; .name == "moyai:ready")' >/dev/null || exit 0
+          marker="<!-- moyai-progress:$n:$key -->"
+          comments=$(gh api --paginate --slurp "$api/issues/$n/comments?per_page=100")
+          if jq -e --arg marker "$marker" 'add // [] | any(.user.login == "github-actions[bot]" and (.body | endswith($marker)))' <<<"$comments" >/dev/null; then
+            exit 0
+          fi
+          at=$(jq -r 'if .comment then .comment.created_at elif .workflow_run then .workflow_run.updated_at
+            elif .pull_request then .pull_request.created_at else empty end' "$event")
+          if [[ -z $at ]]; then at=$(gh api "$api/actions/runs/$GITHUB_RUN_ID" --jq .created_at); fi
+          stamp=$(TZ=Europe/Kyiv date -d "$at" '+%d.%m.%Y %H:%M:%S %Z')
+          gh api -X POST "$api/issues/$n/comments" -f body="$(printf '%s\n\n%s · Київ\n\n%s' "$message" "$stamp" "$marker")" --silent
