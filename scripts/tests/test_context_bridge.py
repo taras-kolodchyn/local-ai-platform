@@ -71,6 +71,17 @@ class ContextBridgeTests(unittest.TestCase):
                 bridge.search(*values, 'retry ceiling', 3)
         self.assertEqual(self.requests, [])
 
+    def test_exact_path_filters_the_pinned_store_and_rejects_other_results(self):
+        bridge = self.bridge()
+        scope = ('repo_test', 'a' * 64, 'gen_old', 'retry ceiling', 6)
+        rows = bridge.search(*scope, exact_path='docs/policy.md')['results']
+        self.assertEqual([row['path'] for row in rows], ['docs/policy.md'])
+        self.assertEqual(self.requests[-1].url.path, '/v1/vector_stores/vs_old/search')
+        self.assertEqual(json.loads(self.requests[-1].content)['filters'],
+                         {'type':'eq', 'key':'path', 'value':'docs/policy.md'})
+        with self.assertRaises(RuntimeError):
+            bridge.search(*scope, exact_path='src/lib.rs')
+
     def test_gateway_result_with_other_generation_is_rejected(self):
         self.payload['data'][0]['attributes']['generation_id'] = 'gen_other'
         with self.assertRaises(RuntimeError):

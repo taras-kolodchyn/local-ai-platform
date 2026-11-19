@@ -443,7 +443,7 @@ class RepositoryBackend:
                 {'kind':cmd.get('kind'),'exit_code':cmd.get('exit_code')} for cmd in latest.get('commands',[])[:16]]}
         return result
 
-    async def search(self, scope, query, limit):
+    async def search(self, scope, query, limit, exact_path=None):
         from mcp import ClientSession
         from mcp.client.streamable_http import streamable_http_client
         import httpx2
@@ -453,6 +453,9 @@ class RepositoryBackend:
             raise RepositoryError('Search requires a pinned task, bounded query and limit (1–8).')
         binding = task['binding']
         ids = {k:binding[k] for k in ('repository_id','snapshot_id','generation_id')}
+        args = {**ids, 'query':query, 'limit':limit}
+        if exact_path is not None:
+            args['exact_path'] = relative_name(exact_path)
         async with asyncio.timeout(40), httpx2.AsyncClient(
             headers={'Authorization':'Bearer '+os.environ['MOYAI_REPOSITORY_CONTEXT_TOKEN']},
             follow_redirects=False, trust_env=False, timeout=35,
@@ -460,7 +463,7 @@ class RepositoryBackend:
                                            max_sse_event_size=65536) as streams:
             async with ClientSession(streams[0], streams[1], read_timeout_seconds=35) as session:
                 await session.initialize()
-                result = await session.call_tool('search_repository', {**ids,'query':query,'limit':limit})
+                result = await session.call_tool('search_repository', args)
         value = result.structured_content
         if result.is_error or not isinstance(value, dict) or any(value.get(k) != v for k,v in ids.items()):
             raise RepositoryError('Context bridge returned a failed or foreign scope.')
@@ -468,7 +471,8 @@ class RepositoryBackend:
         manifest, _ = await asyncio.to_thread(self.snapshot, binding)
         names = {r['path'] for r in manifest['files']}
         if (not isinstance(rows, list) or len(rows) > limit or len(canonical(value)) > 100_000
-                or any(r.get('path') not in names or not isinstance(r.get('chunk_id'), str)
+                or any(r.get('path') not in names or (exact_path is not None and r['path'] != exact_path)
+                       or not isinstance(r.get('chunk_id'), str)
                        or type(r.get('start_line')) is not int or type(r.get('end_line')) is not int
                        or not 1 <= r['start_line'] <= r['end_line'] for r in rows)):
             raise RepositoryError('Context results contain invalid citations.')

@@ -103,9 +103,9 @@ class RepositoryWorkflow(AbstractCapability):
             """Inspect this task's phase, verification attempts and deliverable paths."""
             return await backend.status(scope_of(ctx), ctx.deps.turn_id)
 
-        async def search_repository(ctx: RunContext, query: str, limit: int = 6) -> dict:
+        async def search_repository(ctx: RunContext, query: str, limit: int = 6, exact_path: str | None = None) -> dict:
             """Retrieve cited passages from this conversation's pinned source generation."""
-            return await backend.search(scope_of(ctx), query, limit)
+            return await backend.search(scope_of(ctx), query, limit, exact_path)
 
         async def begin_repository_changes(ctx: RunContext) -> dict:
             """Allow native file edits after cited retrieval, a failing baseline and a native acceptance plan."""
@@ -268,6 +268,8 @@ class RepositoryWorkflow(AbstractCapability):
             args = {}
             if step == SEARCH:
                 args['query'] = 'Documented retry delay ceiling and shared bounded backoff policy'
+                if not workflow.in_workflow() or workflow.patched('local-github-issue-source-path-v1'):
+                    args['exact_path'] = 'src/lib.rs'
             elif step == 'write_plan':
                 args['items'] = [
                     {'content':('Add a new integration test target for the requested retry boundaries at the 30,000 ms ceiling; preserve all existing files.' if coverage_plan else 'Implement the documented shared retry delay with a 30,000 ms ceiling, including extreme attempts.'), 'status':'pending'},
@@ -355,6 +357,15 @@ class RepositoryWorkflow(AbstractCapability):
         if (number and response.text and not response.tool_calls
                 and (not workflow.in_workflow() or workflow.patched('local-github-issue-implementation-output-v1'))):
             phase = await self.github_route(*scope_of(ctx), number)
+            if (not workflow.in_workflow() or workflow.patched('local-github-issue-analysis-output-v1')):
+                if phase in ('analyzing', 'preparing'):
+                    raise ModelRetry('Repository analysis is incomplete. Inspect repository_task_status, obtain a '
+                                     'citation from src/lib.rs using search_repository with exact_path, and complete '
+                                     'the baseline and plan before begin_repository_changes.')
+                if (response.provider_name != 'local-controller' and phase not in ('implementing','verified','delivering')
+                        and not phase.startswith('review/')):
+                    return ModelResponse(parts=[TextPart(f'Repository phase: {phase}. Verified delivery was not confirmed.')],
+                                         finish_reason='stop', provider_name='local-controller')
             if ((phase in ('verified','delivering') or phase.startswith('review/'))
                     and (not workflow.in_workflow() or workflow.patched('local-github-issue-checkpoint-v1'))):
                 raise ModelRetry('Complete the independent documentation review and native Files delivery before reporting success.')
