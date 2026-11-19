@@ -23,6 +23,7 @@ MAX_WIRE = 16 << 20
 MAX_FILE = 512 << 10
 MAX_TREE = 8 << 20
 MAX_FILES = 512
+RETRY_POLICY_PATH = 'docs/architecture-rules.md'
 RUST_RETRY_CONTRACT = (
     'Add new Cargo integration regressions in tests/*.rs using write_file, for example '
     'tests/retry_regression.rs. Tests embedded only in src/lib.rs are project tests, '
@@ -436,7 +437,7 @@ class RepositoryBackend:
                     'API, the migration recommendation and why previous calls do not affect the delay. Distinguish inputs from milliseconds.')
         elif task['binding'].get('verification_profile') == 'rust-retry':
             result['verification_contract'] = ('For the documented retry policy, call search_repository '
-                'with exact_path="docs/architecture-rules.md". ' + RUST_RETRY_CONTRACT)
+                f'with exact_path="{RETRY_POLICY_PATH}". ' + RUST_RETRY_CONTRACT)
         if task.get('receipts'):
             latest = task['receipts'][-1]
             result['latest_check'] = {'state':latest['state'], 'operation_id':latest['operation_id'],

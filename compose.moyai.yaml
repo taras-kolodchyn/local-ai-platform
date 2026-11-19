@@ -12,6 +12,7 @@ services:
     environment:
       DATA_DIR: /data
       LITELLM_API_BASE: http://127.0.0.1:4000/v1
+      QWEN_CONTEXT_SIZE: ${QWEN_CONTEXT_SIZE:-65536}
       AGENT_MODEL: local-qwen
       MOYAI_MODELS: local-qwen,local-qwen-analysis
       MOYAI_PUBLIC_URL: http://127.0.0.1:8787

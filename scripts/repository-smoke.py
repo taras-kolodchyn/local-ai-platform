@@ -140,7 +140,7 @@ paths, and the fixed run_repository_checks tool. Read actual validation output a
 failures within the task budget. Finish with finish_repository_task so the patch, test report
 and result manifest are available through Files. Complete the work, then give a brief factual
 report with source citations and download links. Do not ask questions or delegate.'''
-        turn, _ = client.turn(session,prompt,timeout=1200)
+        turn, detail = client.turn(session,prompt,timeout=1200)
         record['turn'] = turn
         task = client.request(f'/api/sessions/{session}/repository-task')
         record['task'] = task
@@ -169,6 +169,12 @@ report with source citations and download links. Do not ask questions or delegat
             require(name in {row['path'] for row in manifest['files']}, 'Citation refers to foreign source')
             lines = (snapshot/'source'/name).read_text().splitlines()
             require(1 <= citation['start_line'] <= citation['end_line'] <= len(lines), 'Citation line range is invalid')
+        replies = [m['content'] for m in detail['messages']
+                   if m.get('turn_id') == turn and m.get('role') == 'assistant']
+        policy_ranges = [f"{c['path']}:{c['start_line']}–{c['end_line']}" for c in task['citations']
+                         if c['path'] == 'docs/architecture-rules.md' and c['start_line'] <= 7 <= c['end_line']]
+        require(replies and any(ref in replies[-1] for ref in policy_ranges),
+                'Final chat reply is missing the retrieved policy citation')
         validate_patch(bodies['changes.patch'],manifest,snapshot,observed)
         record['status'] = 'passed'
         record['artifact_hashes'] = {name:hashlib.sha256(data).hexdigest() for name,data in bodies.items()}
