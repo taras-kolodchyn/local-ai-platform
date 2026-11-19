@@ -19,6 +19,7 @@ services:
       TEMPORAL_ADDRESS: moyai-temporal:7233
     volumes:
       - moyai_data:/data
+      - publisher_link:/run/moyai-publisher:ro
       - ./.local/moyai/runtime-config.json:/run/moyai-config.json:ro
       - ./.local/moyai/ssh/id_ed25519:/run/ssh-seed/id_ed25519:ro
       - ./.local/moyai/ssh/known_hosts:/run/ssh-seed/known_hosts:ro
@@ -140,6 +141,7 @@ networks:
     name: local-ai-platform_observability
 
 volumes:
+  publisher_link:
   moyai_data:
   moyai_workspace:
   moyai_temporal:

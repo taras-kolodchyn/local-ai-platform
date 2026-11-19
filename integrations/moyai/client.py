@@ -3,7 +3,7 @@ from http.cookiejar import CookieJar
 import json
 from pathlib import Path
 import time
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.request import HTTPCookieProcessor, HTTPRedirectHandler, ProxyHandler, Request, build_opener
 import uuid
 
@@ -11,6 +11,10 @@ import uuid
 class NoRedirects(HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
+
+
+class MoyaiUnavailable(ConnectionError):
+    """The localhost controller connection can be retried after a restart."""
 
 
 class MoyaiClient:
@@ -28,7 +32,12 @@ class MoyaiClient:
             with self.opener.open(request, timeout=15) as response:
                 value = response.read(24 * 1024 * 1024)
         except HTTPError as error:
+            error.close()
+            if error.code in (502, 503, 504):
+                raise MoyaiUnavailable(f'Moyai API unavailable (HTTP {error.code})') from error
             raise RuntimeError(f'Moyai API request failed (HTTP {error.code})') from None
+        except (URLError, ConnectionError, TimeoutError) as error:
+            raise MoyaiUnavailable('Moyai API connection interrupted') from error
         return value if raw else json.loads(value)
 
     def login(self):

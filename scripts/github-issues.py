@@ -21,7 +21,7 @@ from urllib.error import HTTPError, URLError
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'integrations/moyai'))
 from github_app import AppError, Installation, request as app_request
-from client import MoyaiClient
+from client import MoyaiClient, MoyaiUnavailable
 from github_issue import ISSUES, REPO, atomic_json, issue_number, issue_scope
 from repository_backend import bounded_read, canonical, coverage_path, editable
 from repository_ledger import ARTIFACT_PATHS, approved_review, baseline_established, clean_coverage_baseline, validate_checks, verify_artifact
@@ -499,44 +499,52 @@ def watch_verified_issue(github, client, jobfile):
     raise Refused('GitHub remained unavailable. Restart the same issue grant to reconcile.')
 
 
-def serve(publisher, exchange):
+@contextlib.contextmanager
+def live_lease(exchange):
     lease = uuid.uuid4().hex
     stop = threading.Event()
+    atomic_json(exchange/'lease.json', {'id':lease, 'updated':time.time()})
     def heartbeat():
-        while not stop.is_set():
+        while not stop.wait(3):
             atomic_json(exchange/'lease.json', {'id':lease, 'updated':time.time()})
-            stop.wait(3)
     heartbeat_thread = threading.Thread(target=heartbeat)
     heartbeat_thread.start()
     try:
-        print('GitHub issue publisher ready. Paste the issue URL into a private Moyai chat.', flush=True)
-        while True:
-            for path in sorted((exchange/'requests').glob('*.json')):
-                if not re.fullmatch(r'[a-f0-9]{64}\.json', path.name):
-                    continue
-                try:
-                    request = json.loads(bounded_read(exchange/'requests', path.name, 1024))
-                except (OSError, ValueError):
-                    continue
-                if not isinstance(request, dict) or set(request) != {'action', 'number', 'session', 'turn', 'lease'}:
-                    continue
-                reply = exchange/'replies'/path.name
-                if request.get('lease') != lease or (reply.exists() and json.loads(reply.read_text()).get('lease') == lease):
-                    continue
-                try:
-                    response = {'result':publisher.dispatch(request)}
-                except Exception as exc:
-                    reason = str(exc) if isinstance(exc, (Refused, AppError)) else type(exc).__name__
-                    print(f'Issue operation {request["action"]} failed: {reason}', flush=True)
-                    response = {'error':reason}
-                atomic_json(reply, {**response, 'lease':lease})
-                if request['action'] == 'publish' and response.get('result', {}).get('auto_merge'):
-                    return  # The chat can deliver its Files while the host waits for CI.
-            time.sleep(0.25)
+        yield lease
     finally:
         stop.set()
         heartbeat_thread.join()
         (exchange/'lease.json').unlink(missing_ok=True)
+
+
+def serve(publisher, exchange, lease):
+    print('GitHub issue publisher ready. Paste the issue URL into a private Moyai chat.', flush=True)
+    while True:
+        for path in sorted((exchange/'requests').glob('*.json')):
+            if not re.fullmatch(r'[a-f0-9]{64}\.json', path.name):
+                continue
+            try:
+                request = json.loads(bounded_read(exchange/'requests', path.name, 1024))
+            except (OSError, ValueError):
+                continue
+            if not isinstance(request, dict) or set(request) != {'action', 'number', 'session', 'turn', 'lease'}:
+                continue
+            reply = exchange/'replies'/path.name
+            if request.get('lease') != lease or (reply.exists() and json.loads(reply.read_text()).get('lease') == lease):
+                continue
+            try:
+                response = {'result':publisher.dispatch(request)}
+            except MoyaiUnavailable:
+                # A replacement controller can replay the same request after its API returns.
+                continue
+            except Exception as exc:
+                reason = str(exc) if isinstance(exc, (Refused, AppError)) else type(exc).__name__
+                print(f'Issue operation {request["action"]} failed: {reason}', flush=True)
+                response = {'error':reason}
+            atomic_json(reply, {**response, 'lease':lease})
+            if request['action'] == 'publish' and response.get('result', {}).get('auto_merge'):
+                return  # The chat can deliver its Files while the host waits for CI.
+        time.sleep(0.25)
 
 
 def main():
@@ -561,7 +569,7 @@ def main():
     exchange = STATE / 'exchange'
     exchange.mkdir(exist_ok=True)
     (exchange/'requests').mkdir(exist_ok=True)
-    (exchange/'requests').chmod(0o777)  # Only this directory is mounted for the nonroot controller.
+    (exchange/'requests').chmod(0o777)  # The relay has write access only to this mailbox.
     (exchange/'replies').mkdir(exist_ok=True)
 
     def stop_publisher(signum, _frame):
@@ -589,12 +597,19 @@ def main():
             github.ticket(args.operator_issue)
         print('Preparing the pinned GitHub main snapshot and its local context index…', flush=True)
         manifest, binding = prepare(github.api('commits/main')['sha'], args.profile)
-        subprocess.run([*COMPOSE, 'up', '--detach', '--no-deps', '--build', '--wait', 'moyai'], cwd=ROOT, check=True)
-        client.login()
-        serve(Publisher(github, client, manifest, binding, auto_merge=auto_merge,
-                        restart_from=str(args.restart_unpublished_from) if args.restart_unpublished_from else None), exchange)
-        if auto_merge:
-            watch_verified_issue(github, client, jobfile)
+        try:
+            subprocess.run([*COMPOSE, 'up', '--detach', '--no-deps', '--build', '--wait', 'moyai', 'issue-relay'],
+                           cwd=ROOT, check=True)
+            client.login()
+            with live_lease(exchange) as lease:
+                serve(Publisher(github, client, manifest, binding, auto_merge=auto_merge,
+                                restart_from=str(args.restart_unpublished_from) if args.restart_unpublished_from else None),
+                      exchange, lease)
+                if auto_merge:
+                    # The same turn may reconnect for the recorded reply while CI is running.
+                    watch_verified_issue(github, client, jobfile)
+        finally:
+            subprocess.run([*COMPOSE, 'rm', '--stop', '--force', 'issue-relay'], cwd=ROOT, check=True)
 
 
 if __name__ == '__main__':
