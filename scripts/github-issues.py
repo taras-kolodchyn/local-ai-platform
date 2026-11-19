@@ -16,6 +16,7 @@ import tempfile
 import threading
 import time
 import uuid
+from urllib.error import HTTPError, URLError
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'integrations/moyai'))
@@ -163,7 +164,7 @@ def verified_patch(client, job):
         validate_checks(original)
         require(original['tree_hash'] == result['original_tree'] and clean_coverage_baseline(original),
                 'Tests-only publication requires a verified clean original implementation.')
-    if task.get('documentation_reviews') or not job.get('pr'):
+    if job.get('auto_merge') or task.get('documentation_reviews') or not job.get('pr'):
         verify_documentation_review(task, report, patch)
     validate_checks(receipt, retry_contract=scope.get('retry_contract'))
     return patch, result['verified_tree'], receipt['checks']
@@ -207,6 +208,16 @@ def issue_branch(number, installation):
     return f'{prefix}/issue-{number}'
 
 
+def publication_body(job, patch, checks, coverage):
+    baseline = ('The original project and retry oracle passed before adding tests.'
+                if coverage else 'The failing baseline was reproduced.')
+    return (f"Closes #{job['number']}\n\nMoyai verified the Rust example locally against base `{job['base']}`. "
+            f'{baseline} The verified tree passed {checks["project_tests_run"]} '
+            f'project tests and {checks["oracle_tests_run"]} protected tests. '
+            'The added regression suite detected the previous 60-second ceiling.\n\n'
+            f'Documentation review approved the same patch.\n\nPatch SHA-256: `{hashlib.sha256(patch).hexdigest()}`\n')
+
+
 def publish(api, repo, manifest, job, patch, digest, checks, save, *, installation=None):
     number, base = job['number'], job['base']
     branch = issue_branch(number, installation)
@@ -237,16 +248,8 @@ def publish(api, repo, manifest, job, patch, digest, checks, save, *, installati
         api('git/refs', {'ref':'refs/heads/' + branch, 'sha':head})
     require(refs() == [head], 'The issue branch has a different head.')
     if not prs:
-        sha = hashlib.sha256(patch).hexdigest()
-        baseline = ('The original project and retry oracle passed before adding tests.' if coverage
-                    else 'The failing baseline was reproduced.')
-        body = (f'Closes #{number}\n\nMoyai verified the Rust example locally against base `{base}`. '
-                f'{baseline} The verified tree passed {checks["project_tests_run"]} '
-                f'project tests and {checks["oracle_tests_run"]} protected tests. '
-                'The added regression suite detected the previous 60-second ceiling.\n\n'
-                f'Documentation review approved the same patch.\n\nPatch SHA-256: `{sha}`\n')
         created = api('pulls', {'head':branch, 'base':BASE, 'draft':True,
-                                'title':f'{title} (#{number})', 'body':body})
+                                'title':f'{title} (#{number})', 'body':publication_body(job, patch, checks, coverage)})
         prs = [api(f'pulls/{int(created["number"])}')]
     require(len(prs) == 1, 'Expected exactly one pull request for the issue branch.')
     pr = prs[0]
@@ -264,8 +267,9 @@ def publish(api, repo, manifest, job, patch, digest, checks, save, *, installati
 
 
 class Publisher:
-    def __init__(self, github, client, manifest, binding, *, restart_from=None):
+    def __init__(self, github, client, manifest, binding, *, restart_from=None, auto_merge=False):
         self.restart_from = restart_from
+        self.auto_merge = auto_merge
         self.github, self.client = github, client
         self.manifest, self.binding = manifest, binding
 
@@ -341,6 +345,8 @@ class Publisher:
                         'GitHub main moved. Restart the publisher to index the new base.')
                 job = {'number':number, 'session':session, 'turn':turn, 'base':self.manifest['git']['head'],
                        'binding':self.binding, 'issue':ticket}
+                if self.auto_merge:
+                    job['auto_merge'] = True
                 if prior_attempts:
                     job['prior_attempts'] = prior_attempts
                 save(job)
@@ -365,7 +371,111 @@ class Publisher:
         result = publish(checked_api, STATE/'sources'/job['base'], manifest, job, patch, digest, checks, save,
                          installation=self.github.installation)
         save({**job, 'pr':result})
-        return result
+        return {**result, 'auto_merge':True} if self.auto_merge and job.get('auto_merge') else result
+
+
+def verified_ci(github, job):
+    """The trusted CI workflow names the PR and both event SHAs, even when pull_requests is empty."""
+    pr, head, base = job['pr']['number'], job['commit'], job['base']
+    branch = issue_branch(job['number'], github.installation)
+    runs = github.api('actions/workflows/ci.yml/runs?event=pull_request'
+                      f'&branch={branch}&head_sha={head}&per_page=1')['workflow_runs']
+    if not runs:
+        return None
+    run = runs[0]
+    require(run['event'] == 'pull_request' and run['path'] == '.github/workflows/ci.yml'
+            and run['repository']['full_name'] == run['head_repository']['full_name'] == REPO
+            and run['head_branch'] == branch and run['head_sha'] == head
+            and run['display_title'] == f'CI PR {pr} head {head} base {base}',
+            'The CI run does not identify the verified PR, head and base.')
+    if run['status'] != 'completed':
+        return None
+    require(run['conclusion'] == 'success', f"CI run {run['id']} ended with {run['conclusion']}.")
+    jobs = github.api(f"actions/runs/{int(run['id'])}/attempts/{int(run['run_attempt'])}/jobs")
+    require(any(j['name'] == 'test' and j['status'] == 'completed' and j['conclusion'] == 'success'
+                and j['head_sha'] == head for j in jobs['jobs']), 'The required CI test job did not pass.')
+    return run['id']
+
+
+def merge_verified_issue(github, client, jobfile, *, deadline=None):
+    job = json.loads(jobfile.read_text())
+    app, pr = github.installation, job['pr']
+    require(app is not None and job.get('auto_merge') is True and github.operator_issue == job['number']
+            and pr['app_id'] == app.app_id and pr['author'] == app.bot and pr['head'] == job['commit'],
+            'This publication has no matching single-issue App merge grant.')
+    patch, digest, checks = verified_patch(client, job)
+    manifest = json.loads((ROOT/'.local/repositories/snapshots'/job['binding']['snapshot_id']/'manifest.json').read_text())
+    tree, _ = reproduce(STATE/'sources'/job['base'], job['base'], manifest, patch, digest)
+    body = publication_body(job, patch, checks, manifest.get('verification_profile') == 'rust-retry-tests')
+    head, base = job['commit'], job['base']
+    commit = github.api('git/commits/' + head)
+    require(commit['sha'] == head and tree == job['tree'] == commit['tree']['sha']
+            and [p['sha'] for p in commit['parents']] == [base], 'The published commit differs from the verified patch.')
+    route = f"pulls/{int(pr['number'])}"
+    branch = issue_branch(job['number'], app)
+    if deadline is None:
+        deadline = time.monotonic() + 1800
+    while time.monotonic() < deadline:
+        live = github.api(route)
+        require(live['number'] == pr['number'] and live['user']['login'] == app.bot and live['user']['type'] == 'Bot'
+                and live['head']['repo']['full_name'] == live['base']['repo']['full_name'] == REPO
+                and live['head']['sha'] == head and live['head']['ref'] == branch and live['base']['ref'] == BASE,
+                'PR identity, branch or verified head changed.')
+        if live['merged']:
+            require((live.get('merged_by') or {}).get('login') == app.bot and job.get('ci_run'),
+                    'A different actor or an unrecorded CI run merged this PR.')
+            job['merge_sha'] = live['merge_commit_sha']
+            landed = github.api('git/commits/' + job['merge_sha'])
+            require(landed['tree']['sha'] == tree and [p['sha'] for p in landed['parents']] == [base, head],
+                    'Merged result differs from the CI base and verified tree. Inspect main.')
+            atomic_json(jobfile, job)
+            print(f"GitHub App merged PR #{pr['number']} at {job['merge_sha']} after CI {job['ci_run']}.", flush=True)
+            return
+        require(live['state'] == 'open' and live['base']['sha'] == base, 'PR closed or its pinned main base moved.')
+        require((live.get('body') or '').replace('\r\n','\n').rstrip() == body.rstrip(),
+                'PR description or linked issue changed after publication.')
+        require(github.ticket(job['number']) == job['issue'], 'The issue changed after patch verification.')
+        run_id = verified_ci(github, job)
+        if not run_id:
+            time.sleep(15)
+            continue
+        # Keep the CI identity across a lost merge response. GitHub enforces its
+        # branch rules and compares the head OID again inside the merge mutation.
+        job['ci_run'] = run_id
+        atomic_json(jobfile, job)
+        if live['draft']:
+            data = app.graphql('mutation($id:ID!){markPullRequestReadyForReview(input:{pullRequestId:$id})'
+                               '{pullRequest{id isDraft}}}', {'id':live['node_id']})
+            ready = data['markPullRequestReadyForReview']['pullRequest']
+            require(ready['id'] == live['node_id'] and ready['isDraft'] is False, 'GitHub did not confirm ready status.')
+            continue
+        if live['mergeable'] is None:
+            time.sleep(5)
+            continue
+        require(live['mergeable'] is True and github.api('commits/main')['sha'] == base,
+                'The PR has conflicts or its verified main base moved.')
+        data = app.graphql('mutation($id:ID!,$head:GitObjectID!){mergePullRequest(input:{pullRequestId:$id,'
+                           'expectedHeadOid:$head,mergeMethod:MERGE}){pullRequest{id merged}}}',
+                           {'id':live['node_id'], 'head':head})
+        merged = data['mergePullRequest']['pullRequest']
+        require(merged['id'] == live['node_id'] and merged['merged'] is True, 'GitHub did not confirm the merge.')
+    raise Refused('Timed out waiting for verified CI. Restart the same issue grant to reconcile.')
+
+
+def watch_verified_issue(github, client, jobfile):
+    deadline = time.monotonic() + 1800
+    while time.monotonic() < deadline:
+        try:
+            return merge_verified_issue(github, client, jobfile, deadline=deadline)
+        except HTTPError as error:
+            error.close()
+            if error.code not in (408, 429, 500, 502, 503, 504):
+                raise
+        except (URLError, TimeoutError, ConnectionError):
+            pass
+        print('Temporary connection failure. Reconciling the saved publication with GitHub.', flush=True)
+        time.sleep(15)
+    raise Refused('GitHub remained unavailable. Restart the same issue grant to reconcile.')
 
 
 def serve(publisher, exchange):
@@ -399,6 +509,8 @@ def serve(publisher, exchange):
                     print(f'Issue operation {request["action"]} failed: {reason}', flush=True)
                     response = {'error':reason}
                 atomic_json(reply, {**response, 'lease':lease})
+                if request['action'] == 'publish' and response.get('result', {}).get('auto_merge'):
+                    return  # The chat can deliver its Files while the host waits for CI.
             time.sleep(0.25)
     finally:
         stop.set()
@@ -415,6 +527,10 @@ def main():
     parser.add_argument('--restart-unpublished-from', type=uuid.UUID, default=os.environ.get('MOYAI_RESTART_UNPUBLISHED_FROM'),
                         help='Allow the same owner to restart one checked but undelivered App issue from this exact previous session.')
     args = parser.parse_args()
+    auto_merge = os.environ.get('MOYAI_AUTO_MERGE', '')
+    if auto_merge not in ('', '0', '1') or (auto_merge == '1' and not (args.app and args.operator_issue)):
+        parser.error('AUTO_MERGE=1 requires the GitHub App and one operator-approved issue')
+    auto_merge = auto_merge == '1'
     if args.restart_unpublished_from and not (args.app and args.operator_issue):
         parser.error('restart requires the GitHub App scoped to one operator-approved issue')
     if args.profile == 'rust-retry-tests' and not args.operator_issue:
@@ -437,14 +553,27 @@ def main():
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         signal.signal(signal.SIGTERM, stop_publisher)
         github = GitHub(args.operator_issue, installation=Installation() if args.app else None)
+        client = MoyaiClient()
+        if auto_merge:
+            jobfile = STATE/f'app-{github.installation.app_id}'/f'issue-{args.operator_issue}.json'
+            if jobfile.exists():
+                prior = json.loads(jobfile.read_text())
+                require(prior.get('auto_merge') and prior['binding']['verification_profile'] == args.profile,
+                        'Auto-merge must be granted at original issue intake for this profile.')
+                if prior.get('pr'):
+                    client.login()
+                    watch_verified_issue(github, client, jobfile)
+                    return
         if args.operator_issue is not None:
             github.ticket(args.operator_issue)
         print('Preparing the pinned GitHub main snapshot and its local context index…', flush=True)
         manifest, binding = prepare(github.api('commits/main')['sha'], args.profile)
-        client = MoyaiClient()
         subprocess.run([*COMPOSE, 'up', '--detach', '--no-deps', '--build', '--wait', 'moyai'], cwd=ROOT, check=True)
         client.login()
-        serve(Publisher(github, client, manifest, binding, restart_from=str(args.restart_unpublished_from) if args.restart_unpublished_from else None), exchange)
+        serve(Publisher(github, client, manifest, binding, auto_merge=auto_merge,
+                        restart_from=str(args.restart_unpublished_from) if args.restart_unpublished_from else None), exchange)
+        if auto_merge:
+            watch_verified_issue(github, client, jobfile)
 
 
 if __name__ == '__main__':

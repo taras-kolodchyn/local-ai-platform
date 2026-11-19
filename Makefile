@@ -110,5 +110,6 @@ github-app-setup: ## Register the private Moyai GitHub App on localhost
 	@python3 scripts/register-github-app.py
 
 github-app-issues: export MOYAI_OPERATOR_ISSUE := $(value ISSUE)
-github-app-issues: ## Publish as the GitHub App, optionally scoped to ISSUE=N
+github-app-issues: export MOYAI_AUTO_MERGE := $(value AUTO_MERGE)
+github-app-issues: ## Publish as the GitHub App (ISSUE=N AUTO_MERGE=1 also merges after verified CI)
 	@python3 scripts/github-issues.py --app

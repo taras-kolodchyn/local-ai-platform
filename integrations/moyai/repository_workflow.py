@@ -323,7 +323,10 @@ class RepositoryWorkflow(AbstractCapability):
             pr = result['number']
             if type(pr) is not int or pr < 1:
                 raise ValueError('Invalid GitHub publication receipt.')
-            return f'\n\n[Draft PR #{pr}]({PULLS}{pr})'
+            message = f'\n\n[Draft PR #{pr}]({PULLS}{pr})'
+            if result.get('auto_merge') is True:
+                message += ' · The GitHub App will merge this verified commit once its CI passes.'
+            return message
         except (ValueError, OSError) as error:
             return f'\n\nGitHub publication is unconfirmed. {error} Resend {ISSUES}{ticket["number"]} in this chat to retry.'
 

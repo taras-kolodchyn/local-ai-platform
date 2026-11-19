@@ -104,6 +104,15 @@ class Installation:
         self.token = grant['token']
 
     def api(self, endpoint, body=None):
+        return request('/repos/' + REPO + '/' + endpoint, self.access_token(), body)
+
+    def access_token(self):
         if self.token is None or self.expires < time.time() + 90:
             self.refresh()
-        return request('/repos/' + REPO + '/' + endpoint, self.token, body)
+        return self.token
+
+    def graphql(self, query, variables):
+        result = request('/graphql', self.access_token(), {'query':query, 'variables':variables})
+        if result.get('errors') or not isinstance(result.get('data'), dict):
+            raise AppError('GitHub declined the requested PR transition. Check repository rules and the PR state.')
+        return result['data']

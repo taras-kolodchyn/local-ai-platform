@@ -1,4 +1,5 @@
 name: CI
+run-name: ${{ github.event_name == 'pull_request' && format('CI PR {0} head {1} base {2}', github.event.number, github.event.pull_request.head.sha, github.event.pull_request.base.sha) || format('CI on {0}', github.ref_name) }}
 
 on:
   push:
