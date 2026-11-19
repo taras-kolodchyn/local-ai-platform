@@ -116,6 +116,18 @@ class RepositoryCompletionTests(unittest.IsolatedAsyncioTestCase):
         response = await cap.wrap_model_request(ctx,request_context=SimpleNamespace(messages=[]),handler=AsyncMock())
         self.assertEqual(response.parts[0].tool_name,'repository_task_status')
 
+    async def test_failed_candidate_reports_cargo_outcome_in_the_original_turn(self):
+        from github_issue import ISSUES
+        task = {'phase':'failed', 'github_issue':{'number':50,'turn':'turn'}, 'attempts':4,
+                'receipts':[{'state':'failed','commands':[{'kind':'project_build','exit_code':101}]}]}
+        cap, ctx = self.setup_capability(task)
+        ctx.prompt = ISSUES + '50'
+        ctx.deps.surface, ctx.deps.visibility = 'web','private'
+        response = await cap.wrap_model_request(ctx, request_context=SimpleNamespace(messages=[]), handler=AsyncMock())
+        self.assertIn('4 candidate checks', response.text)
+        self.assertIn('project_build (exit 101)', response.text)
+        self.assertIn('No verified patch', response.text)
+
     async def test_issue_dispatches_plan_then_enters_changes_on_persisted_evidence(self):
         from github_issue import ISSUES
         from pydantic_ai.messages import ToolCallPart
