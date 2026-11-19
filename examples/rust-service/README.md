@@ -24,3 +24,11 @@ Contributors can run only the Rust retry regression integration target using:
 ```sh
 cargo test --locked --manifest-path examples/rust-service/Cargo.toml --test retry_regression
 ```
+
+## Running the router construction test
+
+Contributors can run the `health` integration target that checks that the application router can be constructed using:
+
+```sh
+cargo test --locked --manifest-path examples/rust-service/Cargo.toml --test health
+```
