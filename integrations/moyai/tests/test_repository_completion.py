@@ -170,6 +170,31 @@ class RepositoryCompletionTests(unittest.IsolatedAsyncioTestCase):
             await cap.wrap_model_request(ctx, request_context=request, handler=handler)
         handler.assert_not_awaited()
 
+    async def test_restart_retries_timed_out_begin_once_after_reading_the_persisted_phase(self):
+        from pydantic_ai.messages import ModelRequest, ToolReturnPart
+        from repository_workflow import BEGIN
+        task = {'phase':'analyzing','github_issue':{'number':71}}
+        cap,ctx = self.setup_capability(task)
+        cap.issue_analysis_step = AsyncMock(return_value=BEGIN)
+        request = SimpleNamespace(messages=[])
+        first = (await cap.route_issue(ctx,request,71)).parts[0]
+        diagnostic = 'begin_repository_changes failed (TimeoutError): activity Heartbeat timeout'
+        def returned(call, message):
+            return ModelRequest(parts=[ToolReturnPart(BEGIN,message,tool_call_id=call.tool_call_id,outcome='failed')])
+        request.messages = [returned(first,'Update the native plan with an acceptance criterion.')]
+        self.assertIsNone(await cap.route_issue(ctx,request,71))
+        request.messages = [returned(first,diagnostic)]
+        retry = await cap.route_issue(ctx,request,71)
+        self.assertIsNotNone(retry)
+        second = retry.parts[0]
+        self.assertEqual(second.tool_name,BEGIN)
+        self.assertNotEqual(second.tool_call_id,first.tool_call_id)
+        request.messages.append(returned(second,diagnostic))
+        self.assertIsNone(await cap.route_issue(ctx,request,71))
+        request.messages.pop()
+        task['phase'] = 'implementing'
+        self.assertIsNone(await cap.route_issue(ctx,request,71))
+
     async def test_completion_native_import_respects_temporal_runtime_restrictions(self):
         from temporalio import workflow
         from temporalio.worker.workflow_sandbox import SandboxRestrictions
