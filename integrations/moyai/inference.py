@@ -1,5 +1,9 @@
 """Local alias settings on Moyai's native Responses model and accounting transport."""
+import asyncio
+from email.utils import parsedate_to_datetime
 import json
+import math
+import time
 
 from openai import AsyncOpenAI, DefaultAsyncHttpxClient
 from pydantic_ai.models.openai import OpenAIResponsesModel
@@ -16,7 +20,32 @@ class LocalTransport(InferenceUsageTransport):
                               'parallel_tool_calls': payload.get('parallel_tool_calls'),
                               'tool_count': len(tools)}),
                   flush=True)
-        return await super().handle_async_request(request)
+        if request.method != 'POST' or not request.url.path.rstrip('/').endswith(('/responses','/chat/completions')):
+            return await super().handle_async_request(request)
+        deadline = time.monotonic() + 90
+        delay = 5
+        while True:
+            response = await super().handle_async_request(request)
+            if response.status_code != 429 or b'max_parallel_requests' not in await response.aread():
+                return response
+            cooldown = response.headers.get('retry-after')
+            wait = delay
+            if cooldown:
+                try:
+                    wait = float(cooldown)
+                except ValueError:
+                    try:
+                        wait = parsedate_to_datetime(cooldown).timestamp() - time.time()
+                    except (ValueError, TypeError, OverflowError):
+                        wait = delay
+            if not math.isfinite(wait):
+                return response
+            wait = max(delay, wait)
+            if time.monotonic() + wait >= deadline:
+                return response
+            # A concurrency rejection precedes generation. Each attempt goes through native accounting.
+            await asyncio.sleep(wait)
+            delay = min(20, delay * 2)
 
 
 def local_model(settings):
