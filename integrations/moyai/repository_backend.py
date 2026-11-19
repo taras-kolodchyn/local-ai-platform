@@ -483,7 +483,7 @@ class RepositoryBackend:
         task = self.ledger.status(*scope)
         for settled in task['receipts']:
             if settled['operation_id'] == operation:
-                return self.check_summary(settled, task.get("github_issue"))
+                return await self.check_result(task, settled)
         manifest, _ = await asyncio.to_thread(self.snapshot, task['binding'])
         _, tree = scoped_tree(await self.guest(scope, 'tree'), manifest)
         reviews = task.get('documentation_reviews') or []
@@ -491,7 +491,7 @@ class RepositoryBackend:
             return {'state':'changes_requested', 'findings':reviews[-1]['findings'],
                     'next_action':'Edit the cited documentation before rechecking this tree.'}
         if cached := self.ledger.reusable_check(*scope, tree):
-            return {**self.check_summary(cached, task.get("github_issue")), 'reused':True,
+            return {**await self.check_result(task, cached), 'reused':True,
                     'reused_operation_id':cached['operation_id'],
                     'reuse_reason':'The current tree matches the latest settled check; no Cargo work or validation attempt was repeated.'}
         decision = self.ledger.start_check(*scope, operation, tree)
@@ -512,7 +512,46 @@ class RepositoryBackend:
         except Exception:
             self.ledger.uncertain(*scope, operation)
             raise
-        return self.check_summary(receipt, task.get("github_issue"))
+        return await self.check_result(task, receipt)
+
+    async def check_result(self, task, receipt):
+        result = self.check_summary(receipt, task.get('github_issue'))
+        if task['binding'].get('verification_profile') != 'rust-retry-tests' or receipt['state'] != 'failed':
+            return result
+        evidence = await asyncio.to_thread(self.integration_import, task['binding'])
+        if evidence:
+            result['integration_test_import'] = evidence
+            result['next_action'] = (result.get('next_action', '') +
+                ' Use integration_test_import in the new tests/*.rs target to call the public library.').strip()
+        return result
+
+    def integration_import(self, binding):
+        import tomllib
+        manifest, directory = self.snapshot(binding)
+        entry = next((r for r in manifest['files'] if r['path'] == 'Cargo.toml'), None)
+        if entry is None:
+            return None
+        path = (directory/'source/Cargo.toml').relative_to(self.catalog).as_posix()
+        data = bounded_read(self.catalog, path, MAX_FILE, size=entry['size'])
+        verify_artifact(data, entry['sha256'])
+        try:
+            cargo = tomllib.loads(data.decode('utf-8'))
+        except (UnicodeError, tomllib.TOMLDecodeError):
+            return None
+        if not isinstance(cargo.get('lib', {}), dict) or not isinstance(cargo.get('package'), dict):
+            return None
+        library = cargo.get('lib', {}).get('name')
+        field = 'lib.name'
+        if library is None:
+            name = cargo['package'].get('name')
+            if not isinstance(name, str):
+                return None
+            library = name.replace('-', '_')
+            field = 'package.name'
+        if isinstance(library, str) and re.fullmatch(r'[A-Za-z_][A-Za-z_0-9]*', library):
+            return {'path':'Cargo.toml', 'field':field,
+                'code':f'use {library}::{{bounded_backoff_ms, legacy_retry_delay_ms}};'}
+        return None
 
     @staticmethod
     def check_summary(receipt, github_issue=None):

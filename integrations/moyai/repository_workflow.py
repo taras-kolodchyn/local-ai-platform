@@ -115,7 +115,12 @@ class RepositoryWorkflow(AbstractCapability):
                 backend.ledger.begin(*scope, [i.model_dump(mode='json') for i in items])
             except RepositoryError as error:
                 raise ToolFailed(str(error)) from error
-            return await backend.status(scope)
+            result = await backend.status(scope)
+            if result['binding'].get('verification_profile') == 'rust-retry-tests':
+                evidence = await asyncio.to_thread(backend.integration_import, result['binding'])
+                if evidence:
+                    result['integration_test_import'] = evidence
+            return result
 
         async def run_repository_checks(ctx: RunContext) -> dict:
             """Run the fixed offline profile. Add regressions in tests/*.rs, follow next_action, and edit before retrying failed checks. An unchanged repair reuses settled evidence without another validation attempt."""
@@ -207,6 +212,13 @@ class RepositoryWorkflow(AbstractCapability):
     async def retry_issue_analysis(self, session: str, authority: str, number: int, turn: str) -> str | None:
         scope = (session, authority)
         task = self.backend.ledger.status(*scope)
+        if (task['phase'] == 'failed' and (task.get('github_issue') or {}).get('number') == number
+                and task.get('attempts') and task.get('receipts') and task['receipts'][-1]['state'] == 'failed'):
+            failed = [f"{c['kind']} (exit {c['exit_code']})" for c in task['receipts'][-1]['commands']
+                      if c.get('exit_code')]
+            return (f"Repository verification stopped after {task['attempts']} candidate checks. "
+                    f"Last check: {', '.join(failed) or 'verification requirements unmet'}. "
+                    'No verified patch or draft PR was delivered.')
         try:
             claim = await exchange('open', number, session, turn)
             if (claim['binding'] != task['binding'] or

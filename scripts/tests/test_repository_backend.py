@@ -25,6 +25,7 @@ class BackendTests(unittest.IsolatedAsyncioTestCase):
                                                        ROOT/'scripts/repository-snapshot.py')
         script = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(script)
+        self.prepare_snapshot = script.prepare_snapshot
         self.catalog = self.directory/'catalog'
         self.manifest = script.prepare_snapshot(ROOT/'examples/rust-service',self.catalog,'rust-retry')
         self.id = self.manifest['repository_id']
@@ -56,6 +57,26 @@ class BackendTests(unittest.IsolatedAsyncioTestCase):
         result = await self.backend.open(self.scope,self.id)
         self.assertIn('tests/*.rs', result['verification_contract'])
         self.assertIn('integration', result['verification_contract'])
+
+    async def test_coverage_check_supplies_the_public_import_from_the_pinned_manifest(self):
+        project = self.directory/'service'
+        project.mkdir()
+        cargo = project/'Cargo.toml'
+        receipt = {'state':'failed', 'tree_hash':'a'*64, 'commands':[
+            {'kind':'project_build', 'exit_code':101, 'output':'unresolved import crate::bounded_backoff_ms'}]}
+        for extra, field, library in [('', 'package.name', 'another_service'),
+                                      ('[lib]\nname = "retry_api"\n', 'lib.name', 'retry_api')]:
+            with self.subTest(field=field):
+                cargo.write_text('[package]\nname = "another-service"\n' + extra)
+                manifest = self.prepare_snapshot(project, self.catalog, 'rust-retry-tests', unversioned=True)
+                binding = {k:manifest[k] for k in ('repository_id','snapshot_id','verification_profile')}
+                cargo.write_text('[package]\nname = "unpinned"\n')
+                result = await self.backend.check_result({'binding':binding}, receipt)
+                self.assertEqual(result['integration_test_import'], {'path':'Cargo.toml','field':field,
+                    'code':f'use {library}::{{bounded_backoff_ms, legacy_retry_delay_ms}};'})
+                self.assertIn('integration_test_import', result['next_action'])
+                self.assertIn('unresolved import', result['error'])
+                self.assertNotIn('integration_test_import', receipt)
 
     async def test_unchanged_check_returns_existing_evidence_without_guest_execution(self):
         from unittest.mock import patch
