@@ -6,7 +6,8 @@ import unittest
 from unittest.mock import AsyncMock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'integrations/moyai'))
-from documentation_review import MODEL, caller_note_finding, assess_passages, prose_passages, reference_lines, retry_implementation, review_patch
+from documentation_review import (MODEL, assess_passages, caller_note_finding, numeric_retry_claim, prose_passages,
+                                  reference_lines, retry_formula_sources, retry_implementation, review_patch)
 from repository_ledger import RepositoryError
 
 
@@ -65,6 +66,55 @@ class DocumentationReviewTests(unittest.IsolatedAsyncioTestCase):
             patch = self.diff(claim)
             decision = assess_passages(args, prose_passages(patch), refs, patch, loc)
             self.assertEqual(decision['verdict'], expected)
+
+    def test_numeric_retry_passages_include_tables_and_inline_assertions(self):
+        for claim in ('current(9) → 30,000 ms', 'Returns 400 milliseconds.', 'bounded_backoff_ms(2) = 400',
+                      '| Attempt | Delay (ms) | 2 | 400 |',
+                      'assert_eq!(legacy_retry_delay_ms(u32::MAX), 30_000); // capped',
+                      'A 30-second ceiling applies to each retry delay.'):
+            with self.subTest(claim=claim):
+                self.assertTrue(numeric_retry_claim({'lines':[claim]}))
+        for claim in ('Migration advice for the retry API in issue #38.',
+                      'Two retry APIs: legacy → current.', 'The build took 400 ms.'):
+            self.assertFalse(numeric_retry_claim({'lines':[claim]}))
+
+    async def test_numeric_review_requires_the_model_to_cite_the_actual_calculation(self):
+        source = {'src/lib.rs': b'// unrelated cap .min(5)\n'
+                  b'pub fn bounded_backoff_ms(n: u32) -> u64 {\n'
+                  b' // misleading calculation: .min(1)\n'
+                  b' 100_u64.saturating_mul(2_u64.saturating_pow(n)).min(30_000)\n}\n'
+                  b'#[deprecated(note = "use bounded_backoff_ms")]\n'
+                  b'pub fn legacy_retry_delay_ms(n: u32) -> u64 { bounded_backoff_ms(n) }\n'}
+        amount = 'Attempt 2 returns 400 ms.'
+        patch = (self.diff(amount) + '+//! Migrate to bounded_backoff_ms.\n').encode()
+        signature, formula, migration = ('src/lib.rs:2', 'src/lib.rs:4', 'src/lib.rs:6')
+        self.assertEqual(retry_formula_sources(source, reference_lines(source, source)), (formula,))
+        def response(citation):
+            items = [{'passage':'C1','source':citation,'source_fact':'100 times 2 squared is 400.',
+                      'supported':True,'correction':''},
+                     {'passage':'C2','source':migration,'source_fact':'The attribute recommends bounded_backoff_ms.',
+                      'supported':True,'correction':''}]
+            call = SimpleNamespace(type='function_call', name='record_documentation_review',
+                                   arguments=json.dumps({'assessments':items}))
+            return SimpleNamespace(status='completed', output=[call])
+
+        create = AsyncMock(side_effect=[response(migration), response(formula)])
+        client = SimpleNamespace(responses=SimpleNamespace(create=create))
+        result = await review_patch(client, source, source, patch)
+        self.assertEqual(create.await_count, 2)
+        self.assertIn(formula, create.await_args.kwargs['instructions'])
+        self.assertEqual(result['verdict'], 'approved')
+        self.assertEqual([p['source'] for p in result['passages'].values()], [formula, migration])
+        create.side_effect = [response(signature), response(migration)]
+        with self.assertRaisesRegex(RepositoryError, 'no valid decision'):
+            await review_patch(client, source, source, patch)
+
+        no_formula = {'src/lib.rs': source['src/lib.rs'].replace(
+            b'100_u64.saturating_mul(2_u64.saturating_pow(n)).min(30_000)', b'other(n)')}
+        create.reset_mock()
+        with self.assertRaisesRegex(RepositoryError, 'without a source line'):
+            await review_patch(client, no_formula, no_formula, patch)
+        create.assert_not_awaited()
 
     def test_requested_caller_note_requires_module_docs_and_real_migration_evidence(self):
         loc = 'src/lib.rs:2'
