@@ -107,13 +107,13 @@ jobs:
           blocked() {
             trap - ERR
             post_once "blocked-$merge_sha-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
-              "**Потрібна увага після merge.** [PR #$pr]($pr_url) увійшов у \`main\` як [${merge_sha:0:8}]($sha_url). Успішний CI для цього коміту ще не підтверджено. [Перевірка]($ci_url) · [Журнал merge]($job_url)."
+              "**Post-merge CI needs attention.** [PR #$pr]($pr_url) merged into \`main\` at [${merge_sha:0:8}]($sha_url). CI has yet to confirm this commit. [CI run]($ci_url) · [Merge log]($job_url)."
             gh issue reopen "$issue" --repo "$GH_REPO"
             exit 1
           }
           trap blocked ERR
           post_once "merged-$merge_sha" \
-            "**GitHub Actions об’єднав [PR #$pr]($pr_url) з \`main\`.** Коміт [${merge_sha:0:8}]($sha_url), [CI перед merge]($pr_ci). Очікуємо перевірку цього коміту на \`main\`."
+            "**GitHub Actions merged [PR #$pr]($pr_url) into \`main\`** at [${merge_sha:0:8}]($sha_url). [PR CI passed]($pr_ci). CI on the merge commit is pending."
           run=$(main_run)
           min_attempt=1
           if [[ $run == null ]] || [[ $(jq -r '.status == "completed" and .conclusion != "success"' <<<"$run") == true ]]; then
@@ -139,7 +139,7 @@ jobs:
           [[ $passed == true ]] || blocked
           trap - ERR
           post_once "done-$merge_sha" \
-            "**Готово.** [PR #$pr]($pr_url) пройшов [CI перед merge]($pr_ci). [CI на \`main\`]($ci_url) також пройшов для коміту [$merge_sha]($sha_url)."
+            "**Done.** [PR #$pr]($pr_url) passed [PR CI]($pr_ci). [CI on \`main\`]($ci_url) also passed for the merge commit [$merge_sha]($sha_url)."
           if [[ $(gh api "$api/issues/$issue" --jq .state) == open ]]; then
             gh issue close "$issue" --repo "$GH_REPO" --reason completed
           fi
