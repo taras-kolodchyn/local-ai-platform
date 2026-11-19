@@ -435,7 +435,8 @@ class RepositoryBackend:
                 result['verification_contract'] += (' The module-level caller note must identify the calculation, the forwarding '
                     'API, the migration recommendation and why previous calls do not affect the delay. Distinguish inputs from milliseconds.')
         elif task['binding'].get('verification_profile') == 'rust-retry':
-            result['verification_contract'] = RUST_RETRY_CONTRACT
+            result['verification_contract'] = ('For the documented retry policy, call search_repository '
+                'with exact_path="docs/architecture-rules.md". ' + RUST_RETRY_CONTRACT)
         if task.get('receipts'):
             latest = task['receipts'][-1]
             result['latest_check'] = {'state':latest['state'], 'operation_id':latest['operation_id'],
@@ -456,12 +457,12 @@ class RepositoryBackend:
         args = {**ids, 'query':query, 'limit':limit}
         if exact_path is not None:
             args['exact_path'] = relative_name(exact_path)
-        async with asyncio.timeout(40), httpx2.AsyncClient(
+        async with asyncio.timeout(75), httpx2.AsyncClient(
             headers={'Authorization':'Bearer '+os.environ['MOYAI_REPOSITORY_CONTEXT_TOKEN']},
-            follow_redirects=False, trust_env=False, timeout=35,
+            follow_redirects=False, trust_env=False, timeout=70,
         ) as client, streamable_http_client(CONTEXT_URL, http_client=client, terminate_on_close=False,
-                                           max_sse_event_size=65536) as streams:
-            async with ClientSession(streams[0], streams[1], read_timeout_seconds=35) as session:
+                                           max_sse_event_size=1_048_576) as streams:
+            async with ClientSession(streams[0], streams[1], read_timeout_seconds=70) as session:
                 await session.initialize()
                 result = await session.call_tool('search_repository', args)
         value = result.structured_content
@@ -470,11 +471,13 @@ class RepositoryBackend:
         rows = value['results']
         manifest, _ = await asyncio.to_thread(self.snapshot, binding)
         names = {r['path'] for r in manifest['files']}
-        if (not isinstance(rows, list) or len(rows) > limit or len(canonical(value)) > 100_000
-                or any(r.get('path') not in names or (exact_path is not None and r['path'] != exact_path)
+        if (not isinstance(rows, list) or len(rows) > limit or len(canonical(value)) > 400_000
+                or any(not isinstance(r, dict) or not isinstance(r.get('content'), str)
+                       or not isinstance(r.get('path'), str) or r['path'] not in names or (exact_path is not None and r['path'] != exact_path)
                        or not isinstance(r.get('chunk_id'), str)
                        or type(r.get('start_line')) is not int or type(r.get('end_line')) is not int
-                       or not 1 <= r['start_line'] <= r['end_line'] for r in rows)):
+                       or not 1 <= r['start_line'] <= r['end_line'] for r in rows)
+                or sum(len(r['content']) for r in rows) > 24_000):
             raise RepositoryError('Context results contain invalid citations.')
         self.ledger.cite(*scope, [{k:r[k] for k in ('chunk_id','path','start_line','end_line')} for r in rows])
         return value

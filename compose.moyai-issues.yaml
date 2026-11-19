@@ -1,5 +1,19 @@
 services:
-  moyai:
+  issue-relay:
+    image: python:3.14.10-slim-bookworm@sha256:3fe1a0b6c2d6b2ebb572906cdabeca75aeb558c0c17db5ffefbcf8094871c32b
+    command: [python, -B, /relay.py]
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: "no"
+    healthcheck:
+      test: [CMD, python, -c, "import socket; s=socket.socket(socket.AF_UNIX); s.connect('/run/moyai-publisher/issue.sock'); s.close()"]
+      interval: 5s
+      timeout: 3s
+      retries: 6
     volumes:
+      - publisher_link:/run/moyai-publisher
+      - ./integrations/moyai/github_issue.py:/relay.py:ro
       - ./.local/github-issues/exchange:/run/moyai-github-issues:ro
       - ./.local/github-issues/exchange/requests:/run/moyai-github-issues/requests

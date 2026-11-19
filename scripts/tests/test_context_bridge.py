@@ -61,6 +61,7 @@ class ContextBridgeTests(unittest.TestCase):
         self.assertEqual(result['results'][0]['chunk_id'], '7')
         self.assertEqual(self.requests[0].url.path, '/v1/vector_stores/vs_old/search')
         self.assertEqual(json.loads(self.requests[0].content)['query'], 'retry ceiling')
+        self.assertEqual(json.loads(self.requests[0].content)['ranking_options'], {'ranker': 'auto'})
 
     def test_foreign_repository_snapshot_or_generation_never_reaches_gateway(self):
         bridge = self.bridge()

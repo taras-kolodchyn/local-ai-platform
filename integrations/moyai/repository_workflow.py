@@ -104,7 +104,7 @@ class RepositoryWorkflow(AbstractCapability):
             return await backend.status(scope_of(ctx), ctx.deps.turn_id)
 
         async def search_repository(ctx: RunContext, query: str, limit: int = 6, exact_path: str | None = None) -> dict:
-            """Retrieve cited passages from this conversation's pinned source generation."""
+            """Search the pinned source for implementation code. To cite a known document, set exact_path to its repository path."""
             return await backend.search(scope_of(ctx), query, limit, exact_path)
 
         async def begin_repository_changes(ctx: RunContext) -> dict:
@@ -274,8 +274,16 @@ class RepositoryWorkflow(AbstractCapability):
             call_id = f'issue-{step}-{ctx.deps.turn_id}'
             if review_check:
                 call_id += '-' + review_check
-            if any(isinstance(p, (ToolReturnPart, RetryPromptPart)) and p.tool_call_id == call_id
-                   for message in request_context.messages for p in message.parts):
+            returns = [part for message in request_context.messages for part in message.parts
+                       if isinstance(part, (ToolReturnPart, RetryPromptPart))]
+            if (step == BEGIN and any(isinstance(part, ToolReturnPart) and part.tool_name == BEGIN
+                    and part.tool_call_id == call_id and part.outcome == 'failed'
+                    and part.content == f'{BEGIN} failed (TimeoutError): activity Heartbeat timeout'
+                    for part in returns)
+                    and (not workflow.in_workflow() or workflow.patched('local-issue-begin-heartbeat-retry-v1'))):
+                # The ledger still permits begin. A committed transition would already be implementing.
+                call_id += '-after-timeout'
+            if any(part.tool_call_id == call_id for part in returns):
                 return None  # Let the model handle the real native tool diagnostic.
             args = {}
             if step == SEARCH:

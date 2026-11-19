@@ -15,7 +15,7 @@ doctor: ## Check macOS, Apple Silicon, memory, Docker, DMR, ports, and tools inc
 bootstrap: ## Create local secrets, directories, and generated support files
 	@bash scripts/bootstrap.sh
 
-pull-model: bootstrap ## Enable DMR and pull pinned Qwen artifacts
+pull-model: bootstrap ## Prepare DMR and the pinned Qwen and MiniLM artifacts
 	@bash scripts/pull-model.sh
 
 up: ## Start the complete local stack and run smoke checks

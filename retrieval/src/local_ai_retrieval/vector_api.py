@@ -107,13 +107,14 @@ def vector_routes(key_file: Path, list_records, search_records):
             ranking = data.get('ranking_options') or {}
             if not isinstance(ranking, dict) or set(ranking) - {'ranker', 'score_threshold'}:
                 raise ValueError('Unsupported ranking options')
-            if ranking.get('ranker', 'none') != 'none':
-                raise ValueError('Reranking is unsupported')
+            if ranking.get('ranker', 'none') not in ('none', 'auto'):
+                raise ValueError('Unsupported ranker')
             threshold = ranking.get('score_threshold', 0)
             if type(threshold) not in (int, float) or not 0 <= threshold <= 1:
                 raise ValueError('Invalid threshold')
             path = _filters(data.get('filters'), scope)
-            rows = await run_in_threadpool(search_records, scope, query, path, limit)
+            options = {'auto_rank': True} if ranking.get('ranker') == 'auto' else {}
+            rows = await run_in_threadpool(search_records, scope, query, path, limit, **options)
             result, remaining = [], 24000
             for row in rows[:limit]:
                 # Normalize against the theoretical two-channel RRF maximum.
@@ -129,6 +130,7 @@ def vector_routes(key_file: Path, list_records, search_records):
                     'attributes': {k: row[k] for k in ('repository', 'branch',
                         'commit_hash', 'start_line', 'end_line')} | {
                         'chunk_id': row['id'], 'score_kind': 'hybrid_rrf',
+                        **({'truncated': row['truncated']} if 'truncated' in row else {}),
                         **{k: row[k] for k in ('snapshot_id', 'generation_id') if k in row},
                         **({'dirty': row['metadata']['git']['dirty'],
                             'subtree': row['metadata']['git']['subtree']}

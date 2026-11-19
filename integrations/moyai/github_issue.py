@@ -1,5 +1,6 @@
 """Small, credential-free exchange between the Moyai controller and the opt-in host publisher."""
 import asyncio
+import contextlib
 import hashlib
 import json
 import os
@@ -7,11 +8,13 @@ from pathlib import Path
 import re
 import tempfile
 import time
+import uuid
 
 REPO = 'taras-kolodchyn/local-ai-platform'
 ISSUES = f'https://github.com/{REPO}/issues/'
 PULLS = f'https://github.com/{REPO}/pull/'
 EXCHANGE = Path('/run/moyai-github-issues')
+SOCKET = Path('/run/moyai-publisher/issue.sock')
 
 
 def issue_number(prompt):
@@ -60,10 +63,7 @@ def atomic_json(path, value):
     os.replace(name, path)
 
 
-async def exchange(action, number, session, turn, *, directory=EXCHANGE):
-    if not directory.is_dir():
-        raise ValueError('GitHub issue mode is offline. Start make github-issues on the Mac.')
-    request = dict(action=action, number=number, session=session, turn=turn)
+async def mailbox_request(request, directory):
     key = hashlib.sha256(json.dumps(request, sort_keys=True).encode()).hexdigest()
     reply = directory / 'replies' / (key + '.json')
     # A stale request from a previous worker run cannot authorize a later write.
@@ -76,7 +76,7 @@ async def exchange(action, number, session, turn, *, directory=EXCHANGE):
     request['lease'] = lease['id']
     request_path = directory / 'requests' / (key + '.json')
     atomic_json(request_path, request)
-    for _ in range(180):
+    for _ in range(360):
         try:
             response = json.loads(reply.read_text())
         except FileNotFoundError:
@@ -88,3 +88,59 @@ async def exchange(action, number, session, turn, *, directory=EXCHANGE):
                 return response['result']
         await asyncio.sleep(0.25)
     raise ValueError('The GitHub publisher did not confirm the operation. Resend the issue URL to reconcile.')
+
+
+async def start_relay(address, directory):
+    async def handle(reader, writer):
+        try:
+            try:
+                line = await asyncio.wait_for(reader.readline(), 5)
+                if not line:  # Health probe or disconnected controller.
+                    return
+                request = json.loads(line)
+                if (not isinstance(request, dict) or set(request) != {'action','number','session','turn'}
+                        or request['action'] not in ('open','publish') or type(request['number']) is not int
+                        or not 0 < request['number'] < 10**10
+                        or not all(isinstance(request[k], str) and str(uuid.UUID(request[k])) == request[k]
+                                   for k in ('session','turn'))):
+                    raise ValueError('Invalid issue request.')
+                response = {'result': await mailbox_request(request, directory)}
+            except (OSError, ValueError) as error:
+                response = {'error':str(error)}
+            writer.write(json.dumps(response).encode() + b'\n')
+            with contextlib.suppress(ConnectionError):
+                await writer.drain()
+        finally:
+            writer.close()
+            with contextlib.suppress(ConnectionError):
+                await writer.wait_closed()
+
+    server = await asyncio.start_unix_server(handle, path=address, limit=1024)
+    address.chmod(0o666)  # Only the controller shares the socket volume.
+    return server
+
+
+async def exchange(action, number, session, turn, *, address=SOCKET):
+    try:
+        reader, writer = await asyncio.open_unix_connection(str(address), limit=256*1024)
+    except (FileNotFoundError, ConnectionRefusedError) as exc:
+        raise ValueError('The local GitHub issue publisher is offline.') from exc
+    try:
+        writer.write(json.dumps(dict(action=action, number=number, session=session, turn=turn)).encode() + b'\n')
+        await writer.drain()
+        response = json.loads(await asyncio.wait_for(reader.readline(), 95))
+        if 'error' in response:
+            raise ValueError(response['error'])
+        return response['result']
+    finally:
+        writer.close()
+        await writer.wait_closed()
+
+
+async def main():
+    async with await start_relay(SOCKET, EXCHANGE) as server:
+        await server.serve_forever()
+
+
+if __name__ == '__main__':
+    asyncio.run(main())

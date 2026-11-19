@@ -105,7 +105,7 @@ class ContextBridge:
             raise ValueError('Query must contain 2–4000 characters')
         if type(limit) is not int or not 1 <= limit <= 12:
             raise ValueError('Result limit must be 1–12')
-        payload = {'query': query, 'max_num_results': limit}
+        payload = {'query': query, 'max_num_results': limit, 'ranking_options': {'ranker': 'auto'}}
         if exact_path is not None:
             if not isinstance(exact_path, str) or not 1 <= len(exact_path) <= 1000:
                 raise ValueError('Invalid exact path filter')
@@ -163,7 +163,7 @@ class ContextBridge:
                     'generation_id': generation_id, 'commit_hash': attributes['commit_hash'],
                     'branch': attributes['branch'], 'dirty': attributes.get('dirty'),
                     'subtree': attributes.get('subtree'),
-                    'truncated': len(excerpt) < len(content)})
+                    'truncated': attributes.get('truncated') is True or len(excerpt) < len(content)})
             self.requests.labels(outcome='success').inc()
             return {'repository_id': repository_id, 'snapshot_id': snapshot_id,
                     'generation_id': generation_id, 'results': results, 'count': len(results)}

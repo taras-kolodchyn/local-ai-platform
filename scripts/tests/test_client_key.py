@@ -39,5 +39,5 @@ else:
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual((root / '.local/litellm-api-key').read_text(), 'sk-fixture-scoped')
             payload = json.loads((root / 'request.json').read_text())
-            self.assertEqual(payload['models'], ['local-qwen', 'local-embeddings'])
+            self.assertEqual(payload['models'], ['local-qwen', 'local-embeddings', 'local-reranker'])
             self.assertEqual(payload['object_permission']['mcp_servers'], ['local_retrieval', 'local_tools'])

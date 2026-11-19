@@ -55,6 +55,11 @@ api_post /v1/embeddings "$embedding_payload" "$smoke/embedding.json"
 jq -e '.data[0].embedding | length == 1024' "$smoke/embedding.json" >/dev/null
 ok "Embedding route returned 1024 dimensions"
 
+rank_payload=$(jq -cn '{model:"local-reranker",query:"maximum retry delay",documents:["stylesheet background color","cap the retry delay at 30 seconds"]}')
+api_post /v1/rerank "$rank_payload" "$smoke/rerank.json"
+jq -e '[.results[].index] == [1,0]' "$smoke/rerank.json" >/dev/null
+ok "Local reranker prioritized the matching source through LiteLLM"
+
 chat_payload=$(jq -cn '{model:"local-qwen",messages:[{role:"user",content:"Reply with exactly READY."}],temperature:0,max_tokens:32}')
 api_post /v1/chat/completions "$chat_payload" "$smoke/chat.json"
 jq -e '.choices[0].message.content | type == "string" and length > 0' "$smoke/chat.json" >/dev/null
