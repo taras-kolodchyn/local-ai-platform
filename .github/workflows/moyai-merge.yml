@@ -31,7 +31,15 @@ jobs:
           pr=$(jq -er '.issue.number' "$GITHUB_EVENT_PATH")
           head=$(jq -er '.comment.body | split("\n")[0] | sub("\r$"; "") | capture("^MOYAI-VERIFIED (?<sha>[0-9a-f]{40})$").sha' "$GITHUB_EVENT_PATH")
           actor=$(jq -er '.comment.user.id' "$GITHUB_EVENT_PATH")
+          if ! jq -e '.comment.body | split("\n")[1:] | any(test("[^[:space:]]"))' "$GITHUB_EVENT_PATH" >/dev/null; then
+            echo "Awaiting the verifier's supporting findings."
+            exit 0
+          fi
           details=$(gh api "$api/pulls/$pr")
+          if jq -e --arg sha "$head" '.merged == true and .head.sha == $sha' <<<"$details" >/dev/null; then
+            echo "This reviewed commit has already merged."
+            exit 0
+          fi
           jq -e --arg repo "$GH_REPO" --arg sha "$head" --argjson actor "$actor" '
             .state == "open" and .draft == false and .user.id == $actor and
             .base.ref == "main" and .head.repo.full_name == $repo and .head.sha == $sha and
