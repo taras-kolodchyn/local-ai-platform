@@ -89,6 +89,22 @@ class RepositoryCompletionTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIsInstance(call,ToolCallPart)
                 self.assertEqual(call.tool_name,'search_repository')
                 self.assertIn('retry',call.args_as_dict()['query'])
+                self.assertEqual(call.args_as_dict()['exact_path'], 'src/lib.rs')
+
+    async def test_issue_analysis_cannot_end_with_a_model_claim_of_success(self):
+        from github_issue import ISSUES
+        from pydantic_ai.exceptions import ModelRetry
+        task = {'phase':'analyzing', 'github_issue':{'number':47}}
+        cap, ctx = self.setup_capability(task)
+        ctx.deps.surface, ctx.deps.visibility = 'web', 'private'
+        ctx.prompt = ISSUES + '47'
+        response = ModelResponse(parts=[TextPart('All tests passed and the PR is ready.')])
+        with self.assertRaisesRegex(ModelRetry, 'analysis is incomplete'):
+            await cap.after_model_request(ctx, request_context=SimpleNamespace(messages=[]), response=response)
+        task['phase'] = 'failed'
+        stopped = await cap.after_model_request(ctx, request_context=SimpleNamespace(messages=[]), response=response)
+        self.assertEqual(stopped.provider_name, 'local-controller')
+        self.assertIn('delivery was not confirmed', stopped.text)
 
     async def test_retry_uses_status_from_failed_phase_toolset_until_tools_refresh(self):
         from github_issue import ISSUES

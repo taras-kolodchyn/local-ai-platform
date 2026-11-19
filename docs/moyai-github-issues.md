@@ -18,6 +18,8 @@ Run `make github-app-issues ISSUE=N PROFILE=rust-retry-tests` and submit the iss
 
 The coverage profile requires a passing original implementation and preserves every original file. The agent may add integration targets under `examples/rust-service/tests/`. Verification runs the project and protected tests. Each new test must pass on the candidate and complete on the compiled 60,000 ms counterexample. At least one must detect the counterexample. The App opens a draft at the pinned base. The operator reviews the assertions and CI before merging and checking issue closure and CI on `main`.
 
+During issue intake, the controller searches the pinned generation for evidence in `src/lib.rs`. Regression tests can rank highly in a repository-wide search, so the controller applies the source path filter before ranking. The analysis phase requires that citation, baseline checks and an acceptance plan before editing. A model message claiming completion during analysis triggers a retry.
+
 ### Documentation review before publishing
 
 For tests-only issues that request interleaved calls and name an extreme attempt, extreme input or u32::MAX, the harness builds two additional copies of the pinned Rust implementation. Each copy introduces a dependency in one direction. After a maximum input on one entry point, a small input on the other incorrectly stays capped. Added tests must pass the actual code and fail both modified implementations. When the issue explicitly requests a separate capped attempt and small attempts 0 and 2, each fault also requires a distinct non-maximum capped input and both small values on the opposite API. The publisher verifies the corresponding receipt before creating the draft.
