@@ -11,8 +11,7 @@ write_client_env() {
   umask 077
   printf '%s' "$key" > .local/litellm-api-key
   printf 'export LITELLM_API_KEY=%q\n' "$key" > .local/client.env
-  printf 'LITELLM_API_KEY=%s\n' "$key" > .local/client.compose.env
-  chmod 600 .local/litellm-api-key .local/client.env .local/client.compose.env
+  chmod 600 .local/litellm-api-key .local/client.env
 }
 
 if [[ -s .local/litellm-api-key ]]; then

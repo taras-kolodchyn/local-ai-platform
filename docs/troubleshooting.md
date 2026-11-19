@@ -108,13 +108,6 @@ key. Do not create a second key with the same alias. If the local key files and
 LiteLLM database were intentionally reset out of sync, use the guarded reset
 workflow and bootstrap again instead of editing secrets by hand.
 
-## A generated Hermes config contains an empty API-key expression
-
-The container template intentionally preserves `${LITELLM_API_KEY}` for Hermes
-to resolve at runtime. Shell generation must escape the dollar sign; expanding
-it while `set -u` is active can abort setup before the client environment is
-loaded.
-
 ## Embeddings fail or pgvector rejects a row
 
 The selected Qwen embedding model must return 1024 finite values. Check the configured model, `EMBEDDING_DIMENSIONS`, and the database schema together; changing only one of them is not a migration.

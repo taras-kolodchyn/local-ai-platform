@@ -10,7 +10,7 @@ The platform gives local coding agents a stable OpenAI-compatible endpoint while
 The platform does not grant a Linux container direct Metal access. Docker Model Runner executes llama.cpp through Docker Desktop's macOS host integration and exposes it to the Compose network.
 
 Current operational changes (2026-11-17): Moyai is the single default active
-agent; Codex/Hermes remain optional clients. The former workspace A2A profiles
+agent. The former workspace A2A profiles
 are retired. Model routing is generated from resolved `.env` settings and
 retrieval combines vector and full-text search. See [platform operations](platform-operations.md).
 Registered [repository tasks](repository-workflow.md) add immutable source and
@@ -22,8 +22,6 @@ ledger to the same native Moyai runtime.
 ```mermaid
 flowchart TB
     subgraph Host["Apple Silicon macOS host"]
-        Codex["Codex CLI"]
-        Hermes["Hermes Agent"]
         Other["Other OpenAI-compatible clients"]
         DMR["Docker Model Runner\nllama.cpp + Metal"]
         Qwen["Qwen3-Coder 30B-A3B\nQwen3-Embedding 0.6B"]
@@ -64,8 +62,6 @@ flowchart TB
         Grafana --> Loki
     end
 
-    Codex --> LiteLLM
-    Hermes --> LiteLLM
     Other --> LiteLLM
     LiteLLM -->|"host.docker.internal:12434"| DMR
     GitHubMCP -. "explicit opt-in" .-> GitHub["GitHub API"]
@@ -132,7 +128,7 @@ fingerprint. Legacy indexing updates its active repository/branch selection.
 
 ```mermaid
 flowchart LR
-    User["Human approval boundary"] --> Agent["Codex or Hermes sandbox"]
+    User["Human approval boundary"] --> Agent["Moyai SSH sandbox"]
     Agent --> Gateway["Authenticated LiteLLM boundary"]
     Gateway --> Tools["MCP allowlist boundary"]
     Tools --> Data["Untrusted repository content"]
@@ -170,7 +166,7 @@ Repository text and retrieved chunks are data, even when they contain phrases th
 
 ## Responses tool-result detail
 
-The verified Codex-compatible round trip sends the first tool result to
+The verified Responses API round trip sends the first tool result to
 LiteLLM with `previous_response_id` and a `function_call_output` item only.
 Replaying the original `function_call` alongside its output made the local
 Qwen/llama.cpp message template reject the request. The smoke test locks in the

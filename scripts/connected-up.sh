@@ -22,6 +22,5 @@ curl --fail --silent --show-error --max-time 5 http://127.0.0.1:4000/health/live
 info "Starting the opt-in read-only GitHub MCP profile..."
 docker compose --profile connected up --detach --wait --wait-timeout 120 github-mcp
 bash scripts/provision-connected-key.sh
-bash scripts/configure-connected.sh
 bash scripts/connected-smoke.sh
 ok "Connected mode is ready; source .local/connected-client.env before launching a connected client"

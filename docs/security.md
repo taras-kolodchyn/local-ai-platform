@@ -4,7 +4,7 @@ Last reviewed: 2026-07-20
 
 ## Overview
 
-This repository assembles a single-user, local development platform for AI coding agents on Apple Silicon. Docker Model Runner (DMR) performs host-side inference; LiteLLM exposes authenticated OpenAI-compatible routes; PostgreSQL/pgvector and Redis hold retrieval and cache data; the retrieval and offline MCP services expose deliberately narrow, read-only tools; Prometheus, Loki, Alloy, and Grafana collect operational metadata. Codex runs on the host, while Hermes can run either on the host or in an optional container.
+This repository assembles a single-user, local development platform for AI coding agents on Apple Silicon. Docker Model Runner (DMR) performs host-side inference; LiteLLM exposes authenticated OpenAI-compatible routes; PostgreSQL/pgvector and Redis hold retrieval and cache data; the retrieval and offline MCP services expose deliberately narrow, read-only tools; Prometheus, Loki, Alloy, and Grafana collect operational metadata. Moyai runs tasks in a dedicated SSH sandbox.
 
 The primary assets are source code and uncommitted work, Git history, locally generated API/database credentials, agent tool authority, vectorized source fragments, model gateway traffic, and host integrity. The main production-like runtime surfaces are `compose.yaml`, `litellm/config.yaml`, `retrieval/`, `mcp/offline/`, `postgres/`, the generated client configurations, and local Moyai. `examples/rust-service/` is an intentionally vulnerable teaching fixture; its SQL interpolation, missing JWT validation, excessive retry cap, and weak deployment resources are not platform controls. `scripts/`, `.github/`, documentation, and tests are developer/CI surfaces, but can still affect supply-chain safety or generate unsafe configuration.
 
@@ -15,15 +15,15 @@ The design protects a trusted local operator from accidental or prompt-induced o
 ### Actors and inputs
 
 - **Attacker-controlled:** cloned repositories, dependencies, code comments, documentation, Git metadata, retrieved chunks, model output, MCP responses from connected services, and network input if a listener is exposed accidentally.
-- **Operator-controlled:** selected repository paths, `.env` values, local credentials, enabled Compose profiles, Codex approvals, optional connected-mode configuration, retention settings, and any expansion of MCP tools or mounts.
+- **Operator-controlled:** selected repository paths, `.env` values, local credentials, enabled Compose profiles, optional connected-mode configuration, retention settings, and any expansion of MCP tools or mounts.
 - **Developer-controlled:** repository code, image/package/model pins, Compose networks and mounts, SQL migrations, tool schemas, allowlists, CI workflows, and the demo fixture.
 
 Prompt injection is realistic whenever untrusted source or external content is indexed. A malicious repository author can try to make an agent reinterpret retrieved text as instructions. Remote unauthenticated attacks are out of scope only while every published port remains loopback-bound and DMR also listens on loopback. A malicious process running under the same macOS account remains able to reach localhost services and read files owned by that account; API keys reduce accidental cross-talk but do not create an OS-level isolation boundary.
 
 ### Trust boundaries
 
-1. **Host user to containers.** Codex CLI and DMR run on macOS; the application and data services run in Docker. Only selected host directories enter containers. The offline MCP workspace and ingestion source mount are read-only; no service receives the Docker socket.
-2. **Client to LiteLLM.** Codex/Hermes cross an authenticated HTTP boundary using scoped virtual keys. DMR is behind LiteLLM for normal client traffic, although its loopback API is still directly reachable by local processes.
+1. **Host user to containers.** DMR runs on macOS; the application and data services run in Docker. Only selected host directories enter containers. The offline MCP workspace and ingestion source mount are read-only; no service receives the Docker socket.
+2. **Client to LiteLLM.** Local clients cross an authenticated HTTP boundary using scoped virtual keys. DMR is behind LiteLLM for normal client traffic, although its loopback API is still directly reachable by local processes.
 3. **Gateway to inference.** LiteLLM forwards prompts and tool schemas to DMR. DMR is a host sandbox using Apple GPU acceleration, not a Linux container controlled by Compose.
 4. **Untrusted repository to retrieval.** The scanner accepts source-like files under an operator-selected root, excludes ignored, generated, binary, sensitive-path, and likely-secret content, chunks it, and stores embeddings. Retrieved text remains untrusted data.
 5. **Agent to MCP tools.** MCP tool names and parameters are allowlisted. Retrieval exposes only `search_code` and `get_chunk`; the offline service exposes bounded filesystem/Git reads and a constrained PostgreSQL `SELECT` path using a separate read-only role.
@@ -36,7 +36,7 @@ Assumptions: the operator controls the Mac and Docker Desktop; local images and 
 
 ### Retrieval prompt injection to tool execution
 
-An attacker commits text that asks the model to ignore policy, disclose files, or run a destructive command. Retrieval returns it, and the agent may treat it as instruction. `retrieval/src/local_ai_retrieval/scanner.py` constrains what is indexed, while the retrieval server returns bounded, attributed chunks and has no mutation tool. `codex/config.toml.template` keeps the client in `workspace-write` with `on-request` approval; the offline MCP server remains read-only. These controls reduce blast radius but cannot guarantee that a local model will follow instruction hierarchy, so high-impact commands still require human inspection.
+An attacker commits text that asks the model to ignore policy, disclose files, or run a destructive command. Retrieval returns it, and the agent may treat it as instruction. `retrieval/src/local_ai_retrieval/scanner.py` constrains what is indexed, while the retrieval server returns bounded, attributed chunks and has no mutation tool. The offline MCP server exposes only read operations. These controls reduce blast radius but cannot guarantee that a local model will follow instruction hierarchy, so high-impact commands still require human inspection.
 
 ### Excessive MCP or database authority
 

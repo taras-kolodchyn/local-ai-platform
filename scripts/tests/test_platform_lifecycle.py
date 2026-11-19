@@ -94,7 +94,7 @@ class PlatformLifecycleTests(unittest.TestCase):
         python.chmod(0o755)
         (self.scripts / 'moyai.sh').write_text('#!/bin/sh\nexec "$TASK_PYTHON" "$TASK_DRIVER" moyai "$@"\n')
         for name in ('bootstrap.sh', 'ensure-docker.sh', 'pull-model.sh', 'doctor.sh',
-                     'provision-client-key.sh', 'configure-codex.sh', 'configure-hermes.sh',
+                     'provision-client-key.sh',
                      'smoke-test.sh',):
             (self.scripts / name).write_text(
                 '#!/bin/sh\nexec "$TASK_PYTHON" "$TASK_DRIVER" dependency ' + name + '\n')

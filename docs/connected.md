@@ -13,13 +13,12 @@ chmod 600 .env.connected
 make connected-up
 ```
 
-`make connected-up` refuses the placeholder, starts only `github-mcp`, provisions a separate LiteLLM virtual key with access to the three reviewed MCP servers, generates isolated Codex/Hermes configs, checks the nine exposed GitHub tools against the read-only allowlist and verifies that the authorization value did not enter service logs.
+`make connected-up` refuses the placeholder, starts only `github-mcp`, provisions a separate LiteLLM virtual key with access to the three reviewed MCP servers, checks the nine exposed GitHub tools against the read-only allowlist and verifies that the authorization value did not enter service logs.
 
-Run the connected Codex profile without changing the normal `~/.codex`:
+Load the connected credentials in the shell used by your MCP client.
 
 ```sh
 source .local/connected-client.env
-CODEX_HOME="$PWD/.local/codex-connected" codex
 ```
 
 Stop the external tool without stopping the offline platform:
@@ -33,10 +32,10 @@ make connected-down
 - `github-mcp` uses `ghcr.io/github/github-mcp-server:v1.14.0`, runs with a read-only root filesystem and no host port, and exists only in the `connected` profile.
 - LiteLLM forwards the caller-specific `Authorization` header only to the `github` MCP server.
 - Both LiteLLM and GitHub MCP enforce a named tool allowlist. GitHub MCP also receives its read-only and lockdown headers on every request.
-- Connected clients use a different LiteLLM virtual key and configuration directory from offline clients.
+- Connected clients use a different LiteLLM virtual key from offline clients.
 - The GitHub token stays in ignored files under the user's control. It is not written to Compose environment variables, container metadata, checked-in YAML, or logs.
 
-Read-only limits accidental mutation; it does not make external content trusted. Issues, pull requests, comments, and repository files can contain prompt injection. Treat their text as data, keep Codex approvals enabled, and review any shell or write action locally.
+Read-only limits accidental mutation; it does not make external content trusted. Issues, pull requests, comments, and repository files can contain prompt injection. Treat their text as data and review any shell or write action locally.
 
 ## Adding another external API
 

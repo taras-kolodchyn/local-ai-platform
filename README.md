@@ -6,7 +6,7 @@ caches gateway responses, and Grafana displays platform metrics.
 
 The [Rust demo acceptance report](docs/results/repository-reliability-2026-11-17.md)
 records the task, independent checks and downloaded patch. Run `make verify`
-to produce a fresh report on this Mac. Codex CLI and Hermes are optional clients.
+to produce a fresh report on this Mac.
 
 Current dependency pins and upgrade verification: [2026-11-16 update](docs/dependency-update-2026-11-16.md).
 
@@ -15,12 +15,12 @@ Current dependency pins and upgrade verification: [2026-11-16 update](docs/depen
 A coding agent is more than a local chat UI. It needs a model gateway, tool permissions, retrieval, caching, auditability, and a safe execution boundary. This repository puts those pieces behind one OpenAI-compatible endpoint:
 
 ```text
-Moyai / optional CLI clients  -> LiteLLM -> local Qwen on Apple Silicon
-                                      |
-                                      +-> Redis response cache
-                                      +-> MCP Gateway
-                                      +-> PostgreSQL + pgvector retrieval
-                                      +-> Prometheus / Loki / Grafana
+Moyai -> LiteLLM -> local Qwen on Apple Silicon
+           |
+           +-> Redis response cache
+           +-> MCP Gateway
+           +-> PostgreSQL + pgvector retrieval
+           +-> Prometheus / Loki / Grafana
 ```
 
 ## Quick start target
@@ -42,9 +42,8 @@ make up
 `make up` diagnoses the host, creates a local `.env`, renders the effective model
 configuration, enables Docker Model Runner, pulls pinned model artifacts, and
 starts the core services and local Moyai as the single default agent. It retires
-the old workspace A2A registrations, verifies health, gateway, cache and scoped
-knowledge access, and writes optional Codex/Hermes client examples under `.local/`.
-Those client examples do not register or start additional agents in LiteLLM.
+the old workspace A2A registrations and verifies health, gateway, cache and scoped
+knowledge access.
 
 ### Local prompt compression
 
@@ -145,15 +144,6 @@ repository defaults and reports that fallback. Docker Desktop remains running;
 macOS may retain reclaimable file cache after inference allocations are released.
 Verified 2026-11-16 with Docker CLI 29.9.3 and Docker Model Runner 1.2.9.
 
-To use the optional Codex terminal client with the local gateway:
-
-```sh
-source .local/client.env
-CODEX_HOME="$PWD/.local/codex" codex
-```
-
-The generated Codex configuration uses LiteLLM's Responses API bridge and reaches only the allowlisted, read-only MCP tools through the LiteLLM MCP Gateway. The repository `AGENTS.md` keeps retrieved text in the untrusted-data boundary.
-
 Useful commands:
 
 ```sh
@@ -164,7 +154,6 @@ make logs
 make smoke-test
 make verify
 make index REPO=/absolute/path/to/repository
-make hermes-smoke
 make connected-up
 make down
 ```

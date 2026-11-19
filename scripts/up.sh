@@ -17,8 +17,6 @@ ok "Container health checks passed"
 docker compose up --detach --force-recreate --no-deps --wait --wait-timeout 120 litellm
 
 bash scripts/provision-client-key.sh
-bash scripts/configure-codex.sh
-bash scripts/configure-hermes.sh
 
 # Retrieval reads the key file for each embedding request, but restarting makes
 # the credential transition explicit and keeps future implementations honest.
@@ -36,5 +34,3 @@ printf '\nLiteLLM: http://127.0.0.1:4000\n'
 printf 'Grafana: http://127.0.0.1:3000\n'
 printf 'Retrieval: http://127.0.0.1:8000\n'
 printf 'Moyai: http://127.0.0.1:8787\n'
-printf 'Codex config: %s/.local/codex/config.toml\n' "$ROOT_DIR"
-printf 'Hermes config: %s/.local/hermes/config.yaml\n' "$ROOT_DIR"

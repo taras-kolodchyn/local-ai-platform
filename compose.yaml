@@ -287,36 +287,6 @@ services:
     security_opt:
       - no-new-privileges:true
 
-  hermes:
-    image: workspace-runtime:0.1.0
-    build:
-      context: ./execution
-    entrypoint: ["/opt/hermes/docker/entrypoint-dispatch.sh"]
-    profiles: ["agents"]
-    restart: "no"
-    env_file:
-      - ./.local/client.compose.env
-    environment:
-      HERMES_HOME: /opt/data
-      HERMES_UID: ${HERMES_UID:-10000}
-      HERMES_GID: ${HERMES_GID:-10000}
-    volumes:
-      - ./.local/hermes-container:/opt/data
-      - ./.local/source-snapshot:/workspace:ro
-    working_dir: /workspace
-    depends_on:
-      litellm:
-        condition: service_healthy
-      retrieval:
-        condition: service_healthy
-      mcp-tools:
-        condition: service_healthy
-    networks:
-      - gateway
-      - data
-    security_opt:
-      - no-new-privileges:true
-
   postgres-exporter:
     <<: *service-defaults
     image: prometheuscommunity/postgres-exporter:v0.20.1

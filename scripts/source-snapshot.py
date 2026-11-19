@@ -51,9 +51,3 @@ def snapshot(root, destination):
             else:
                 child.unlink()
         shutil.copytree(stage, destination, dirs_exist_ok=True)
-
-
-if __name__ == '__main__':
-    root = Path(__file__).resolve().parents[1]
-    snapshot(Path(os.environ.get('HERMES_WORKSPACE_PATH') or root), root / '.local/source-snapshot')
-    print('Filtered source snapshot prepared')

@@ -25,14 +25,9 @@ ok "Python syntax and dashboard JSON valid"
 
 bash scripts/bootstrap.sh >/dev/null
 load_env
-bash scripts/configure-codex.sh >/dev/null
-cmp <(sed "s/65536/$QWEN_CONTEXT_SIZE/g" codex/config.toml.template) .local/codex/config.toml
-grep -Fq 'web_search = "disabled"' .local/codex/config.toml
-grep -Fq 'enabled = false' .local/codex/config.toml
-grep -Fq 'plugins = false' .local/codex/config.toml
 docker compose config --quiet
 docker compose -f compose.moyai.yaml config --quiet
-ok "Generated Codex and Compose configuration valid"
+ok "Compose configuration valid"
 
 if rg -n --hidden --glob '!LICENSE' --glob '!.git/**' \
   '(ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----)' .; then

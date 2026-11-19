@@ -29,15 +29,11 @@ For an auditable offline transfer, record image and model digests on the connect
 - Prompts reach LiteLLM and DMR but no configured remote provider.
 - Embeddings and indexed chunks stay in the local Compose volumes.
 - Grafana, Prometheus, Loki, and retrieval bind to `127.0.0.1`.
-- `.env`, virtual keys, smoke artifacts, logs, and generated agent configs stay under ignored local paths.
-- The Codex CLI profile disables web search, app/connector and plugin features, plugin sharing, the remote plugin catalog, and Codex analytics; local turns use the loopback LiteLLM provider.
+- `.env`, virtual keys, smoke artifacts, and logs stay under ignored local paths.
 
 ## Offline limitations
 
 - The first model/image pull and dependency installation require connectivity.
-- The optional standalone Hermes client image fetches a checksum-pinned Mem0
-  plugin archive during its build. That client and the retired workspace
-  runtimes are not started by the default Moyai stack.
 - The GitHub Actions workflow is a connected CI check; it does not run the Metal-backed integration suite.
 - Connected MCP, web search, package lookup, and repository hosting are unavailable.
 - A local process running as the same macOS user may still reach loopback services; offline is not a multi-user authorization boundary.

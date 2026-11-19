@@ -14,8 +14,7 @@ available without the old Hermes-based development/review/research runtimes.
 
 Moyai is currently connected through its local UI link and the `local-qwen`
 inference alias. It does not pretend to expose an A2A endpoint. Additional agent
-management through LiteLLM is future work. Codex/Hermes generated client examples
-are optional clients, not extra active LiteLLM agents.
+management through LiteLLM is future work.
 
 Ordinary startup does not delete data. An explicit one-time cleanup is available:
 

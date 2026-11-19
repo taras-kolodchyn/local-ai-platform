@@ -59,7 +59,7 @@ for variable in LITELLM_MASTER_KEY POSTGRES_PASSWORD REDIS_PASSWORD HEADROOM_PRO
   [[ -n "$value" && "$value" != "GENERATE_ME" ]] || die "$variable is unset or still uses GENERATE_ME"
 done
 
-mkdir -p .local/codex .local/hermes .local/hermes-container .local/logs .local/smoke
+mkdir -p .local/logs .local/smoke
 mkdir -p .local/repositories/snapshots
 chmod 755 .local/repositories .local/repositories/snapshots
 if [[ ! -f .local/repositories/catalog.json ]]; then
@@ -69,7 +69,7 @@ chmod 644 .local/repositories/catalog.json
 if [[ ! -f .local/model-runtime.env ]]; then
   printf '%s\n' 'EMBEDDING_ARTIFACT_ID=' > .local/model-runtime.env
 fi
-chmod 700 .local .local/codex .local/hermes .local/hermes-container .local/smoke
+chmod 700 .local .local/smoke
 # Trusted containers write metadata-only JSON logs here; Alloy reads the same
 # bind mount without access to the Docker socket.
 chmod 777 .local/logs
@@ -82,12 +82,11 @@ printf '%s' "$LITELLM_MASTER_KEY" > .local/litellm-master-key
 if [[ ! -s .local/litellm-api-key ]]; then
   printf '%s' "$LITELLM_MASTER_KEY" > .local/litellm-api-key
 fi
-printf 'LITELLM_API_KEY=%s\n' "$(tr -d '\r\n' < .local/litellm-api-key)" > .local/client.compose.env
 
 for service in litellm retrieval ingestion mcp-tools postgres redis; do
   touch ".local/logs/${service}.log"
 done
-chmod 600 .local/litellm-master-key .local/litellm-api-key .local/client.compose.env
+chmod 600 .local/litellm-master-key .local/litellm-api-key
 chmod 600 .local/model-runtime.env
 chmod 666 .local/logs/*.log
 

@@ -4,7 +4,7 @@ SHELL := /bin/bash
 COMPOSE := docker compose --project-name local-ai-platform --file compose.yaml
 REPO ?=
 
-.PHONY: help doctor bootstrap pull-model up down restart logs status smoke-test test lint verify index reindex benchmark hermes-smoke connected-up connected-smoke connected-down clean reset configure-codex configure-hermes
+.PHONY: help doctor bootstrap pull-model up down restart logs status smoke-test test lint verify index reindex benchmark connected-up connected-smoke connected-down clean reset
 
 help: ## Show available commands
 	@awk 'BEGIN {FS = ":.*## "; printf "Local AI Platform\n\n"} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-18s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -66,9 +66,6 @@ repository-smoke: ## Verify a real repository repair through local Moyai
 benchmark: ## Record local chat and retrieval latency without prompt bodies
 	@bash scripts/benchmark.sh
 
-hermes-smoke: ## Run a one-shot Hermes client check through the same LiteLLM gateway
-	@bash scripts/hermes-smoke.sh
-
 connected-up: ## Opt in to read-only GitHub MCP using .env.connected
 	@bash scripts/connected-up.sh
 
@@ -77,12 +74,6 @@ connected-smoke: ## Verify the connected GitHub MCP allowlist and log redaction
 
 connected-down: ## Stop the opt-in GitHub MCP service without touching offline data
 	@$(COMPOSE) --profile connected stop github-mcp
-
-configure-codex: bootstrap ## Generate a Codex config example under .local/
-	@bash scripts/configure-codex.sh
-
-configure-hermes: bootstrap ## Generate a Hermes config example under .local/
-	@bash scripts/configure-hermes.sh
 
 clean: ## Remove generated caches/logs but preserve databases and models
 	@bash scripts/clean.sh
