@@ -32,3 +32,5 @@ Contributors can run the `health` integration target that checks that the applic
 ```sh
 cargo test --locked --manifest-path examples/rust-service/Cargo.toml --test health
 ```
+
+The test function is `application_router_can_be_constructed`.
