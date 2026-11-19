@@ -48,7 +48,9 @@ A crafted tool argument can attempt `../` traversal, symlink escape, or resource
 
 ### Credential or source leakage through telemetry
 
-Authorization headers, prompts, tool arguments, retrieved code, or database URLs could reach container output, LiteLLM spend logs, Loki, dashboards, smoke artifacts, or CI. Secrets are generated into ignored `.local/` files with restrictive permissions and are not echoed. Compose secrets carry the LiteLLM client key to retrieval; client keys are distinct from the master key. Logging is metadata-only, and `scripts/smoke-test.sh` searches collected logs for synthetic prompt sentinels. This is a regression control, not proof that every future error path redacts correctly.
+Authorization headers, prompts, tool arguments, retrieved code, or database URLs could reach container output, LiteLLM spend logs, Loki, dashboards, smoke artifacts, or CI. Secrets are generated into ignored `.local/` files with restrictive permissions and are not echoed. Compose secrets carry the LiteLLM client key to retrieval; client keys are distinct from the master key. Logging is metadata-only by default. `scripts/smoke-test.sh` searches collected service logs for synthetic prompt sentinels.
+
+To inspect new requests and responses in the local LiteLLM dashboard, set `LITELLM_TURN_OFF_MESSAGE_LOGGING=false` in `.env`, run `make up`, and enable **Store Prompts in Spend Logs** under **Logs → Settings**. LiteLLM stores the content in the local PostgreSQL database. Turn off that UI setting to stop recording content for subsequent requests. Verified with LiteLLM 1.109.1 on 2026-11-19. [LiteLLM Spend Log settings](https://docs.litellm.ai/docs/proxy/ui_spend_log_settings)
 
 ### Local gateway exposure and authentication bypass
 

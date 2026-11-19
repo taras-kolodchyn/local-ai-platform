@@ -130,6 +130,7 @@ services:
       LITELLM_CACHE_TTL: ${LITELLM_CACHE_TTL}
       LITELLM_CACHE_NAMESPACE: ${LITELLM_CACHE_NAMESPACE}
       STORE_MODEL_IN_DB: "True"
+      LITELLM_TURN_OFF_MESSAGE_LOGGING: ${LITELLM_TURN_OFF_MESSAGE_LOGGING:-true}
     volumes:
       - ./.local/litellm/config.yaml:/app/config.yaml:ro
       - ./.local/logs:/var/log/local-ai

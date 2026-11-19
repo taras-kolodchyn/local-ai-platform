@@ -58,7 +58,7 @@ litellm_settings:
     supported_call_types:
       - completion
       - acompletion
-  turn_off_message_logging: true
+  turn_off_message_logging: os.environ/LITELLM_TURN_OFF_MESSAGE_LOGGING
   redact_user_api_key_info: true
   set_verbose: false
   json_logs: true
