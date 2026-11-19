@@ -13,7 +13,7 @@ from pydantic_ai.toolsets import FunctionToolset
 from temporalio import workflow
 
 from github_issue import ISSUES, PULLS, exchange, issue_number, issue_scope, private_issue_root, user_issue
-from repository_backend import NativeFiles, RepositoryBackend, coverage_path, fingerprint, scoped_tree, workspace_path
+from repository_backend import RETRY_POLICY_PATH, NativeFiles, RepositoryBackend, coverage_path, fingerprint, scoped_tree, workspace_path
 from repository_ledger import ARTIFACT_PATHS, RepositoryError, approved_review, baseline_established, commands_stopped, has_change_citation, missing_change_evidence
 
 ISSUE = 'open_github_issue'
@@ -79,7 +79,14 @@ class RepositoryWorkflow(AbstractCapability):
 
         async def open_repository(ctx: RunContext, repository_id: str) -> dict:
             """Attach the registered repository ID to this chat and pin its immutable snapshot."""
-            return await backend.open(scope_of(ctx), repository_id, ctx.deps.actor_id)
+            scope = scope_of(ctx)
+            task = await backend.open(scope, repository_id, ctx.deps.actor_id)
+            # Load the document named by this verification profile while the
+            # original snapshot is pinned. search() records its real citations.
+            if task['phase'] == 'analyzing' and task['binding'].get('verification_profile') == 'rust-retry':
+                policy = await backend.search(scope, 'Documented retry delay ceiling', 1, RETRY_POLICY_PATH)
+                task['policy_evidence'] = policy['results']
+            return task
 
         async def open_github_issue(ctx: RunContext, issue_url: str) -> dict:
             """Open the exact GitHub issue URL submitted by the user and attach its pinned Rust example."""
@@ -163,7 +170,14 @@ class RepositoryWorkflow(AbstractCapability):
             return None
         from urllib.parse import quote
         links='\n'.join(f"- [{p.split('/')[-1]}](/api/files/{quote(files[p]['id'],safe='')})" for p in ARTIFACT_PATHS)
-        return 'Repository task completed. Trusted checks passed on the delivered tree.\n\n'+links
+        # These profile paths are trusted constants. Only print ranges that the
+        # scoped search actually recorded. Additional sources remain in result.json.
+        citations = [f"`{row['path']}:{row['start_line']}–{row['end_line']}`"
+                     for row in task.get('citations', [])
+                     if row.get('path') in (RETRY_POLICY_PATH, 'src/lib.rs')
+                     and type(row.get('start_line')) is int and type(row.get('end_line')) is int]
+        sources = ('\n\nSources: ' + ', '.join(citations)) if citations else ''
+        return 'Repository task completed. Trusted checks passed on the delivered tree.' + sources + '\n\n' + links
 
     @durable_operation('continued_issue')
     async def continued_issue(self, session: str, authority: str, actor: str, turn: str) -> int | None:

@@ -38,6 +38,23 @@ LiteLLM with no published reranker port. Verified on 2026-11-19 with LiteLLM
 [LiteLLM rerank API](https://docs.litellm.ai/docs/rerank) ·
 [MiniLM ONNX artifacts](https://huggingface.co/cross-encoder/ms-marco-MiniLM-L6-v2/tree/df500e56a59fc34f37322735a40eff666200312e/onnx)
 
+## Conversation history and citations
+
+Moyai gives its local model profile a working window of one quarter of
+`QWEN_CONTEXT_SIZE` to leave capacity for concurrent inference. With a
+65,536-token configuration, Moyai's native summarizer is eligible to fold older
+history at an estimated 12,288 tokens. Headroom still processes eligible content
+at the gateway. Its token savings cover only the portions submitted for compression.
+
+Opening a standalone `rust-retry` task retrieves the profile's policy document
+from the pinned index. Moyai records the returned source range with the task.
+The final chat message cites the recorded policy and implementation ranges when
+available. The downloadable `result.json` retains the full citation list.
+
+Verified with Pydantic AI 2.55.0, Pydantic AI Harness 0.55.0 and LiteLLM 1.109.1
+on 2026-11-19. [Docker Model Runner configuration](https://docs.docker.com/ai/model-runner/configuration/)
+and [Headroom compression API](https://docs.headroomlabs.ai/docs/proxy#post-v1compress).
+
 ## Start and sign in
 
 ```sh

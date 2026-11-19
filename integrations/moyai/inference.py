@@ -3,6 +3,7 @@ import asyncio
 from email.utils import parsedate_to_datetime
 import json
 import math
+import os
 import time
 
 from openai import AsyncOpenAI, DefaultAsyncHttpxClient
@@ -56,8 +57,13 @@ def local_model(settings):
                                           headers={'Accept-Encoding': 'identity'},
                                           follow_redirects=False, trust_env=False),
     )
+    provider = LiteLLMProvider(openai_client=client)
+    # The local alias is absent from the SDK's window registry. Budget one
+    # quarter of the configured shared context for an active agent request.
+    context_window = int(os.environ.get('QWEN_CONTEXT_SIZE', '65536')) // 4
+    profile = {**provider.model_profile('local-qwen'), 'context_window': context_window}
     model = OpenAIResponsesModel(
-        'local-qwen', provider=LiteLLMProvider(openai_client=client),
+        'local-qwen', provider=provider, profile=profile,
         settings={'parallel_tool_calls': False, 'temperature': 0},
     )
     return model, client
