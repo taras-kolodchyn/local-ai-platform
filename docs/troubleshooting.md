@@ -139,6 +139,18 @@ health are separate checks. The smoke test waits up to 60 seconds for monitoring
 requires a nonempty healthy target list, and reports the failing endpoint or
 target's last scrape error if that deadline expires.
 
+If Prometheus reports `repository-context:8000` with `no such host`, check the
+Moyai project's container with `make moyai-status` and look for a matching stop
+event in Docker. A local reranker experiment stopped that container and gave its
+replacement the same DNS alias only on Moyai's private network. Prometheus
+uses the observability network. For concurrent experiments, use a separate
+Compose project and network so the normal service stays reachable.
+
+At the end of Moyai provisioning, `make up` starts the context service if needed
+and waits for its health check before reporting readiness. A healthy container
+keeps its ID. This was verified on 2026-11-19 with Docker Engine 29.9.3 and
+Compose 5.7.0. [Docker Compose up options](https://docs.docker.com/reference/cli/docker/compose/up/)
+
 Repeat only the monitoring check with:
 
 ```sh
