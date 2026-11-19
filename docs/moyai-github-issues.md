@@ -30,6 +30,8 @@ When a coverage ticket requests a caller note on calculation, forwarding and mig
 
 For numeric retry-delay claims, the reviewer must cite a calculation line from the pinned implementation. A signature or deprecation attribute triggers one retry of the review. A second invalid citation prevents approval and publication.
 
+For the supported direct-exponent formula, the reviewer also receives computed delays for literal calls in the patch. The controller checks explicit one- and two-attempt return examples and their stated low-bit values against that formula. The auto-merge publisher repeats this check on the reproduced Git tree, including when it resumes a previously approved draft.
+
 The reviewer also traces the retry input through the legacy wrapper and the calculation. When the wrapper forwards its `u32` argument unchanged and the formula uses it directly as the exponent, Moyai flags prose that says either helper narrows it to a byte. A test may still explain what would happen *if* the input were narrowed.
 
 When the reviewer requests changes, the editing agent receives the findings in the same chat. It must change the candidate, rerun the protected checks and obtain approval for the revised tree. The test report contains the review history. The host publisher checks the approval against the pinned snapshot, final Rust receipt, verified tree and downloaded patch hash before creating a draft. The report distinguishes model findings from policy checks and includes the source lines for inspection.

@@ -405,7 +405,9 @@ def merge_verified_issue(github, client, jobfile, *, deadline=None):
             'This publication has no matching single-issue App merge grant.')
     patch, digest, checks = verified_patch(client, job)
     manifest = json.loads((ROOT/'.local/repositories/snapshots'/job['binding']['snapshot_id']/'manifest.json').read_text())
-    tree, _ = reproduce(STATE/'sources'/job['base'], job['base'], manifest, patch, digest)
+    repo = STATE/'sources'/job['base']
+    tree, _ = reproduce(repo, job['base'], manifest, patch, digest)
+    check_merge_examples(repo, tree, patch)
     body = publication_body(job, patch, checks, manifest.get('verification_profile') == 'rust-retry-tests')
     head, base = job['commit'], job['base']
     commit = github.api('git/commits/' + head)
@@ -460,6 +462,18 @@ def merge_verified_issue(github, client, jobfile, *, deadline=None):
         merged = data['mergePullRequest']['pullRequest']
         require(merged['id'] == live['node_id'] and merged['merged'] is True, 'GitHub did not confirm the merge.')
     raise Refused('Timed out waiting for verified CI. Restart the same issue grant to reconcile.')
+
+
+def check_merge_examples(repo, tree, patch):
+    from documentation_review import (direct_retry_formula, prose_passages, reference_lines,
+                                      retry_example_errors, retry_implementation)
+    candidate = {'src/lib.rs':git(repo, 'show', f'{tree}:{PROJECT}/src/lib.rs')}
+    refs = reference_lines(candidate, candidate)
+    location = retry_implementation(candidate, refs)
+    formula = direct_retry_formula(candidate) if location else None
+    errors = retry_example_errors(prose_passages(patch.decode()), formula)
+    if errors:
+        raise Refused('The verified Git tree contradicts a documented retry example. ' + next(iter(errors.values())))
 
 
 def watch_verified_issue(github, client, jobfile):
