@@ -75,7 +75,6 @@ jobs:
     permissions:
       issues: write
       pull-requests: read
-      actions: read
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
@@ -92,12 +91,12 @@ jobs:
             issues)
               n=$(jq -r .issue.number "$event")
               key=queued
-              message="**Черга Moyai.** Задачу додано з міткою \`moyai:ready\`. Коли Developer створить робочу гілку, тут з’явиться запис про початок роботи."
+              message="**Queued for Developer.** This issue has the \`moyai:ready\` label. Developer will post an update when the task branch is ready."
               ;;
             create)
               branch=$(jq -r .ref "$event")
               key=started
-              message="**Developer взяв задачу в роботу.** Створено [робочу гілку]($GITHUB_SERVER_URL/$GH_REPO/tree/$branch). Наступний крок — підготувати зміну та відкрити PR."
+              message="**Developer started work** on the [task branch]($GITHUB_SERVER_URL/$GH_REPO/tree/$branch). A pull request will follow."
               ;;
             pull_request_target|issue_comment|workflow_run)
               case "$GITHUB_EVENT_NAME" in
@@ -121,7 +120,7 @@ jobs:
               case "$GITHUB_EVENT_NAME" in
                 pull_request_target)
                   key="pr-$pr"
-                  message="**Developer відкрив $link.** Зміну передано на незалежну перевірку Verifier."
+                  message="**Developer opened $link.** The change is ready for Verifier to review."
                   ;;
                 issue_comment)
                   line=$(jq -r '.comment.body | split("\n")[0] | sub("\r$"; "")' "$event")
@@ -133,13 +132,13 @@ jobs:
                   key="$verdict-$pr-$sha"
                   if [[ $verdict != REVIEWING ]]; then key="$key-$(jq -r .comment.id "$event")"; fi
                   case "$verdict" in
-                    REVIEWING) message="**Verifier розпочав рев’ю.** Перевіряє $link на коміті \`${sha:0:8}\` за критеріями цього issue. [Запис у PR]($url)." ;;
+                    REVIEWING) message="**Verifier started reviewing $link** at \`${sha:0:8}\` against the acceptance criteria. [Review thread]($url)." ;;
                     VERIFIED|CHANGES-REQUESTED)
                       jq -e '.comment.body | split("\n")[1:] | any(test("[^[:space:]]"))' "$event" >/dev/null || exit 0
                       if [[ $verdict == VERIFIED ]]; then
-                        message="**Verifier схвалив $link** на коміті \`${sha:0:8}\`. [Що саме перевірено]($url). GitHub Actions перевіряє CI перед merge."
+                        message="**Verifier approved $link** at \`${sha:0:8}\`. [Review findings]($url). GitHub Actions will check CI before merging."
                       else
-                        message="**Verifier повернув $link на доопрацювання.** [Конкретні зауваження]($url) стосуються коміту \`${sha:0:8}\`. Наступний крок за Developer."
+                        message="**Verifier requested changes to $link** at \`${sha:0:8}\`. Developer can address the [review findings]($url) on the same branch."
                       fi
                       ;;
                   esac
@@ -151,9 +150,9 @@ jobs:
                   url=$(jq -r .workflow_run.html_url "$event")
                   key="pr-ci-$run-$attempt"
                   if [[ $result == success ]]; then
-                    message="**CI для $link пройшов** на коміті \`${head:0:8}\`. [Результати перевірок]($url)."
+                    message="**CI passed for $link** at \`${head:0:8}\`. [Check results]($url)."
                   else
-                    message="**CI для $link завершився зі статусом \`$result\`** на коміті \`${head:0:8}\`. [Журнал перевірок]($url). Цей результат блокує автоматичний merge."
+                    message="**CI for $link finished with \`$result\`** at \`${head:0:8}\`. The merge is blocked. [Check logs]($url)."
                   fi
                   ;;
               esac
@@ -170,8 +169,4 @@ jobs:
           if jq -e --arg marker "$marker" 'add // [] | any(.user.login == "github-actions[bot]" and (.body | endswith($marker)))' <<<"$comments" >/dev/null; then
             exit 0
           fi
-          at=$(jq -r 'if .comment then .comment.created_at elif .workflow_run then .workflow_run.updated_at
-            elif .pull_request then .pull_request.created_at else empty end' "$event")
-          if [[ -z $at ]]; then at=$(gh api "$api/actions/runs/$GITHUB_RUN_ID" --jq .created_at); fi
-          stamp=$(TZ=Europe/Kyiv date -d "$at" '+%d.%m.%Y %H:%M:%S %Z')
-          gh api -X POST "$api/issues/$n/comments" -f body="$(printf '%s\n\n%s · Київ\n\n%s' "$message" "$stamp" "$marker")" --silent
+          gh api -X POST "$api/issues/$n/comments" -f body="$(printf '%s\n\n%s' "$message" "$marker")" --silent
