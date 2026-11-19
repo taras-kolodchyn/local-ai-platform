@@ -19,6 +19,77 @@ from github_issue import ISSUES, issue_number, user_issue
 
 
 class IssuePublishingTests(unittest.TestCase):
+    def test_ci_requires_latest_successful_test_for_the_exact_pr_and_both_shas(self):
+        github = Mock()
+        github.installation.app_id = 12
+        job = {'number':7,'pr':{'number':8},'base':'a'*40,'commit':'b'*40}
+        title = f"CI PR 8 head {job['commit']} base {job['base']}"
+        run = {'id':42,'run_attempt':3,'event':'pull_request','path':'.github/workflows/ci.yml','display_title':title,
+               'repository':{'full_name':publisher.REPO},'head_repository':{'full_name':publisher.REPO},
+               'head_branch':'codex/app-12/issue-7','head_sha':job['commit'],'status':'completed','conclusion':'success'}
+        test = {'name':'test','head_sha':job['commit'],'status':'completed','conclusion':'success'}
+        def ci(rows, jobs):
+            github.api.side_effect = [{'workflow_runs':rows},{'jobs':jobs}]
+            return publisher.verified_ci(github, job)
+        self.assertIsNone(ci([],[]))
+        self.assertIsNone(ci([{**run,'status':'in_progress'}],[]))
+        self.assertEqual(ci([run],[test]),42)
+        for another in [{'conclusion':'failure'},{'display_title':title.replace('PR 8','PR 18')},
+                        {'display_title':title.replace(job['base'],'c'*40)}, {'head_sha':'c'*40},
+                        {'event':'push'},{'path':'.github/workflows/other.yml'},{'head_repository':{'full_name':'fork/r'}}]:
+            with self.subTest(change=another), self.assertRaises(publisher.Refused):
+                ci([{**run,**another}],[test])
+        with self.assertRaises(publisher.Refused):
+            ci([run],[{**test,'conclusion':'skipped'}])
+
+    def test_merge_reconciles_a_lost_response_without_repeating_the_mutation(self):
+        app = Mock(app_id=12, bot='demo[bot]')
+        gh = Mock(operator_issue=7, installation=app)
+        base, head, tree, merged = (v*40 for v in 'abcd')
+        job = {'number':7,'base':base,'commit':head,'tree':tree,'auto_merge':True,
+               'binding':{'snapshot_id':'s'},'issue':{'title':'test'},
+               'pr':{'number':8,'head':head,'app_id':12,'author':app.bot}}
+        checks = {'project_tests_run':2,'oracle_tests_run':4}
+        side = {'repo':{'full_name':publisher.REPO}}
+        live = {'number':8,'node_id':'PR_8','draft':True,'state':'open','merged':False,'mergeable':True,
+                'user':{'login':app.bot,'type':'Bot'}, 'head':{**side,'ref':'codex/app-12/issue-7','sha':head},
+                'base':{**side,'ref':'main','sha':base},'body':publisher.publication_body(job,b'patch',checks,True)}
+        api = {'pulls/8':live,'commits/main':{'sha':base},'git/commits/'+head:{'sha':head,'tree':{'sha':tree},
+               'parents':[{'sha':base}]},'git/commits/'+merged:{'tree':{'sha':tree},'parents':[{'sha':base},{'sha':head}]}}
+        gh.api.side_effect = api.__getitem__
+        gh.ticket.return_value = job['issue']
+        def transition(query, variables):
+            if 'markPullRequestReadyForReview' in query:
+                live['draft'] = False
+                return {'markPullRequestReadyForReview':{'pullRequest':{'id':'PR_8','isDraft':False}}}
+            self.assertIn('expectedHeadOid:$head', query)
+            self.assertEqual(variables,{'id':'PR_8','head':head})
+            live.update(merged=True, merged_by={'login':app.bot}, merge_commit_sha=merged)
+            raise TimeoutError('lost reply')
+        app.graphql.side_effect = transition
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            directory = root/'.local/repositories/snapshots/s'
+            directory.mkdir(parents=True)
+            (directory/'manifest.json').write_text('{"verification_profile":"rust-retry-tests"}')
+            path = root/'job'
+            with (patch.object(publisher,'ROOT',root), patch.object(publisher,'reproduce', return_value=(tree,[])),
+                  patch.object(publisher,'verified_patch',return_value=(b'patch','digest',checks)),
+                  patch.object(publisher,'verified_ci',return_value=42)):
+                for field, value in [('auto_merge',False),('commit','foreign')]:
+                    path.write_text(json.dumps({**job,field:value}))
+                    with self.assertRaises(publisher.Refused): publisher.merge_verified_issue(gh,None,path)
+                path.write_text(json.dumps(job))
+                for change in [{'head':{**live['head'],'sha':'new'}},{'base':{**live['base'],'sha':'new'}},
+                               {'body':'Closes #100'},{'user':{'login':'someone','type':'User'}}]:
+                    with patch.dict(live,change), self.assertRaises(publisher.Refused):
+                        publisher.merge_verified_issue(gh,None,path)
+                app.graphql.assert_not_called()
+                with self.assertRaises(TimeoutError): publisher.merge_verified_issue(gh,None,path)
+                publisher.merge_verified_issue(gh,None,path)
+                self.assertEqual(app.graphql.call_count,2)
+                self.assertEqual(json.loads(path.read_text())['merge_sha'],merged)
+
     def test_only_the_explicit_caller_note_request_adds_the_migration_contract(self):
         issue = {'title':'Rust coverage', 'body':'Include a caller note: which API computes, which forwards, and migration.'}
         scope = publisher.issue_scope(34,'turn',issue,{'verification_profile':'rust-retry-tests'})

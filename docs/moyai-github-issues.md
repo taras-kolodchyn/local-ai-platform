@@ -34,6 +34,14 @@ The reviewer also traces the retry input through the legacy wrapper and the calc
 
 When the reviewer requests changes, the editing agent receives the findings in the same chat. It must change the candidate, rerun the protected checks and obtain approval for the revised tree. The test report contains the review history. The host publisher checks the approval against the pinned snapshot, final Rust receipt, verified tree and downloaded patch hash before creating a draft. The report distinguishes model findings from policy checks and includes the source lines for inspection.
 
+### Let the GitHub App merge a verified PR
+
+Start `make github-app-issues ISSUE=N PROFILE=rust-retry-tests AUTO_MERGE=1` on the Mac before pasting the new issue URL into a private chat. The grant applies to that issue at intake. Ordinary App sessions publish drafts. The default platform profile stays offline.
+
+Keep the command running after Moyai returns its Files and draft link. The host reproduces the Git tree from the delivered patch and checks the issue, PR author, branch, head and base. The repository CI workflow records the PR number and both event SHAs in its run name. The App waits for the workflow and its `test` job to succeed, marks the draft ready, then requests a GitHub merge with the verified head OID. It records the CI run and reconciles the merged commit, tree, parents and bot identity in the local issue record. The merge triggers the normal push CI on `main`.
+
+If the publisher stops after publication, rerun the same command to resume. A changed head or base requires fresh verification. A failed CI leaves the PR open. After a CI rerun, the same grant can check the new attempt. GitHub App credentials stay on the host. This flow uses the GitHub REST API version `2026-03-10` and GitHub GraphQL. [Workflow runs](https://docs.github.com/en/rest/actions/workflow-runs#list-workflow-runs-for-a-workflow) · [Pull request mutations](https://docs.github.com/en/graphql/reference/pull-requests)
+
 ### Single-message App rehearsal, 2026-11-18
 
 The operator pasted the URL of issue #10 into an empty private Moyai web chat. This was the only user message. In 2m 32s, one turn retrieved the retry policy, reproduced the 60,000 ms baseline, edited the Rust implementation and tests, delivered three Files links and returned the draft PR. GitHub identifies `moyai-local-348144ed[bot]` as the author of both the commit and the draft. [Issue #10](https://github.com/taras-kolodchyn/local-ai-platform/issues/10) · [Draft PR #11](https://github.com/taras-kolodchyn/local-ai-platform/pull/11) · [Published commit](https://github.com/taras-kolodchyn/local-ai-platform/commit/1f9cc341f2c9e967e5d63416f0b127884bd69074)
