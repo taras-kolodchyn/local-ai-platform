@@ -59,12 +59,14 @@ class IssuePublishingTests(unittest.TestCase):
         gh.api.side_effect = api.__getitem__
         gh.ticket.return_value = job['issue']
         def transition(query, variables):
+            if query.startswith('query('):
+                return {'node':{'id':'PR_8','merged':True,'mergeCommit':{'oid':merged}}}
             if 'markPullRequestReadyForReview' in query:
                 live['draft'] = False
                 return {'markPullRequestReadyForReview':{'pullRequest':{'id':'PR_8','isDraft':False}}}
             self.assertIn('expectedHeadOid:$head', query)
             self.assertEqual(variables,{'id':'PR_8','head':head})
-            live.update(merged=True, merged_by={'login':app.bot}, merge_commit_sha=merged)
+            live.update(merged=True, merged_by={'login':app.bot})
             raise TimeoutError('lost reply')
         app.graphql.side_effect = transition
         with tempfile.TemporaryDirectory() as temp:
@@ -92,7 +94,8 @@ class IssuePublishingTests(unittest.TestCase):
                 app.graphql.assert_not_called()
                 with self.assertRaises(TimeoutError): publisher.merge_verified_issue(gh,None,path)
                 publisher.merge_verified_issue(gh,None,path)
-                self.assertEqual(app.graphql.call_count,2)
+                self.assertEqual([call.args[0].split('(',1)[0] for call in app.graphql.call_args_list],
+                                 ['mutation','mutation','query'])
                 self.assertEqual(json.loads(path.read_text())['merge_sha'],merged)
 
     def test_only_the_explicit_caller_note_request_adds_the_migration_contract(self):

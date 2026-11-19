@@ -426,7 +426,14 @@ def merge_verified_issue(github, client, jobfile, *, deadline=None):
         if live['merged']:
             require((live.get('merged_by') or {}).get('login') == app.bot and job.get('ci_run'),
                     'A different actor or an unrecorded CI run merged this PR.')
-            job['merge_sha'] = live['merge_commit_sha']
+            data = app.graphql('query($id:ID!){node(id:$id){... on PullRequest{id merged mergeCommit{oid}}}}',
+                               {'id':live['node_id']})
+            node = data['node']
+            require(node['id'] == live['node_id'] and node['merged'] is True, 'GitHub did not confirm the merged PR.')
+            if not node.get('mergeCommit'):
+                time.sleep(5)
+                continue
+            job['merge_sha'] = node['mergeCommit']['oid']
             landed = github.api('git/commits/' + job['merge_sha'])
             require(landed['tree']['sha'] == tree and [p['sha'] for p in landed['parents']] == [base, head],
                     'Merged result differs from the CI base and verified tree. Inspect main.')
