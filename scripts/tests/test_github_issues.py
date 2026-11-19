@@ -1,3 +1,4 @@
+import asyncio
 from hashlib import sha256
 import importlib.util
 import json
@@ -5,6 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 import uuid
 import unittest
 from types import SimpleNamespace
@@ -16,9 +18,62 @@ spec = importlib.util.spec_from_file_location('github_issues', MODULE)
 publisher = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(publisher)
 from github_issue import ISSUES, issue_number, user_issue
+import github_issue
+
+
+class ControllerRestartTests(unittest.IsolatedAsyncioTestCase):
+    async def test_fresh_controller_connection_recovers_same_receipt_only_during_grant(self):
+        with tempfile.TemporaryDirectory(dir='/tmp') as tmp:
+            root = Path(tmp)
+            (root/'requests').mkdir()
+            (root/'replies').mkdir()
+            address = root/'relay.sock'
+            session, turn = str(uuid.uuid4()), str(uuid.uuid4())
+            request = dict(action='publish', number=17, session=session, turn=turn)
+            key = sha256(json.dumps(request, sort_keys=True).encode()).hexdigest() + '.json'
+            github_issue.atomic_json(root/'lease.json', {'id':'active', 'updated':time.time()})
+            async with await github_issue.start_relay(address, root):
+                # The first controller dies after submitting the request.
+                _, writer = await asyncio.open_unix_connection(str(address))
+                writer.write(json.dumps(request).encode() + b'\n')
+                await writer.drain()
+                writer.close()
+                await writer.wait_closed()
+                async with asyncio.timeout(3):
+                    while not (root/'requests'/key).exists():
+                        await asyncio.sleep(0.01)
+                self.assertEqual(json.loads((root/'requests'/key).read_text()), {**request,'lease':'active'})
+                receipt = {'number':18, 'auto_merge':True}
+                github_issue.atomic_json(root/'replies'/key, {'lease':'active','result':receipt})
+                self.assertEqual(await github_issue.exchange(**request, address=address),receipt)
+                self.assertEqual(len(list((root/'requests').iterdir())),1)
+                (root/'lease.json').unlink()
+                with self.assertRaisesRegex(ValueError, 'offline'):
+                    await github_issue.exchange(**request, address=address)
+                with self.assertRaisesRegex(ValueError, 'Invalid'):
+                    await github_issue.exchange(**{**request,'action':'other'}, address=address)
+                await asyncio.sleep(0.3)
 
 
 class IssuePublishingTests(unittest.TestCase):
+    def test_controller_outage_does_not_commit_an_error_reply(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root/'requests').mkdir()
+            (root/'replies').mkdir()
+            with publisher.live_lease(root) as lease:
+                request = dict(action='publish',number=17,session=str(uuid.uuid4()),turn=str(uuid.uuid4()),lease=lease)
+                path = 'a'*64 + '.json'
+                publisher.atomic_json(root/'requests'/path, request)
+                host = Mock()
+                host.dispatch.side_effect = [publisher.MoyaiUnavailable(), {'number':18,'auto_merge':True}]
+                with patch.object(publisher.time, 'sleep', side_effect=[None, AssertionError('request did not recover')]):
+                    publisher.serve(host, root, lease)
+                self.assertEqual([call.args for call in host.dispatch.call_args_list],[(request,),(request,)])
+                self.assertEqual(json.loads((root/'replies'/path).read_text())['result']['number'],18)
+                self.assertEqual(json.loads((root/'lease.json').read_text())['id'],lease)
+            self.assertFalse((root/'lease.json').exists())
+
     def test_ci_requires_latest_successful_test_for_the_exact_pr_and_both_shas(self):
         github = Mock()
         github.installation.app_id = 12
@@ -366,7 +421,15 @@ class IssuePublishingTests(unittest.TestCase):
                 host.dispatch(request)
 
     def test_offline_compose_has_no_exchange(self):
-        self.assertNotIn('github-issues', (MODULE.parents[1]/'compose.moyai.yaml').read_text())
+        base = (MODULE.parents[1]/'compose.moyai.yaml').read_text()
+        link = 'publisher_link:/run/moyai-publisher:ro'
+        controller, other = base.split('\n  moyai-sandbox:', 1)
+        self.assertIn(link, controller)
+        self.assertNotIn('github-issues', base)
+        self.assertNotIn('publisher_link:', other.split('\nvolumes:')[0])
         overlay = (MODULE.parents[1]/'compose.moyai-issues.yaml').read_text()
-        self.assertNotIn('moyai-sandbox:', overlay)
+        self.assertNotIn('  moyai:',overlay)
+        self.assertIn('  issue-relay:',overlay)
+        self.assertIn('network_mode: none',overlay)
+        self.assertIn('publisher_link:/run/moyai-publisher',overlay)
         self.assertNotIn('installation-token', overlay)
