@@ -2,6 +2,8 @@
 
 This deliberately imperfect service is the repeatable Codex/Hermes exercise used in the article. Do not deploy it.
 
+The Rust training crate is published under the MIT license and is intended for educational purposes only.
+
 ## Documented contract
 
 - `GET /health` is public.
