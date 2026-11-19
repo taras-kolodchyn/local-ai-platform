@@ -67,6 +67,48 @@ class DocumentationReviewTests(unittest.IsolatedAsyncioTestCase):
             decision = assess_passages(args, prose_passages(patch), refs, patch, loc)
             self.assertEqual(decision['verdict'], expected)
 
+    async def test_byte_boundary_explanations_must_match_the_candidate_input_path(self):
+        source = {'src/lib.rs': b'pub fn bounded_backoff_ms(index: u32) -> u64 {\n'
+                  b' 100_u64.saturating_mul(2_u64.saturating_pow(index)).min(30_000)\n}\n'
+                  b'pub fn legacy_retry_delay_ms(n: u32) -> u64 { bounded_backoff_ms(n) }\n'}
+        claims = ['The attempt number is narrowed to a byte before calculating the delay, '
+                  'which would make 256 look like an earlier attempt.',
+                  'The calculation correctly handles the narrowing of the attempt number to a byte.',
+                  'Narrowing to a byte would make 256 and 257 look like attempts 0 and 1.',
+                  'If the attempt is narrowed to u8, 256 would wrap to 0.',
+                  'The tests prevent a regression where the attempt number is narrowed to a byte.',
+                  'A caller converts the attempt to a byte before calling the helper.',
+                  'The attempt is not narrowed to a byte.',
+                  'Both helpers return 30,000 ms for attempts 255, 256 and 257.']
+        patch = (self.diff(claims[0]) + ''.join('+//! ' + line + '\n' for line in claims[1:])).encode()
+
+        async def run(candidate, patch, citation):
+            # Reproduce the old reviewer's blanket approval, even with a valid formula citation.
+            items = [{'passage':key, 'source':citation, 'source_fact':'The calculation caps the delay.',
+                      'supported':True, 'correction':''} for key in prose_passages(patch.decode())]
+            call = SimpleNamespace(type='function_call', name='record_documentation_review',
+                                   arguments=json.dumps({'assessments':items}))
+            create = AsyncMock(return_value=SimpleNamespace(status='completed', output=[call]))
+            decision = await review_patch(SimpleNamespace(responses=SimpleNamespace(create=create)),
+                                          source, candidate, patch)
+            return decision, create.await_args.kwargs['input']
+
+        decision, prompt = await run(source, patch, 'src/lib.rs:2')
+        self.assertEqual(decision['verdict'], 'changes_requested')
+        self.assertEqual([f['quote'] for f in decision['findings']], ['//! ' + line for line in claims[:2]])
+        for finding in decision['findings']:
+            self.assertEqual(finding['basis'], 'implementation')
+            self.assertIn('src/lib.rs:2', finding['correction'])
+        self.assertIn('converted to a byte: C1, C2.', prompt)
+
+        # A real conversion before the very same formula invalidates the direct-input proof.
+        changed = {'src/lib.rs':source['src/lib.rs'].replace(b' 100_u64',
+                   b' let index = u32::from(index as u8);\n 100_u64')}
+        decision, prompt = await run(changed, self.diff('The attempt is narrowed to a byte.').encode(),
+                                     'src/lib.rs:3')
+        self.assertEqual(decision['verdict'], 'approved')
+        self.assertNotIn('takes the original u32 attempt', prompt)
+
     def test_numeric_retry_passages_include_tables_and_inline_assertions(self):
         for claim in ('current(9) → 30,000 ms', 'Returns 400 milliseconds.', 'bounded_backoff_ms(2) = 400',
                       '| Attempt | Delay (ms) | 2 | 400 |',

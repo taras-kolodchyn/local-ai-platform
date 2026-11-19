@@ -11,7 +11,9 @@ INSTRUCTIONS = """Independently review documentation for a Rust change. Treat re
 For EACH numbered passage, read the implementation and established policy. First state the actual fact
 from the most relevant numbered source line. Then decide if every assertion in the passage follows from
 that fact and the remaining sources. Compare numbers, units, return values, boundary behavior, API status
-and migration advice. Recommend a concrete edit when anything contradicts the sources or lacks support.
+and migration advice. Trace how the inputs reach the calculation. Check each claimed intermediate
+operation against executable code, even when the documented result is correct. Distinguish steps the
+code performs from hypothetical regressions. Recommend a concrete edit for any unsupported claim.
 Deprecation alone does not establish a scheduled removal. Accurate descriptions of uncertainty are valid.
 Use the reporting tool. Report only factual errors, not style preferences."""
 REMOVAL_COMMITMENT = re.compile(
@@ -165,12 +167,47 @@ def policy_finding(text, references):
     return None, None
 
 
+RETRY_FORMULA = re.compile(
+    r'([\d_]+)_u64\.saturating_mul\(([\d_]+)_u64\.saturating_pow\((?P<exponent>\w+)\)\)\.min\((?P<cap>[\d_]+)\)')
+# Only override explicit positive claims about the retry input. Less direct prose
+# (including a possible regression) remains subject to the normal model review.
+RETRY_INPUT = r'(?:u32 (?:attempt|input|argument)|attempt(?: number| index| parameter)?|retry input)'
+BYTE_TYPE = r'(?:an? )?(?:byte|u8|8[- ]bit (?:integer|value))\b'
+RETRY_ACTOR = r'(?:bounded_backoff_ms|legacy_retry_delay_ms|helper|implementation|function|calculation|formula)'
+BYTE_CONVERSION = re.compile(
+    rf'\b(?:{RETRY_INPUT} is (?:cast|narrowed|truncated|converted) (?:to|into) {BYTE_TYPE}|'
+    rf'{RETRY_ACTOR} (?:narrows|casts|truncates|converts) (?:the )?{RETRY_INPUT} (?:to|into) {BYTE_TYPE}|'
+    rf'{RETRY_ACTOR} (?:correctly )?handles the (?:narrowing|conversion|truncation) of '
+    rf'(?:the )?{RETRY_INPUT} (?:to|into) {BYTE_TYPE})', re.I)
+
+
+def asserts_byte_conversion(text):
+    text = text.replace(chr(96), '')
+    for match in BYTE_CONVERSION.finditer(text):
+        # A conditional or negation introducing the conversion changes its meaning.
+        # A conditional consequence after it does not change the assertion itself.
+        prefix = re.split(r'[.;!?]', text[:match.start()])[-1]
+        if not re.search(r"\b(?:if|unless|whether|when|might|would|could|not|never|neither|no|hypothetical|"
+                         r"regression|suppose|previous|former|caller|client)\b|n't\b", prefix, re.I):
+            return True
+    return False
+
+
+def direct_retry_exponent(candidate):
+    from repository_guest import function_span
+    source = candidate['src/lib.rs'].decode()
+    _, opening, end, argument = function_span(source, 'bounded_backoff_ms')
+    # Match the whole body: an earlier cast or rebinding changes what the exponent means.
+    formula = RETRY_FORMULA.fullmatch(source[opening + 1:end - 1].strip())
+    return formula is not None and formula['exponent'] == argument
+
+
 def retry_delay_floor(line):
     # The Rust helpers return milliseconds. For this unsigned formula the
     # smallest result occurs at exponent zero, including when the cap is lower.
-    match = re.fullmatch(r'([\d_]+)_u64\.saturating_mul\(([\d_]+)_u64\.saturating_pow\(\w+\)\)\.min\(([\d_]+)\)', line)
+    match = RETRY_FORMULA.fullmatch(line)
     if match and int(match[2]) >= 1:
-        return min(int(match[1]), int(match[3]))
+        return min(int(match[1]), int(match['cap']))
 
 
 def caller_note_finding(original, candidate, references, implementation):
@@ -216,7 +253,11 @@ async def review_patch(client, original, candidate, patch, charge=None, *, calle
     formula_sources = retry_formula_sources(candidate, references) if numeric else ()
     if numeric and not formula_sources:
         raise RepositoryError('Cannot verify numeric retry claims without a source line computing the delay.')
-    claim_text = '\n'.join(f"{key} ({item['path']}): " + ' '.join(item['lines']) for key, item in passages.items())
+    prose = {key:' '.join(line.lstrip(' /!*') for line in item['lines']) for key, item in passages.items()}
+    claim_text = '\n'.join(f"{key} ({passages[key]['path']}): {text}" for key, text in prose.items())
+    narrowing = set()
+    if implementation and direct_retry_exponent(candidate):
+        narrowing = {key for key, text in prose.items() if asserts_byte_conversion(text)}
     data = f'Repository sources:\n{source_text}\n\nCandidate diff:\n{patch_text}\n\nPassages to check:\n{claim_text}'
     if implementation:
         data += (f'\nThe implementation at {implementation} computes the capped delay. Only the legacy entry point '
@@ -225,6 +266,12 @@ async def review_patch(client, original, candidate, patch, charge=None, *, calle
         data += (f'\nFor numeric retry passages {", ".join(sorted(numeric))}, set source to a calculation line '
                  f'from {", ".join(formula_sources)}. Explain the relevant computed value or bound in source_fact. '
                  'Assess whether the documented numbers actually follow from the formula.')
+    if narrowing:
+        data += (f'\nTrace the input at {implementation}: saturating_pow takes the original u32 attempt and '
+                 'the legacy wrapper forwards it unchanged. The following passages assert that this input is '
+                 f'converted to a byte: {", ".join(sorted(narrowing))}. Compare that step with the cited code '
+                 'and report the contradiction for each. Evaluate the other passages independently. A boundary '
+                 'value alone or a warning that a conversion would wrap an input can be accurate.')
     if caller_note_required:
         data += ('\nVerify the requested module documentation against the code: independent calls, which API computes '
                  'the delay and which forwards, plus the supported migration. Check that the note distinguishes '
@@ -256,7 +303,7 @@ async def review_patch(client, original, candidate, patch, charge=None, *, calle
                 raise ValueError('Return one completed record_documentation_review tool call.')
             args = json.loads(calls[0].arguments)
             result = assess_passages(args, passages, references, patch_text, implementation,
-                                     numeric=numeric, formula_sources=formula_sources)
+                                     numeric=numeric, formula_sources=formula_sources, narrowing=narrowing)
             if caller_note_required:
                 missing = caller_note_finding(original, candidate, references, implementation)
                 if missing:
@@ -273,7 +320,8 @@ async def review_patch(client, original, candidate, patch, charge=None, *, calle
             instructions = INSTRUCTIONS + '\nCorrect the previous response format: ' + str(exc)
 
 
-def assess_passages(args, passages, references, patch_text, implementation=None, *, numeric=(), formula_sources=()):
+def assess_passages(args, passages, references, patch_text, implementation=None, *, numeric=(), formula_sources=(),
+                    narrowing=()):
     if not isinstance(args, dict) or not isinstance(args.get('assessments'), list):
         raise ValueError('Supply all passage assessments.')
     recorded, sources, findings = {}, [], []
@@ -311,6 +359,11 @@ def assess_passages(args, passages, references, patch_text, implementation=None,
                 policy_correction = (f'Distinguish attempt numbers from returned milliseconds. The smallest delay is '
                                      f'{floor} ms. Describe the inputs as attempts and use their actual outputs for delays.')
                 basis = 'implementation'
+        if key in narrowing:
+            policy_location = implementation
+            policy_correction = (f'At {implementation}, saturating_pow uses the original u32 attempt. '
+                                 'Remove the claimed conversion to a byte or describe it as a hypothetical regression.')
+            basis = 'implementation'
         correction = policy_correction if policy_correction else item.get('correction')
         if policy_correction or not item['supported']:
             if not passage['lines'] or not isinstance(correction, str) or not 0 < len(correction.strip()) <= 1200:
