@@ -99,22 +99,51 @@ def delay_caps(text):
         yield value * (1000 if match[2].lower().startswith('s') else 1)
 
 
-def retry_implementation(candidate, references):
+def retry_formula_sources(candidate, references):
     from repository_guest import function_span
     source = candidate.get('src/lib.rs', b'').decode()
     try:
         _, current, end, _ = function_span(source, 'bounded_backoff_ms')
+    except ValueError:
+        return ()
+    first_line = source.count('\n', 0, current) + 1
+    locations = []
+    for number, line in enumerate(source[current + 1:end - 1].splitlines(), first_line):
+        location = f'src/lib.rs:{number}'
+        code = line.partition('//')[0].strip()
+        if (code and code in references.get(location, '')
+                and re.search(r'\.(?:saturating_mul|saturating_pow|min|clamp)\s*\(', code)):
+            locations.append(location)
+    return tuple(locations)
+
+
+def retry_implementation(candidate, references):
+    from repository_guest import function_span
+    source = candidate.get('src/lib.rs', b'').decode()
+    try:
         _, legacy, last, argument = function_span(source, 'legacy_retry_delay_ms')
     except ValueError:
         return None
     body = source[legacy + 1:last - 1].strip().removesuffix(';').strip()
     if body != f'bounded_backoff_ms({argument})':
         return None
-    for offset, line in enumerate(source[current:end].splitlines()):
-        location = f'src/lib.rs:{source.count(chr(10), 0, current) + 1 + offset}'
-        if '.saturating_mul(' in line and '.min(' in line and location in references:
-            return location
-    return None
+    return next((location for location in retry_formula_sources(candidate, references)
+                 if '.saturating_mul(' in references[location] and '.min(' in references[location]), None)
+
+
+def numeric_retry_claim(passage):
+    text = ' '.join(passage['lines']).replace(chr(96), '')
+    duration = re.search(r'\b\d[\d,_]*(?:\.\d+)?[\s-]*(?:milliseconds?|ms|seconds?|s)\b', text, re.I)
+    if duration and re.search(r'\b(?:returns?|yields?)\b', text, re.I):
+        return True
+    if not re.search(r'\b(?:attempts?|delays?|backoff|retry|cap(?:ped)?|ceiling|bounded_backoff_ms|'
+                     r'legacy_retry_delay_ms|(?:current|legacy)\s*\()', text, re.I):
+        return False
+    # Counts of tests, issue numbers and API versions do not describe a delay.
+    return bool(duration or re.search(
+        r'\b(?:attempts?|delays?|cap|ceiling|returns?|yields?)\s*(?:(?:at|of|is)\s+)?\(?\d|'
+        r'(?:→|=>|=|\|\s*\d[\d,_]*\s*\|)\s*\d|\bassert_eq!\s*\(\s*(?:bounded_backoff_ms|legacy_retry_delay_ms)'
+        r'\s*\([^)]*\)\s*,\s*\d', text, re.I))
 
 
 BOTH_FORWARD = re.compile(r'\b(?:both|the two)\s+(?:(?:public|retry|api)\s+)*(?:functions|apis|entry points|helpers)'
@@ -183,11 +212,19 @@ async def review_patch(client, original, candidate, patch, charge=None, *, calle
         passages['C1'] = {'path':None, 'lines':[]}
     source_text = '\n'.join(f'{key} | {value}' for key, value in references.items())
     implementation = retry_implementation(candidate, references)
+    numeric = {key for key, passage in passages.items() if numeric_retry_claim(passage)}
+    formula_sources = retry_formula_sources(candidate, references) if numeric else ()
+    if numeric and not formula_sources:
+        raise RepositoryError('Cannot verify numeric retry claims without a source line computing the delay.')
     claim_text = '\n'.join(f"{key} ({item['path']}): " + ' '.join(item['lines']) for key, item in passages.items())
     data = f'Repository sources:\n{source_text}\n\nCandidate diff:\n{patch_text}\n\nPassages to check:\n{claim_text}'
     if implementation:
         data += (f'\nThe implementation at {implementation} computes the capped delay. Only the legacy entry point '
                  'forwards its argument to bounded_backoff_ms. Shared behavior does not make both functions wrappers.')
+    if numeric:
+        data += (f'\nFor numeric retry passages {", ".join(sorted(numeric))}, set source to a calculation line '
+                 f'from {", ".join(formula_sources)}. Explain the relevant computed value or bound in source_fact. '
+                 'Assess whether the documented numbers actually follow from the formula.')
     if caller_note_required:
         data += ('\nVerify the requested module documentation against the code: independent calls, which API computes '
                  'the delay and which forwards, plus the supported migration. Check that the note distinguishes '
@@ -218,7 +255,8 @@ async def review_patch(client, original, candidate, patch, charge=None, *, calle
             if response.status != 'completed' or len(calls) != 1 or calls[0].name != tool['name']:
                 raise ValueError('Return one completed record_documentation_review tool call.')
             args = json.loads(calls[0].arguments)
-            result = assess_passages(args, passages, references, patch_text, implementation)
+            result = assess_passages(args, passages, references, patch_text, implementation,
+                                     numeric=numeric, formula_sources=formula_sources)
             if caller_note_required:
                 missing = caller_note_finding(original, candidate, references, implementation)
                 if missing:
@@ -235,7 +273,7 @@ async def review_patch(client, original, candidate, patch, charge=None, *, calle
             instructions = INSTRUCTIONS + '\nCorrect the previous response format: ' + str(exc)
 
 
-def assess_passages(args, passages, references, patch_text, implementation=None):
+def assess_passages(args, passages, references, patch_text, implementation=None, *, numeric=(), formula_sources=()):
     if not isinstance(args, dict) or not isinstance(args.get('assessments'), list):
         raise ValueError('Supply all passage assessments.')
     recorded, sources, findings = {}, [], []
@@ -248,6 +286,9 @@ def assess_passages(args, passages, references, patch_text, implementation=None)
             raise ValueError('Review each supplied passage ID exactly once.')
         if not isinstance(source, str) or source not in references:
             raise ValueError('Use an exact path:line key from references as the source.')
+        if key in numeric and source not in formula_sources:
+            raise ValueError(f'{key} cites {source} for a numeric retry claim. Cite the calculation at '
+                             f'{", ".join(formula_sources)} and assess the claim against it.')
         fact = item.get('source_fact')
         if not isinstance(fact, str) or not 0 < len(fact.strip()) <= 1200 or type(item.get('supported')) is not bool:
             raise ValueError('State the source fact and a boolean conclusion for each passage.')

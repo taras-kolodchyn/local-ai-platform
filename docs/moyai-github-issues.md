@@ -26,6 +26,8 @@ After Rust verification, Moyai sends the candidate diff and numbered implementat
 
 When a coverage ticket requests a caller note on calculation, forwarding and migration, review also checks for that module documentation. The retry implementation provides a lower bound for millisecond delays. An input attempt described as an output below that bound triggers another edit and verification.
 
+For numeric retry-delay claims, the reviewer must cite a calculation line from the pinned implementation. A signature or deprecation attribute triggers one retry of the review. A second invalid citation prevents approval and publication.
+
 When the reviewer requests changes, the editing agent receives the findings in the same chat. It must change the candidate, rerun the protected checks and obtain approval for the revised tree. The test report contains the review history. The host publisher checks the approval against the pinned snapshot, final Rust receipt, verified tree and downloaded patch hash before creating a draft. The report distinguishes model findings from policy checks and includes the source lines for inspection.
 
 ### Single-message App rehearsal, 2026-11-18
