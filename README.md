@@ -197,7 +197,7 @@ All host-facing services bind to loopback by default.
 | Prometheus | `http://127.0.0.1:9090` |
 | Moyai agent | `http://127.0.0.1:8787` |
 
-Client-facing aliases are `local-qwen` and `local-embeddings`. The Docker Model Runner artifact names are internal implementation details.
+LiteLLM exposes `local-qwen` for chat, `local-embeddings` for embeddings and `local-reranker` for local CPU reranking. Moyai repository search uses the reranker automatically when the hybrid results have a weak lead.
 
 The checked-in [`litellm/config.yaml`](litellm/config.yaml) is a template.
 `make bootstrap` renders `.local/litellm/config.yaml` from the same `.env` model

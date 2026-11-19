@@ -25,6 +25,9 @@ info "Pulling pinned embedding model..."
 docker model pull "$EMBEDDING_MODEL"
 ok "Qwen embedding model available"
 
+python3 scripts/pull-reranker.py
+ok "Pinned local reranker available"
+
 docker model configure --context-size "$QWEN_CONTEXT_SIZE" "$QWEN_MODEL" >/dev/null
 docker model configure --mode embedding "$EMBEDDING_MODEL" >/dev/null
 python3 scripts/model-config.py runtime-env >/dev/null

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from functools import partial
+
 import contextlib
 import hashlib
 import json
@@ -190,7 +192,7 @@ async def lifespan(_: Starlette):
 
 app = Starlette(
     routes=vector_routes(SETTINGS.vector_key_file, lambda: list_stores(SETTINGS),
-                         lambda scope, query, path, limit: scoped_search(SETTINGS, scope, query, path, limit)) + [
+                         partial(scoped_search, SETTINGS)) + [
         Route("/health", health, methods=["GET"]),
         Route("/metrics", metrics, methods=["GET"]),
         Route("/search", search, methods=["POST"]),

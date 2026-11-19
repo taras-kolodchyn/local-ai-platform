@@ -108,6 +108,29 @@ services:
     networks:
       - compression
 
+  reranker:
+    <<: *service-defaults
+    image: ghcr.io/headroomlabs-ai/headroom:0.44.0@sha256:10ef5f71c4cae3a02ca28107dfcf379aa73314ff26544c1f9988140e71f732f4
+    entrypoint: [python, -m, uvicorn, server:app, --app-dir, /srv, --host, 0.0.0.0, --port, "8080", --no-access-log]
+    user: "10001:10001"
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    environment:
+      TOKENIZERS_PARALLELISM: "false"
+    volumes:
+      - ./integrations/reranker/server.py:/srv/server.py:ro
+      - ./.local/models/reranker/df500e56a59fc34f37322735a40eff666200312e:/model:ro
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+    networks: [ranking]
+    deploy:
+      resources:
+        limits: {memory: 512M, cpus: '2'}
+
   litellm:
     <<: *service-defaults
     image: ghcr.io/berriai/litellm:v1.109.1
@@ -139,6 +162,8 @@ services:
     extra_hosts:
       - host.docker.internal:host-gateway
     depends_on:
+      reranker:
+        condition: service_healthy
       postgres:
         condition: service_healthy
       redis:
@@ -154,6 +179,7 @@ services:
       - data
       - observability
       - compression
+      - ranking
     deploy:
       resources:
         limits:
@@ -410,6 +436,8 @@ volumes:
   grafana_data:
 
 networks:
+  ranking:
+    internal: true
   compression:
     internal: true
   gateway:

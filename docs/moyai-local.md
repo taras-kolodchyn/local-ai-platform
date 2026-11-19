@@ -9,6 +9,35 @@ For cited context, controlled repository edits and independently verified patch
 delivery, see [repository tasks](repository-workflow.md). Unattached conversations
 retain the file/shell behavior documented here.
 
+## Default repository search
+
+Moyai asks the pinned vector store for automatic ranking through LiteLLM. The backend
+searches up to 48 hybrid candidates in the authorized snapshot and generation.
+An exact-path filter applies before candidate selection. The default output is six
+chunks. An explicit tool limit still controls the result count.
+
+The fast path keeps hybrid order when the leading implementation file also has the
+best cosine similarity and its lead exceeds the mean adjacent gap among the top
+six distinct implementation files. A single implementation file needs no rerank.
+Otherwise, MiniLM scores overlapping 1,600-character windows with a 1,300-character
+stride through the `local-reranker` alias. Each chunk takes its best window rank.
+Selection prefers up to two chunks per file. In hybrid order a third chunk from
+the leading implementation file qualifies if that file occurs three times among
+the first six raw candidates. Remaining slots can be filled from other candidates.
+
+The source budget is 24,000 characters. The first chunk is kept whole when it fits.
+The other chunks share the remaining budget, with unused space from shorter chunks
+redistributed. Truncated excerpts keep complete lines from the beginning and end.
+A standalone ellipsis marks a gap. Citations identify the original chunk's line
+range. Indexing and existing conversations need no migration.
+
+`make up` verifies the pinned ARM64 INT8 model and tokenizer under `.local/models`
+and downloads missing assets during setup. Inference runs locally on CPU behind
+LiteLLM with no published reranker port. Verified on 2026-11-19 with LiteLLM
+1.109.1 and model revision `df500e56a59fc34f37322735a40eff666200312e`.
+[LiteLLM rerank API](https://docs.litellm.ai/docs/rerank) ·
+[MiniLM ONNX artifacts](https://huggingface.co/cross-encoder/ms-marco-MiniLM-L6-v2/tree/df500e56a59fc34f37322735a40eff666200312e/onnx)
+
 ## Start and sign in
 
 ```sh

@@ -30,6 +30,17 @@ model_list:
       description: __EMBEDDING_DESCRIPTION__
       mode: embedding
 
+  - model_name: local-reranker
+    litellm_params:
+      model: cohere/ms-marco-MiniLM-L6-v2
+      api_base: http://reranker:8080
+      api_key: local
+      input_cost_per_token: 0
+      output_cost_per_token: 0
+    model_info:
+      description: Local CPU cross-encoder for ranking short repository source excerpts.
+      mode: rerank
+
 guardrails:
   - guardrail_name: headroom-compression
     litellm_params:
