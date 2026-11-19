@@ -1,0 +1,78 @@
+name: Merge verified Moyai example documentation
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions: {}
+
+jobs:
+  merge:
+    if: github.event.issue.pull_request && github.event.comment.user.id == 358212412 && startsWith(github.event.comment.body, 'MOYAI-VERIFIED ')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    concurrency:
+      group: moyai-docs-${{ github.event.issue.number }}
+      cancel-in-progress: false
+    permissions:
+      actions: write
+      contents: write
+      issues: write
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Check the verdict, scope and CI before merging the reviewed commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          api="repos/$GH_REPO"
+          pr=$(jq -er '.issue.number' "$GITHUB_EVENT_PATH")
+          head=$(jq -er '.comment.body | split("\n")[0] | sub("\r$"; "") | capture("^MOYAI-VERIFIED (?<sha>[0-9a-f]{40})$").sha' "$GITHUB_EVENT_PATH")
+          actor=$(jq -er '.comment.user.id' "$GITHUB_EVENT_PATH")
+          details=$(gh api "$api/pulls/$pr")
+          jq -e --arg repo "$GH_REPO" --arg sha "$head" --argjson actor "$actor" '
+            .state == "open" and .draft == false and .user.id == $actor and
+            .base.ref == "main" and .head.repo.full_name == $repo and .head.sha == $sha and
+            .changed_files == 1 and .commits >= 1' <<<"$details" >/dev/null
+          branch=$(jq -r .head.ref <<<"$details")
+          [[ $branch =~ ^codex/moyai-issue-([1-9][0-9]*)$ ]]
+          issue=${BASH_REMATCH[1]}
+          gh api "$api/issues/$issue" | jq -e --arg owner "${GH_REPO%/*}" '
+            .state == "open" and (.pull_request == null) and .user.login == $owner and
+            any(.labels[]; .name == "moyai:ready")' >/dev/null
+          gh api "$api/pulls/$pr/files" | jq -e '
+            length == 1 and .[0].status == "modified" and .[0].filename == "examples/rust-service/README.md"' >/dev/null
+          green=false
+          for ((attempt=0; attempt<45; attempt++)); do
+            run=$(gh api --method GET "$api/actions/workflows/ci.yml/runs" -f event=pull_request -f head_sha="$head" -f branch="$branch" |
+              jq -c --arg repo "$GH_REPO" --argjson pr "$pr" '.workflow_runs | map(select(.head_repository.full_name == $repo and any(.pull_requests[]?; .number == $pr))) | max_by(.id)')
+            if [[ $(jq -r .status <<<"$run") == completed ]]; then
+              [[ $(jq -r .conclusion <<<"$run") == success ]]
+              green=true
+              break
+            fi
+            sleep 20
+          done
+          [[ $green == true ]]
+          latest=$(gh api --paginate --slurp "$api/issues/$pr/comments?per_page=100" | jq -r --argjson actor "$actor" --arg sha "$head" '
+            add | map(select(.user.id == $actor) | (.body | split("\n")[0] | sub("\r$"; "")) | select(. == ("MOYAI-VERIFIED " + $sha) or . == ("MOYAI-CHANGES-REQUESTED " + $sha))) | last')
+          [[ $latest == "MOYAI-VERIFIED $head" ]]
+          result=$(gh api --method PUT "$api/pulls/$pr/merge" -f sha="$head" -f merge_method=squash)
+          merge_sha=$(jq -er 'select(.merged == true) | .sha' <<<"$result")
+          echo "Merged $head as $merge_sha"
+          gh workflow run ci.yml --repo "$GH_REPO" --ref main
+          passed=false
+          for ((attempt=0; attempt<45; attempt++)); do
+            run=$(gh api --method GET "$api/actions/workflows/ci.yml/runs" -f head_sha="$merge_sha" -f branch=main |
+              jq -c '.workflow_runs | map(select(.event == "workflow_dispatch" or .event == "push")) | max_by(.id)')
+            if [[ $(jq -r .status <<<"$run") == completed ]]; then
+              [[ $(jq -r .conclusion <<<"$run") == success ]]
+              passed=true
+              break
+            fi
+            sleep 10
+          done
+          [[ $passed == true ]]
+          gh issue close "$issue" --repo "$GH_REPO" --comment "Verified PR #$pr. CI passed on main at $merge_sha. $(jq -r .html_url <<<"$run")"
