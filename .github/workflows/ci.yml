@@ -15,6 +15,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7.0.1
+      - name: Check host and container shell scripts
+        run: bash scripts/lint.sh --shell-only
       - uses: actions/setup-python@v7.1.0
         with:
           python-version: "3.14.10"
@@ -31,6 +33,5 @@ jobs:
       - name: Execution and PostgreSQL memory isolation tests
         run: .local/test-venv/bin/python -m pytest execution/tests -ra
       - run: .local/test-venv/bin/python -m unittest discover -s scripts/tests
-      - run: bash -n scripts/*.sh
       - run: docker compose --env-file .env.example config --quiet
       - run: docker compose -f compose.moyai.yaml config --quiet

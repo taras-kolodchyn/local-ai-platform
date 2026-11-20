@@ -2,22 +2,25 @@
 
 source "$(dirname "$0")/lib.sh"
 
-require_command docker
-require_command python3
-
-while IFS= read -r script; do
-  bash -n "$script"
-done < <(find scripts -type f -name '*.sh' -print | sort)
+shell_roots=(scripts integrations postgres)
+find "${shell_roots[@]}" -type f -name '*.sh' -print0 | xargs -0 -n 1 bash -n --
 ok "Shell syntax valid"
 
 if command -v shellcheck >/dev/null 2>&1; then
   # Each script resolves lib.sh from its own path; ShellCheck cannot follow a
   # dynamic source expression, so SC1091 is excluded explicitly.
-  shellcheck --exclude=SC1091 scripts/*.sh
+  find "${shell_roots[@]}" -type f -name '*.sh' -exec shellcheck --exclude=SC1091 -- {} +
   ok "ShellCheck passed"
 else
   warn "shellcheck is unavailable; syntax checks still ran"
 fi
+
+if [[ ${1:-} == --shell-only ]]; then
+  exit 0
+fi
+
+require_command docker
+require_command python3
 
 python3 -m compileall -q retrieval/src retrieval/tests mcp/offline/src mcp/offline/tests execution/src execution/tests integrations/moyai scripts/*.py
 python3 -m json.tool observability/grafana/dashboards/local-ai-platform.json >/dev/null
