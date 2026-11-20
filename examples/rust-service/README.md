@@ -26,7 +26,7 @@ curl http://127.0.0.1:8080/health
 3. The response contains the query in the `query` field of the `ReportResponse` struct
 4. The HTTP status code returned is `200 OK`
 
-This handler executes a database query using string interpolation instead of parameterized queries, which is a security vulnerability.
+This handler constructs a SQL query string as a representation, not a database query. The implementation shows no database interaction.
 
 ## Running focused Rust retry tests
 
