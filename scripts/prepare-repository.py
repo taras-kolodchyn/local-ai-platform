@@ -34,7 +34,7 @@ class NoRedirects(HTTPRedirectHandler):
 
 
 def gateway_model_info():
-    key = (ROOT / '.local/litellm-master-key').read_text().strip()
+    key = subprocess.check_output(['bash', str(ROOT / 'scripts/read-admin-key.sh')], text=True).strip()
     opener = build_opener(ProxyHandler({}), NoRedirects())
     request = Request('http://127.0.0.1:4000/model/info',
         headers={'Authorization': 'Bearer ' + key})

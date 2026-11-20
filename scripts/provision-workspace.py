@@ -17,6 +17,10 @@ sys.path.insert(0, str(ROOT / 'integrations/moyai'))
 from skill_marketplace import TAG, seed_hash
 
 
+def master_key():
+    return subprocess.check_output(['bash', str(ROOT / 'scripts/read-admin-key.sh')], text=True).strip()
+
+
 def private_write(path, content):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -121,7 +125,7 @@ def provision_skill_catalog(request, manifest, text_directory=None):
 def skills(manifest_path='execution/skills/manifest.json'):
     path = ROOT / manifest_path
     manifest = json.loads(path.read_text())
-    admin = gateway((LOCAL / 'litellm-master-key').read_text().strip())
+    admin = gateway(master_key())
     count = provision_skill_catalog(admin, manifest, path.parent if path.name == 'catalog.json' else None)
     print(f"{count} workflow sources reconciled in the LiteLLM Skills catalog")
 
@@ -166,7 +170,7 @@ def owner_request(admin):
 
 
 def vectors():
-    admin = gateway((LOCAL / 'litellm-master-key').read_text().strip())
+    admin = gateway(master_key())
     owner = owner_request(admin)
     code = '''import json, psycopg
 from local_ai_retrieval.config import Settings

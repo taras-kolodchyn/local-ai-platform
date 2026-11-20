@@ -19,6 +19,11 @@ The platform runs under one trusted macOS account. Source checkouts, registered 
 
 Bootstrap creates secrets in the ignored `.env` and `.local/` paths. Clients receive scoped virtual keys. The master key is used for gateway administration and provisioning. Keep these files out of Git, reports and shared logs.
 
+With `LITELLM_MASTER_KEY_SOURCE=openbao-local`, the gateway receives the master
+key and database encryption salt from OpenBao Agent. Host provisioning reads the
+current admin key on demand. Prometheus uses its own metrics-only virtual key.
+[Migration and rotation](openbao.md#move-the-master-key-on-the-local-mac)
+
 The optional OpenBao mode mounts one read-scoped AppRole into the gateway.
 Its Agent injects the dashboard password into LiteLLM and the smoke check reads
 the active value from private container memory. Use TLS to the OpenBao endpoint.

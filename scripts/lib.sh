@@ -51,6 +51,7 @@ load_env() {
   source .env
   set +a
   configure_compose_scope
+  unset OPENBAO_COMPOSE_PLACEHOLDER
   case ${LITELLM_UI_PASSWORD_SOURCE:-env} in
     env) ;;
     openbao) export COMPOSE_FILE="$COMPOSE_FILE:$ROOT_DIR/compose.openbao.yaml" ;;
@@ -60,6 +61,27 @@ load_env() {
       ;;
     *) die 'LITELLM_UI_PASSWORD_SOURCE must be env, openbao or openbao-local' ;;
   esac
+  case ${LITELLM_MASTER_KEY_SOURCE:-env} in
+    env) ;;
+    openbao-local)
+      [[ ${LITELLM_UI_PASSWORD_SOURCE:-env} == openbao-local ]] || die 'The OpenBao master key requires the local OpenBao service'
+      export COMPOSE_FILE="$COMPOSE_FILE:$ROOT_DIR/compose.openbao-master.yaml"
+      # Compose interpolates the required base value before merging the overlay.
+      # The overlay clears this throwaway value before Docker creates the gateway.
+      OPENBAO_COMPOSE_PLACEHOLDER=$(openssl rand -hex 32)
+      export OPENBAO_COMPOSE_PLACEHOLDER
+      ;;
+    *) die 'LITELLM_MASTER_KEY_SOURCE must be env or openbao-local' ;;
+  esac
+}
+
+read_admin_key() {
+  if [[ ${LITELLM_MASTER_KEY_SOURCE:-env} == openbao-local ]]; then
+    python3 scripts/openbao-local.py read-master
+  else
+    [[ -n ${LITELLM_MASTER_KEY:-} && $LITELLM_MASTER_KEY != GENERATE_ME ]] || die 'Missing admin key'
+    printf '%s' "$LITELLM_MASTER_KEY"
+  fi
 }
 
 read_secret_file() {

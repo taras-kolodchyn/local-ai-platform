@@ -5,6 +5,7 @@ source "$(dirname "$0")/lib.sh"
 load_env
 require_command curl
 require_command jq
+admin_key=$(read_admin_key)
 
 [[ -n "${GITHUB_MCP_AUTHORIZATION:-}" ]] || die "GITHUB_MCP_AUTHORIZATION is unset"
 
@@ -28,7 +29,7 @@ if [[ -s .local/litellm-connected-api-key ]]; then
   candidate=$(read_secret_file .local/litellm-connected-api-key)
   fingerprint=$(printf '%s' "$candidate" | shasum -a 256 | cut -d ' ' -f 1)
   lookup=$(curl --silent --show-error --write-out $'\n%{http_code}' \
-    --header "Authorization: Bearer $LITELLM_MASTER_KEY" \
+    --header @/dev/fd/3 3<<<"Authorization: Bearer $admin_key" \
     "http://127.0.0.1:4000/key/info?key=$fingerprint")
   case "${lookup##*$'\n'}" in
     200)
@@ -46,7 +47,7 @@ fi
 if [[ -z "$client_key" ]]; then
   response=$(curl --fail --silent --show-error \
     --request POST http://127.0.0.1:4000/key/generate \
-    --header "Authorization: Bearer $LITELLM_MASTER_KEY" \
+    --header @/dev/fd/3 3<<<"Authorization: Bearer $admin_key" \
     --header 'Content-Type: application/json' --data "$payload")
   client_key=$(jq -r '.key // empty' <<< "$response")
 fi

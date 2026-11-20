@@ -6,6 +6,12 @@ if [[ -z ${UI_PASSWORD:-} || $UI_PASSWORD == GENERATE_ME || $UI_PASSWORD == '<no
   echo 'OpenBao did not supply a valid LiteLLM UI password.' >&2
   exit 1
 fi
+if [[ ${LITELLM_MASTER_KEY_SOURCE:-env} == openbao-local ]]; then
+  [[ ${LITELLM_MASTER_KEY:-} == sk-* && -n ${LITELLM_SALT_KEY:-} && $LITELLM_SALT_KEY != '<no value>' ]] || {
+    echo 'OpenBao did not supply valid gateway credentials.' >&2
+    exit 1
+  }
+fi
 
 # The host smoke check reads the current value through a pipe from private tmpfs.
 # Rename before starting the gateway so a concurrent reader gets one whole value.

@@ -42,7 +42,10 @@ ensure_secret() {
   fi
 }
 
-ensure_secret LITELLM_MASTER_KEY "sk-local-$(generate_hex 24)"
+load_env
+if [[ ${LITELLM_MASTER_KEY_SOURCE:-env} == env ]]; then
+  ensure_secret LITELLM_MASTER_KEY "sk-local-$(generate_hex 24)"
+fi
 ensure_secret POSTGRES_PASSWORD "$(generate_hex 24)"
 ensure_secret REDIS_PASSWORD "$(generate_hex 24)"
 ensure_secret HEADROOM_PROXY_TOKEN "$(generate_hex 32)"
@@ -54,7 +57,7 @@ replace_value WORKSPACE_GID "$(id -g)"
 
 load_env
 
-for variable in LITELLM_MASTER_KEY POSTGRES_PASSWORD REDIS_PASSWORD HEADROOM_PROXY_TOKEN GRAFANA_ADMIN_PASSWORD MCP_POSTGRES_PASSWORD; do
+for variable in POSTGRES_PASSWORD REDIS_PASSWORD HEADROOM_PROXY_TOKEN GRAFANA_ADMIN_PASSWORD MCP_POSTGRES_PASSWORD; do
   value=${!variable:-}
   [[ -n "$value" && "$value" != "GENERATE_ME" ]] || die "$variable is unset or still uses GENERATE_ME"
 done
@@ -75,18 +78,25 @@ chmod 700 .local .local/smoke
 chmod 777 .local/logs
 
 umask 077
-printf '%s' "$LITELLM_MASTER_KEY" > .local/litellm-master-key
-
-# The master key bootstraps health checks. `provision-client-key.sh` replaces
-# this file with a scoped virtual key as soon as LiteLLM is ready.
-if [[ ! -s .local/litellm-api-key ]]; then
-  printf '%s' "$LITELLM_MASTER_KEY" > .local/litellm-api-key
+if [[ ${LITELLM_MASTER_KEY_SOURCE:-env} == env ]]; then
+  read_admin_key > .local/litellm-master-key
+  chmod 600 .local/litellm-master-key
+  if [[ ! -s .local/litellm-api-key ]]; then
+    read_admin_key > .local/litellm-api-key
+  fi
+else
+  # Compose mounts the files before provisioning the first virtual keys.
+  touch .local/litellm-api-key
+  if [[ ! -s .local/litellm-metrics-key ]]; then
+    printf 'sk-metrics-%s' "$(generate_hex 32)" > .local/litellm-metrics-key
+  fi
+  chmod 600 .local/litellm-metrics-key
 fi
 
 for service in litellm retrieval ingestion mcp-tools postgres redis; do
   touch ".local/logs/${service}.log"
 done
-chmod 600 .local/litellm-master-key .local/litellm-api-key
+chmod 600 .local/litellm-api-key
 chmod 600 .local/model-runtime.env
 chmod 666 .local/logs/*.log
 

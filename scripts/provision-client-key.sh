@@ -5,6 +5,7 @@ source "$(dirname "$0")/lib.sh"
 load_env
 require_command curl
 require_command jq
+admin_key=$(read_admin_key)
 
 write_client_env() {
   local key=$1
@@ -21,17 +22,17 @@ if [[ -s .local/litellm-api-key ]]; then
     http://127.0.0.1:4000/v1/models || true)
   # Bootstrap uses the master credential only until the gateway is ready.
   # A successful auth check alone must not preserve that placeholder for clients.
-  if [[ "$status" == 200 && "$existing_key" != "$LITELLM_MASTER_KEY" ]]; then
+  if [[ "$status" == 200 && "$existing_key" != "$admin_key" ]]; then
     # Add the new alias in place so running clients keep their credential and grants.
     key_hash=$(printf '%s' "$existing_key" | shasum -a 256 | cut -d' ' -f1)
     models=$(curl --fail --silent --show-error \
-      --header "Authorization: Bearer $LITELLM_MASTER_KEY" \
+      --header @/dev/fd/3 3<<<"Authorization: Bearer $admin_key" \
       "http://127.0.0.1:4000/key/info?key=$key_hash" | jq -ce '.info.models | arrays')
     if jq -e 'length > 0 and index("local-reranker") == null' <<< "$models" >/dev/null; then
       jq -cn --arg key "$key_hash" --argjson models "$models" \
         '{key: $key, models: ($models + ["local-reranker"])}' | \
         curl --fail --silent --show-error --output /dev/null \
-          --header "Authorization: Bearer $LITELLM_MASTER_KEY" --header 'Content-Type: application/json' \
+          --header @/dev/fd/3 3<<<"Authorization: Bearer $admin_key" --header 'Content-Type: application/json' \
           --data-binary @- http://127.0.0.1:4000/key/update
     fi
     write_client_env "$existing_key"
@@ -56,7 +57,7 @@ payload=$(jq -cn '{
 
 response=$(curl --fail --silent --show-error \
   --request POST http://127.0.0.1:4000/key/generate \
-  --header "Authorization: Bearer $LITELLM_MASTER_KEY" \
+  --header @/dev/fd/3 3<<<"Authorization: Bearer $admin_key" \
   --header 'Content-Type: application/json' \
   --data "$payload")
 

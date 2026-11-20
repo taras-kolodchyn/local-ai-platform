@@ -138,7 +138,7 @@ services:
     command:
       - litellm --config /etc/local-ai/litellm/config.yaml --port 4000 --num_workers 1 2>&1 | tee -a /var/log/local-ai/litellm.log
     environment:
-      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?run make bootstrap}
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-${OPENBAO_COMPOSE_PLACEHOLDER:?run make bootstrap}}
       HEADROOM_API_KEY: ${HEADROOM_PROXY_TOKEN:?run make bootstrap}
       UI_USERNAME: ${UI_USERNAME:-admin}
       UI_PASSWORD: ${UI_PASSWORD:-${LITELLM_MASTER_KEY}}
@@ -352,7 +352,7 @@ services:
       - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
     secrets:
-      - litellm_master_key
+      - prometheus_bearer
     ports:
       - "127.0.0.1:9090:9090"
     depends_on:
@@ -452,7 +452,7 @@ networks:
 secrets:
   litellm_client_key:
     file: ./.local/litellm-api-key
-  litellm_master_key:
+  prometheus_bearer:
     file: ./.local/litellm-master-key
   vector_backend_key:
     file: ./.local/vector-backend-key

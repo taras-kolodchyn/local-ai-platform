@@ -17,7 +17,7 @@ class OpenBaoConfigTests(unittest.TestCase):
         self.root = Path(temporary.name)
         (self.root / 'scripts').mkdir()
         for path in ('.env.example', 'compose.yaml', 'compose.openbao.yaml', 'compose.openbao-local.yaml',
-                     'scripts/lib.sh', 'scripts/compose.sh'):
+                     'compose.openbao-master.yaml', 'scripts/lib.sh', 'scripts/compose.sh'):
             shutil.copyfile(ROOT / path, self.root / path)
 
     def render(self, settings):
@@ -55,6 +55,19 @@ class OpenBaoConfigTests(unittest.TestCase):
         for settings in ('LITELLM_UI_PASSWORD_SOURCE=typo\n', 'LITELLM_UI_PASSWORD_SOURCE=openbao\n'):
             with self.subTest(settings=settings):
                 self.assertNotEqual(self.render(settings).returncode, 0)
+
+    def test_master_mode_separates_runtime_credentials_and_scrape_access(self):
+        settings = ('LITELLM_UI_PASSWORD_SOURCE=openbao-local\nLITELLM_MASTER_KEY_SOURCE=openbao-local\n'
+                    'LITELLM_MASTER_KEY=\nWORKSPACE_UID=501\nWORKSPACE_GID=20\n')
+        result = self.render(settings)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        config = json.loads(result.stdout)
+        agent = config['services']['litellm']
+        self.assertEqual(agent['environment']['LITELLM_MASTER_KEY'], '')
+        self.assertNotIn('LITELLM_SALT_KEY', agent['environment'])
+        self.assertIn('-config=/opt/openbao/agent-master.hcl', agent['command'])
+        self.assertTrue(config['secrets']['prometheus_bearer']['file'].endswith('/litellm-metrics-key'))
+        self.assertNotEqual(self.render('LITELLM_MASTER_KEY_SOURCE=openbao-local\n').returncode, 0)
 
     def test_local_server_is_persistent_private_and_only_the_gateway_gets_the_reader(self):
         result = self.render('LITELLM_UI_PASSWORD_SOURCE=openbao-local\nWORKSPACE_UID=501\nWORKSPACE_GID=20\n')

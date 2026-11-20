@@ -25,6 +25,9 @@ ok "Container health checks passed"
 docker compose up --detach --force-recreate --no-deps --wait --wait-timeout 120 litellm
 
 bash scripts/provision-client-key.sh
+if [[ ${LITELLM_MASTER_KEY_SOURCE:-env} == openbao-local ]]; then
+  python3 scripts/provision-metrics-key.py
+fi
 
 # Retrieval reads the key file for each embedding request, but restarting makes
 # the credential transition explicit and keeps future implementations honest.
@@ -37,6 +40,9 @@ python3 scripts/reconcile-agents.py --stop-runtimes
 python3 scripts/provision-workspace.py moyai-skills
 bash scripts/moyai.sh up
 bash scripts/smoke-test.sh
+if [[ ${LITELLM_MASTER_KEY_SOURCE:-env} == openbao-local ]]; then
+  python3 scripts/openbao-local.py finalize-master
+fi
 
 printf '\nLiteLLM: http://127.0.0.1:4000\n'
 printf 'Grafana: http://127.0.0.1:3000\n'
