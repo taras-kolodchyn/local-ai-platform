@@ -304,7 +304,7 @@ class RepositorySnapshotTests(unittest.TestCase):
         entered = threading.Event(); release = threading.Event(); second_entered = threading.Event()
         order = []; errors = []
         def backend(arguments, **kwargs):
-            if arguments[0] == 'docker':
+            if 'index-snapshot' in arguments:
                 is_first = first['snapshot_id'] in ' '.join(arguments)
                 number = '1' if is_first else '2'
                 order.append('index' + number)

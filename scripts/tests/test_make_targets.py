@@ -37,6 +37,9 @@ class MakeTargetTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()
             shutil.copy(ROOT / 'Makefile', root)
+            (root / 'scripts').mkdir()
+            for name in ('lib.sh', 'compose.sh'):
+                shutil.copy(ROOT / 'scripts' / name, root / 'scripts')
             source = root / "a developer's example"
             source.mkdir()
             docker = root / 'docker'
