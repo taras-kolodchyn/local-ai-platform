@@ -70,13 +70,7 @@ else
   failures=$((failures + 1))
 fi
 
-for port in 3000 4000 8000 8001 9090 12434; do
-  if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
-    info "Port $port is already in use (acceptable when this stack is running)"
-  else
-    ok "Port $port available"
-  fi
-done
+bash scripts/host-ports.sh report
 
 if ((failures > 0)); then
   die "Doctor found $failures blocking issue(s)"

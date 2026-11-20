@@ -38,13 +38,7 @@ python3 scripts/moyai-prepare.py --ui check
 python3 scripts/reconcile-agents.py --check
 ok "Local Moyai is healthy and legacy workspace agent registrations are absent"
 
-for port in 3000 4000 8000 8001 9090 12434; do
-  listeners=$(lsof -nP -iTCP:"$port" -sTCP:LISTEN 2>/dev/null || true)
-  [[ -n "$listeners" ]] || die "Expected listener is missing on port $port"
-  if grep -Eq '(\*:|0\.0\.0\.0:|\[::\]:)' <<< "$listeners"; then
-    die "Port $port is exposed beyond loopback"
-  fi
-done
+bash scripts/host-ports.sh verify
 ok "All host listeners are loopback-only"
 
 info "Checking fresh LiteLLM and Grafana dashboard logins using .env credentials..."

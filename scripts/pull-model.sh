@@ -17,12 +17,17 @@ done
 docker model status >/dev/null 2>&1 || die "Docker Model Runner did not become ready"
 ok "Docker Model Runner healthy"
 
-info "Pulling pinned coding model (this can download about 16.5 GB)..."
-docker model pull "$QWEN_MODEL"
-ok "Qwen coding model available"
+info "Pulling the coding and embedding models in parallel (the coding model can download about 16.5 GB)..."
+docker model pull "$QWEN_MODEL" &
+coding_pull=$!
+trap 'kill "$coding_pull" 2>/dev/null || true' EXIT
 
-info "Pulling pinned embedding model..."
-docker model pull "$EMBEDDING_MODEL"
+pull_status=0
+docker model pull "$EMBEDDING_MODEL" || pull_status=$?
+wait "$coding_pull" || pull_status=$?
+trap - EXIT
+((pull_status == 0)) || exit "$pull_status"
+ok "Qwen coding model available"
 ok "Qwen embedding model available"
 
 python3 scripts/pull-reranker.py
