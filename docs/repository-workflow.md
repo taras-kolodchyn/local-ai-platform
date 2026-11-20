@@ -157,7 +157,7 @@ Compatibility sources: [Linux child subreapers](https://man7.org/linux/man-pages
 [Cargo offline and locked execution](https://doc.rust-lang.org/cargo/commands/cargo-test.html),
 [Cargo vendoring](https://doc.rust-lang.org/cargo/commands/cargo-vendor.html),
 [LiteLLM virtual key permissions](https://docs.litellm.ai/docs/proxy/virtual_keys),
-[pinned LiteLLM route checks](https://github.com/BerriAI/litellm/blob/v1.109.1/litellm/proxy/auth/route_checks.py).
+[pinned LiteLLM route checks](https://github.com/BerriAI/litellm/blob/v1.110.2/litellm/proxy/auth/route_checks.py).
 See the [approved design](superpowers/specs/2026-11-17-repository-workflow-design.md)
 for the implementation boundaries and the
 [2026-11-17 verified results](results/repository-workflow-2026-11-17.md) for

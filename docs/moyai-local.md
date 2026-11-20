@@ -82,7 +82,7 @@ Without that setting, LiteLLM 1.109.1 displays its default cloud setup page even
 when a separate local Moyai is running. The link persists in the gateway database;
 reload an already-open LiteLLM tab after connecting. The menu's upstream
 description may still say “Cloud Coding Agent”; its target is the local URL.
-See the [upstream UI setting](https://github.com/BerriAI/litellm/blob/v1.109.1/litellm/proxy/ui_crud_endpoints/proxy_setting_endpoints.py#L373).
+See the [upstream UI setting](https://github.com/BerriAI/litellm/blob/v1.110.2/litellm/proxy/ui_crud_endpoints/proxy_setting_endpoints.py#L380).
 
 The password file is an initial bootstrap credential, not an account-reset
 mechanism. Keep it with the private configuration backup. If it is lost, startup
@@ -162,7 +162,8 @@ assistant message alone does not count as successful execution.
 
 ## Versions and verification
 
-Verified 2026-11-16 against these exact components:
+The Moyai runtime was verified on 2026-11-16. The gateway version was updated
+and its local dashboard integration verified on 2026-11-20.
 
 | Component | Pin |
 | --- | --- |
@@ -172,7 +173,7 @@ Verified 2026-11-16 against these exact components:
 | OpenAI SDK | `3.29.0` |
 | Temporal CLI | `1.10.1`, pinned OCI digest in `compose.moyai.yaml` |
 | Sandbox Python / pytest | `3.14.10` / `9.2.0` |
-| LiteLLM | `1.109.1`, model alias `local-qwen` |
+| LiteLLM | [`1.110.2`](https://github.com/BerriAI/litellm/releases/tag/v1.110.2), model alias `local-qwen` |
 
 `make moyai-smoke RESTART=1` checks real native shell receipts with pytest exit
 code 0, downloaded artifacts, the local LiteLLM UI link, blocked external execution egress, offline HTML,

@@ -133,7 +133,7 @@ services:
 
   litellm:
     <<: *service-defaults
-    image: ghcr.io/berriai/litellm:v1.109.1
+    image: ghcr.io/berriai/litellm:v1.110.2@sha256:ef798594ca3db8d81bad2e1439f536f49b71fe095ee9f20416f5e149b4e22035
     entrypoint: ["/bin/sh", "-ec"]
     command:
       - litellm --config /etc/local-ai/litellm/config.yaml --port 4000 --num_workers 1 2>&1 | tee -a /var/log/local-ai/litellm.log
