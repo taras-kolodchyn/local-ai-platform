@@ -21,7 +21,8 @@ profile. Startup finishes by running the local smoke checks.
 
 With the prepared stack running, disconnect the Mac and run `make smoke-test`
 to exercise inference, retrieval, scoped tools, dashboard logins and monitoring.
-Each invocation of `make up` calls `docker model pull` and Compose build steps.
+Each `make up` runs `docker model pull` for the coding and embedding models
+in parallel and waits for both to succeed before configuring them. It also runs the Compose builds.
 These steps can require registry access even when a previous session ran locally.
 
 ## What remains local
