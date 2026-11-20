@@ -30,6 +30,10 @@ curl http://127.0.0.1:8080/health
 
 This handler constructs a SQL query string as a representation, not a database query. The implementation shows no database interaction.
 
+## Server startup
+
+The server starts listening on `0.0.0.0:8080` as defined in [src/main.rs](src/main.rs). The `app()` function supplies the router, and the `axum::serve()` call starts serving requests on the listener.
+
 ## Running focused Rust retry tests
 
 Contributors can run only the Rust retry regression integration target using:
