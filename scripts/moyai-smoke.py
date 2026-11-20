@@ -24,12 +24,20 @@ def compose(*args):
 
 def shell_evidence(client, session, turn):
     progress = client.request(f'/api/sessions/{session}/progress/{turn}?include_activity=true')
+    compacted = []
     for tool in progress.get('tools') or []:
         if tool['name'] != 'shell' or tool['status'] != 'completed':
             continue
         action = client.request(f'/api/sessions/{session}/progress/{turn}/actions/{tool["id"]}')
         if valid_pytest_action(action):
             return tool['id']
+        if action.get('output') == '[tool result cleared]':
+            compacted.append(tool['id'])
+    if compacted:
+        receipt = json.loads(compose('exec', '-T', '--user', '10001:10001', 'moyai', 'python',
+                                     '/opt/moyai-local/tests/observe_pytest_receipt.py', turn, *compacted))
+        if receipt in compacted:
+            return receipt
     raise RuntimeError('No completed native pytest shell receipt with exit_code 0 was found')
 
 

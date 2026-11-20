@@ -26,6 +26,7 @@ class MoyaiProvisioningTests(unittest.TestCase):
         for payload in (first, second):
             self.assertRegex(payload['key_alias'], r'^moyai-local-mvp-[0-9a-f]{32}$')
             self.assertEqual(payload['models'], ['local-qwen'])
+            self.assertEqual(payload['max_parallel_requests'], 10)
             self.assertEqual(payload['allowed_routes'], ['/v1/responses','/model/info'])
             self.assertEqual(payload['object_permission'], {'mcp_servers': [], 'vector_stores': []})
 
@@ -46,6 +47,25 @@ class MoyaiProvisioningTests(unittest.TestCase):
         self.assertEqual(module.prepare_key('fixture-master','fixture-owned'),'fixture-owned')
         self.assertEqual(len(updates),1)
         self.assertEqual(state['allowed_routes'],['/v1/responses','/model/info'])
+
+    def test_existing_moyai_key_gets_ten_slots_without_rotation_or_repeat_updates(self):
+        module = self.preparer()
+        info = module.new_key_payload() | {'status': 'active', 'max_parallel_requests': 2}
+        updates = []
+
+        def gateway(master, route, body=None):
+            if route.startswith('/key/info?'):
+                return {'info': dict(info)}
+            self.assertEqual(route, '/key/update')
+            self.assertEqual(body, {'key': 'fixture-owned', 'max_parallel_requests': 10})
+            updates.append(body)
+            info['max_parallel_requests'] = body['max_parallel_requests']
+
+        module.request = gateway
+        for _ in range(2):
+            self.assertEqual(module.prepare_key('master', 'fixture-owned'), 'fixture-owned')
+        self.assertEqual(len(updates), 1)
+        self.assertEqual(info['rpm_limit'], 60)
 
     def test_missing_password_is_recovered_without_changing_existing_account(self):
         module = self.preparer()

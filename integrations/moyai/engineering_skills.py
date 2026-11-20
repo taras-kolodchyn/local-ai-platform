@@ -3,7 +3,7 @@ from dataclasses import replace
 import re
 
 from pydantic_ai.exceptions import ModelRetry
-from pydantic_ai.messages import ModelRequest, RetryPromptPart, ToolReturnPart, UserPromptPart
+from pydantic_ai.messages import ModelRequest, RetryPromptPart, ToolCallPart, ToolReturnPart, UserPromptPart
 from pydantic_ai import RunContext
 from temporalio import activity, workflow
 
@@ -20,11 +20,19 @@ QWEN_CALL = re.compile(
 
 
 def selected_ids(messages, run_id):
+    cleared_call_id = None
     for message in reversed(messages):
-        if message.run_id == run_id:
-            for part in message.parts:
+        if message.run_id != run_id:
+            continue
+        for part in message.parts:
+            if cleared_call_id is None:
                 if isinstance(part, ToolReturnPart) and part.tool_name == SELECT_SKILLS and part.outcome == 'success':
-                    return part.content['skills']
+                    if isinstance(part.content, dict):
+                        return part.content['skills']
+                    # History compaction clears the result but retains its paired native call.
+                    cleared_call_id = part.tool_call_id
+            elif isinstance(part, ToolCallPart) and part.tool_name == SELECT_SKILLS and part.tool_call_id == cleared_call_id:
+                return part.args_as_dict().get('skills')
     return None
 
 

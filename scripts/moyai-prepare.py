@@ -18,6 +18,8 @@ LOCAL = ROOT / '.local/moyai'
 sys.path.insert(0, str(ROOT / 'integrations/moyai'))
 from local_config import INFERENCE_ROUTES, valid_scoped_key
 
+MAX_PARALLEL_REQUESTS = 10
+
 
 class ProvisionError(Exception):
     pass
@@ -78,29 +80,35 @@ def new_key_payload():
     return {
         'key_alias': 'moyai-local-mvp-' + uuid.uuid4().hex, 'models': ['local-qwen'],
         'allowed_routes': list(INFERENCE_ROUTES),
-        'rpm_limit': 60, 'max_parallel_requests': 2,
+        'rpm_limit': 60, 'max_parallel_requests': MAX_PARALLEL_REQUESTS,
         'object_permission': {'mcp_servers': [], 'vector_stores': []},
     }
 
 
 def prepare_key(master, key):
-    info = {}
-    if key and key != master:
-        try:
-            info = request(master, '/key/info?key=' + hashlib.sha256(key.encode()).hexdigest())['info']
-        except (HTTPError, URLError, OSError):
-            pass
-    if valid_scoped_key(key,master,info):
-        return key
-    # Reconcile only the exact previously supported, verifiably platform-owned scope.
-    if (set(info.get('allowed_routes') or []) == {'openai_routes','/model/info'}
-            and valid_scoped_key(key,master,info | {'allowed_routes':list(INFERENCE_ROUTES)})):
-        request(master,'/key/update',{'key':key,'allowed_routes':list(INFERENCE_ROUTES)})
-        updated = request(master,'/key/info?key='+hashlib.sha256(key.encode()).hexdigest())['info']
-        if not valid_scoped_key(key,master,updated):
-            raise ProvisionError('The owned inference key route restriction was not applied')
-        return key
-    return request(master, '/key/generate', new_key_payload())['key']
+    if not key or key == master:
+        return request(master, '/key/generate', new_key_payload())['key']
+
+    info_route = '/key/info?key=' + hashlib.sha256(key.encode()).hexdigest()
+    try:
+        info = request(master, info_route)['info']
+    except (HTTPError, URLError, OSError):
+        info = {}
+
+    changes = {}
+    if set(info.get('allowed_routes') or []) == {'openai_routes', '/model/info'}:
+        changes['allowed_routes'] = list(INFERENCE_ROUTES)
+    if not valid_scoped_key(key, master, info | changes):
+        return request(master, '/key/generate', new_key_payload())['key']
+
+    if info.get('max_parallel_requests') != MAX_PARALLEL_REQUESTS:
+        changes['max_parallel_requests'] = MAX_PARALLEL_REQUESTS
+    if changes:
+        request(master, '/key/update', {'key': key, **changes})
+        updated = request(master, info_route)['info']
+        if not valid_scoped_key(key, master, updated) or updated.get('max_parallel_requests') != MAX_PARALLEL_REQUESTS:
+            raise ProvisionError('LiteLLM did not apply the expected Moyai key settings')
+    return key
 
 
 def main():

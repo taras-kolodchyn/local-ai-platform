@@ -11,7 +11,9 @@ from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.tools import ToolDefinition
 
-from engineering_skills import SELECT_SKILLS
+from pydantic_ai_harness.compaction import ClearToolResults
+
+from engineering_skills import SELECT_SKILLS, selected_ids
 from moyai_workspace import SessionWorkspace
 
 
@@ -34,6 +36,23 @@ class SkillCallTests(unittest.IsolatedAsyncioTestCase):
                                                             'required': ['id'], 'additionalProperties': False})
         self.request = ModelRequestContext(model=None, model_settings={'temperature': 0}, messages=[],
             model_request_parameters=ModelRequestParameters(function_tools=[self.loader], deferred_capability_ids={SKILL}))
+
+    async def test_compacted_selection_recovers_only_the_successful_calls_skills(self):
+        for skills in ([SKILL, 'documentation-and-adrs'], []):
+            with self.subTest(skills=skills):
+                call = ToolCallPart(SELECT_SKILLS, {'skills': skills}, tool_call_id='chosen')
+                result = ToolReturnPart(SELECT_SKILLS, {'skills': skills}, tool_call_id='chosen')
+                other = ToolCallPart(SELECT_SKILLS, {'skills': ['other']}, tool_call_id='other')
+                messages = [
+                    ModelResponse(parts=[other, call], run_id='root'),
+                    ModelRequest(parts=[result], run_id='root'),
+                    ModelResponse(parts=[ToolCallPart('read_file', {}, tool_call_id='read')], run_id='root'),
+                    ModelRequest(parts=[ToolReturnPart('read_file', 'sample', tool_call_id='read')], run_id='root'),
+                ]
+                compacted = await ClearToolResults(max_messages=3, keep_pairs=1).compact(messages, self.ctx)
+                self.assertIsInstance(compacted[1].parts[0].content, str)
+                self.assertEqual(selected_ids(compacted, 'root'), skills)
+                self.assertIsNone(selected_ids(compacted, 'another-run'))
 
     async def check_response(self, *parts):
         response = ModelResponse(parts=list(parts))

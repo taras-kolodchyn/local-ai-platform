@@ -208,7 +208,8 @@ overriding the reference cannot retain the old model's label. All LiteLLM
 comments and descriptions remain English.
 These descriptions are deployment metadata exposed by LiteLLM's `/model/info`
 management API, as documented in [model management](https://docs.litellm.ai/docs/proxy/ui_store_model_db_setting).
-Metadata preservation was verified on 2026-11-17 with LiteLLM 1.109.1.
+On 2026-11-20, LiteLLM 1.110.2 preserved the configured metadata and returned
+all three local model aliases through the dashboard API.
 
 `make status` and `make status FORMAT=json` report resolved aliases, model
 references, artifact digests/size, resident models and measured host/process
@@ -271,7 +272,7 @@ verifies the Grafana session's admin identity. A stale Grafana volume password
 therefore fails the smoke test. Passwords and session tokens are kept out of
 test output and artifacts.
 
-Verified on 2026-11-16 with LiteLLM 1.109.1 and Grafana 13.3.1. Upstream references:
+Dashboard logins were verified on 2026-11-20 with LiteLLM 1.110.2 and Grafana 13.3.1.
 [LiteLLM UI credentials](https://docs.litellm.ai/docs/proxy/ui) and
 [Grafana password configuration](https://grafana.com/docs/grafana/latest/setup-grafana/configure-grafana/#admin_password)
 and [admin CLI](https://grafana.com/docs/grafana/latest/administration/cli/).
