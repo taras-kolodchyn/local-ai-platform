@@ -139,6 +139,7 @@ services:
       - litellm --config /etc/local-ai/litellm/config.yaml --port 4000 --num_workers 1 2>&1 | tee -a /var/log/local-ai/litellm.log
     environment:
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?run make bootstrap}
+      LITELLM_SALT_KEY: ${LITELLM_SALT_KEY:-${LITELLM_MASTER_KEY}}
       HEADROOM_API_KEY: ${HEADROOM_PROXY_TOKEN:?run make bootstrap}
       UI_USERNAME: ${UI_USERNAME:-admin}
       UI_PASSWORD: ${UI_PASSWORD:-${LITELLM_MASTER_KEY}}
@@ -453,6 +454,6 @@ secrets:
   litellm_client_key:
     file: ./.local/litellm-api-key
   prometheus_bearer:
-    file: ./.local/litellm-master-key
+    file: ./.local/litellm-metrics-key
   vector_backend_key:
     file: ./.local/vector-backend-key

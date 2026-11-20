@@ -56,6 +56,16 @@ class OpenBaoConfigTests(unittest.TestCase):
             with self.subTest(settings=settings):
                 self.assertNotEqual(self.render(settings).returncode, 0)
 
+    def test_env_gateway_retains_database_salt_and_scoped_metrics_key(self):
+        for configured, expected in (('fixture-database-salt', 'fixture-database-salt'), ('', 'fixture-master')):
+            with self.subTest(configured=configured):
+                result = self.render(f'LITELLM_MASTER_KEY=fixture-master\nLITELLM_SALT_KEY={configured}\n')
+                self.assertEqual(result.returncode, 0, result.stderr)
+                config = json.loads(result.stdout)
+                self.assertNotIn('openbao', config['services'])
+                self.assertEqual(config['services']['litellm']['environment']['LITELLM_SALT_KEY'], expected)
+                self.assertTrue(config['secrets']['prometheus_bearer']['file'].endswith('/litellm-metrics-key'))
+
     def test_master_mode_separates_runtime_credentials_and_scrape_access(self):
         settings = ('LITELLM_UI_PASSWORD_SOURCE=openbao-local\nLITELLM_MASTER_KEY_SOURCE=openbao-local\n'
                     'LITELLM_MASTER_KEY=\nWORKSPACE_UID=501\nWORKSPACE_GID=20\n')
@@ -64,7 +74,7 @@ class OpenBaoConfigTests(unittest.TestCase):
         config = json.loads(result.stdout)
         agent = config['services']['litellm']
         self.assertEqual(agent['environment']['LITELLM_MASTER_KEY'], '')
-        self.assertNotIn('LITELLM_SALT_KEY', agent['environment'])
+        self.assertEqual(agent['environment']['LITELLM_SALT_KEY'], '')
         self.assertIn('-config=/opt/openbao/agent-master.hcl', agent['command'])
         self.assertTrue(config['secrets']['prometheus_bearer']['file'].endswith('/litellm-metrics-key'))
         self.assertNotEqual(self.render('LITELLM_MASTER_KEY_SOURCE=openbao-local\n').returncode, 0)
