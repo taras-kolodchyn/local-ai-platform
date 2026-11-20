@@ -90,7 +90,9 @@ restores it from `runtime-config.json`; if both are missing while data remains,
 startup fails with recovery guidance rather than generating an invalid new login.
 Changing the file does not reset an existing account. Key preparation verifies
 the actual virtual-key scope through LiteLLM; a replaced/revoked key causes only
-the existing Moyai controller to reload its private configuration.
+the existing Moyai controller to reload its private configuration. The shared Moyai
+inference key allows 10 concurrent requests and 60 requests per minute. Startup
+updates the concurrency limit on an existing scoped key in place.
 
 ```sh
 make status
