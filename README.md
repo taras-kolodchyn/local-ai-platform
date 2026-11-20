@@ -185,6 +185,10 @@ inline answer. `make help` lists all supported commands.
 
 ## Shared dashboard login (optional)
 
+To manage just the LiteLLM dashboard password with AppRole and automatic rotation,
+see the [optional OpenBao Agent setup](docs/openbao.md). The default offline
+setup uses the local credentials below.
+
 Bootstrap generates separate credentials for the LiteLLM and Grafana dashboards.
 For a shared login, run `make bootstrap` and edit the following entries in the
 generated, Git-ignored `.env`. Use the same password in both password fields.
@@ -209,7 +213,7 @@ docker compose exec -T grafana sh -c '
 '
 ```
 
-The smoke check opens fresh sessions using `UI_USERNAME` and `UI_PASSWORD` for
+In local-password mode, the smoke check opens fresh sessions using `UI_USERNAME` and `UI_PASSWORD` for
 LiteLLM (the default password is `LITELLM_MASTER_KEY`), and `admin` and
 `GRAFANA_ADMIN_PASSWORD` for Grafana. User ID 1 is this stack's initial Grafana
 admin. Dashboard logins were verified on 2026-11-20 with LiteLLM 1.110.2 and

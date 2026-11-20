@@ -30,7 +30,7 @@ require_command() {
 configure_compose_scope() {
   export COMPOSE_PROJECT_NAME=local-ai-platform
   export COMPOSE_FILE="$ROOT_DIR/compose.yaml"
-  unset COMPOSE_PROFILES
+  unset COMPOSE_PROFILES COMPOSE_PATH_SEPARATOR
 }
 
 # Public scripts own this localhost platform. Inherited Compose overrides must
@@ -51,6 +51,11 @@ load_env() {
   source .env
   set +a
   configure_compose_scope
+  case ${LITELLM_UI_PASSWORD_SOURCE:-env} in
+    env) ;;
+    openbao) export COMPOSE_FILE="$COMPOSE_FILE:$ROOT_DIR/compose.openbao.yaml" ;;
+    *) die 'LITELLM_UI_PASSWORD_SOURCE must be env or openbao' ;;
+  esac
 }
 
 read_secret_file() {

@@ -47,8 +47,13 @@ for port in 3000 4000 8000 8001 9090 12434; do
 done
 ok "All host listeners are loopback-only"
 
-info "Checking fresh LiteLLM and Grafana dashboard logins using .env credentials..."
-python3 scripts/check-dashboard-login.py
+info "Checking fresh LiteLLM and Grafana dashboard logins..."
+if [[ ${LITELLM_UI_PASSWORD_SOURCE:-env} == openbao ]]; then
+  docker compose exec -T litellm cat /run/openbao-ui/ui-password |
+    python3 scripts/check-dashboard-login.py --litellm-password-stdin
+else
+  python3 scripts/check-dashboard-login.py
+fi
 
 embedding_payload=$(jq -cn '{model:"local-embeddings",input:["loopback listeners in the offline profile"],encoding_format:"float",cache:{"no-cache":true,"no-store":true}}')
 api_post /v1/embeddings "$embedding_payload" "$smoke/embedding.json"

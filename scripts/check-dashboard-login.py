@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Check fresh dashboard sessions using credentials exported by lib.sh/load_env."""
+"""Check fresh dashboard sessions using environment or standard-input credentials."""
 
+import argparse
 from http.client import HTTPException
 from http.cookiejar import CookieJar
 import json
@@ -95,13 +96,30 @@ def check_grafana(base, password):
             raise DashboardLoginError('Grafana session does not belong to the configured server admin')
 
 
-def main(litellm_base='http://127.0.0.1:4000', grafana_base='http://127.0.0.1:3000'):
+def read_litellm_password():
+    try:
+        password = sys.stdin.buffer.read().decode('utf-8') if sys.stdin is not None else ''
+    except (OSError, ValueError):
+        raise DashboardLoginError('Could not read the LiteLLM UI password as UTF-8 from stdin') from None
+    if not password or password == 'GENERATE_ME' or '\0' in password:
+        raise DashboardLoginError('Invalid LiteLLM UI password on stdin')
+    return password
+
+
+def main(litellm_base='http://127.0.0.1:4000', grafana_base='http://127.0.0.1:3000', *, argv=()):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--litellm-password-stdin', action='store_true',
+                        help='Read the exact UTF-8 LiteLLM UI password from standard input')
+    options = parser.parse_args(argv)
     try:
         username = os.environ.get('UI_USERNAME') or 'admin'
-        password = os.environ.get('UI_PASSWORD') or os.environ.get('LITELLM_MASTER_KEY', '')
+        if options.litellm_password_stdin:
+            password = read_litellm_password()
+        else:
+            password = os.environ.get('UI_PASSWORD') or os.environ.get('LITELLM_MASTER_KEY', '')
+            if not password or password == 'GENERATE_ME':
+                raise DashboardLoginError('Set UI_PASSWORD or LITELLM_MASTER_KEY in .env before testing login')
         grafana_password = os.environ.get('GRAFANA_ADMIN_PASSWORD', '')
-        if not password or password == 'GENERATE_ME':
-            raise DashboardLoginError('Set UI_PASSWORD or LITELLM_MASTER_KEY in .env before testing login')
         if not grafana_password or grafana_password == 'GENERATE_ME':
             raise DashboardLoginError('Set GRAFANA_ADMIN_PASSWORD in .env before testing login')
         check_litellm(litellm_base, username, password)
@@ -119,4 +137,4 @@ def main(litellm_base='http://127.0.0.1:4000', grafana_base='http://127.0.0.1:30
 
 
 if __name__ == '__main__':
-    raise SystemExit(main())
+    raise SystemExit(main(argv=sys.argv[1:]))
