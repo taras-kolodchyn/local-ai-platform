@@ -30,7 +30,7 @@ def main():
         index_documents()
     provision.vectors()
     local = provision.LOCAL
-    admin = provision.gateway((local / 'litellm-master-key').read_text().strip())
+    admin = provision.gateway(provision.master_key())
     stores = json.loads((local / 'workspace-registry.json').read_text())['stores']
     sid = stores[f'{REPOSITORY}:{BRANCH}']
     route = f'/v1/vector_stores/{sid}/search'

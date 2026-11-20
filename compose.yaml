@@ -352,7 +352,7 @@ services:
       - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
     secrets:
-      - litellm_master_key
+      - prometheus_bearer
     ports:
       - "127.0.0.1:9090:9090"
     depends_on:
@@ -452,7 +452,7 @@ networks:
 secrets:
   litellm_client_key:
     file: ./.local/litellm-api-key
-  litellm_master_key:
+  prometheus_bearer:
     file: ./.local/litellm-master-key
   vector_backend_key:
     file: ./.local/vector-backend-key

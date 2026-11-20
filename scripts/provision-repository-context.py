@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import re
 import secrets
+import subprocess
 import sys
 from urllib.error import HTTPError
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
@@ -138,7 +139,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--registration', type=Path)
     args = parser.parse_args()
-    master = (ROOT / '.local/litellm-master-key').read_text().strip()
+    master = subprocess.check_output(['bash', str(ROOT / 'scripts/read-admin-key.sh')], text=True).strip()
     opener = build_opener(ProxyHandler({}), NoRedirects())
 
     def admin(method, route, body=None):

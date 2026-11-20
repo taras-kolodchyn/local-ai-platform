@@ -1,4 +1,4 @@
-# LiteLLM dashboard password from OpenBao
+# LiteLLM credentials from OpenBao
 
 The default `make up` reads the dashboard password from `.env` and works with
 the ordinary LiteLLM image. The optional image adds OpenBao Agent 2.7.3 to
@@ -7,6 +7,18 @@ process environment. This uses OpenBao's process supervisor (upstream labels
 it public beta) and works with the standard LiteLLM image and license.
 [OpenBao process supervisor](https://openbao.org/docs/agent-and-proxy/agent/process-supervisor/) ·
 [LiteLLM UI credentials](https://docs.litellm.ai/docs/proxy/ui)
+
+## What appears in the LiteLLM UI
+
+The Compose integration runs OpenBao Agent as the gateway's parent process.
+Agent signs in to OpenBao using AppRole, reads KV and starts LiteLLM with the
+rendered environment. The dashboard displays the usual login and virtual keys.
+It has no connection record for the Agent or controls for its KV rotation.
+Use `make status` to see the local services and the rotation commands below to
+verify credentials. In LiteLLM 1.110.2, **Settings → Admin Settings → Hashicorp
+Vault** configures LiteLLM's separate native Vault adapter, which requires a
+premium license. [LiteLLM native Vault configuration](https://docs.litellm.ai/docs/secret_managers/hashicorp_vault) ·
+[OpenBao Agent process supervisor](https://openbao.org/docs/agent-and-proxy/agent/process-supervisor/)
 
 ## Run OpenBao on this Mac
 
@@ -38,7 +50,48 @@ Startup issues a fresh certificate and installs its CA in the gateway.
 [OpenBao seal and unseal](https://openbao.org/docs/concepts/seal/) ·
 [Raft storage](https://openbao.org/docs/configuration/storage/raft/)
 
-## Use an existing OpenBao server
+## Move the master key on the local Mac
+
+On an existing installation, keep the gateway running with its current keys.
+Set `OPENBAO_ADMIN_TOKEN_FILE` to an owner-only file containing a provisioning
+token for **this local OpenBao**. Run `make openbao-enable-master`. Provisioning
+needs read/create access to the two exact KV entries and permission to create
+the two named policies and AppRoles, read their role IDs and issue SecretIDs.
+The bootstrap of a fresh local OpenBao can create these roles itself.
+
+The gateway role `litellm-gateway-secrets` reads `UI_PASSWORD`,
+`LITELLM_MASTER_KEY` and `LITELLM_SALT_KEY` under `secret/data/litellm/`.
+The separate operator role `litellm-master-rotate` reads and updates only
+`LITELLM_MASTER_KEY`. The UI password operator retains its existing scope.
+
+Set `LITELLM_MASTER_KEY_SOURCE=openbao-local` and keep
+`LITELLM_UI_PASSWORD_SOURCE=openbao-local` in the private `.env`. Clear the
+migrated `LITELLM_MASTER_KEY` and any `LITELLM_SALT_KEY` there. Run `make up`.
+Prometheus receives its own virtual key for the metrics endpoint. After the
+smoke tests, startup confirms the retired key is rejected before removing
+the legacy host key file.
+
+For subsequent rotations, run `make openbao-rotate-master`. It updates KV
+using the expected version and verifies that an admin request succeeds with
+the new key and gets HTTP 401 with the old one. If this fails it attempts to
+restore the previous version's value. The Agent restarts LiteLLM when the
+value changes. In-flight requests may need retrying. Existing virtual keys
+keep their identities and grants in PostgreSQL.
+
+LiteLLM 1.110.2 uses the master key to encrypt stored credentials when no
+separate salt is configured. Migration preserves the existing encryption
+value as `LITELLM_SALT_KEY`. Keep this salt stable across master-key rotations
+and back up the OpenBao state with the matching database.
+[LiteLLM encryption and master-key rotation](https://docs.litellm.ai/docs/enterprise/moving_from_oss)
+
+Verified on the working Mac on 2026-11-20 with LiteLLM 1.110.2 and OpenBao
+2.7.3. The second KV version passed an admin request and both previous admin
+keys returned HTTP 401. The same virtual keys handled a Moyai Responses
+request, platform embeddings and repository-context search. A fresh Moyai
+conversation completed, the dashboard login succeeded, and Prometheus
+scraped with its dedicated credential. The UI's native Vault address was empty.
+
+## Configure an external OpenBao for the dashboard
 
 Use a KV v2 engine mounted at `secret/` and AppRole authentication mounted at
 `auth/approle/`. From an authorized OpenBao CLI session, create a dedicated
@@ -91,7 +144,7 @@ UI_PASSWORD=
 
 Run `make up`. Open the [local LiteLLM dashboard](http://127.0.0.1:4000/ui)
 and sign in with `UI_USERNAME` (default `admin`) and the password in OpenBao.
-The master key, API keys, PostgreSQL and Grafana credentials use their existing
+In external dashboard-only mode, the master key, API keys, PostgreSQL and Grafana credentials use their existing
 configuration. The Agent in the gateway container can read the mounted AppRole
 files. This mode connects to the specified external server.
 

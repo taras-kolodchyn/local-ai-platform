@@ -49,7 +49,7 @@ def verify_bindings(resolved, observed):
 def main():
     try:
         provision = runpy.run_path(str(ROOT / 'scripts/provision-workspace.py'))
-        master_key = (provision['LOCAL'] / 'litellm-master-key').read_text().strip()
+        master_key = provision['master_key']()
         request = provision['gateway'](master_key)
         verify_bindings(CONFIG['resolve'](), request('GET', '/model/info'))
         # The dashboard rereads the configuration file on this route.

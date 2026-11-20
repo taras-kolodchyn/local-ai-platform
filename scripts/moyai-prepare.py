@@ -25,6 +25,10 @@ class ProvisionError(Exception):
     pass
 
 
+def master_key():
+    return subprocess.check_output(['bash', str(ROOT / 'scripts/read-admin-key.sh')], text=True).strip()
+
+
 def private_write(path, value):
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     if path.is_file() and path.read_text() == value:
@@ -120,7 +124,7 @@ def main():
 
     key_file = LOCAL / 'litellm-key'
     key = key_file.read_text().strip() if key_file.exists() else ''
-    master = (ROOT / '.local/litellm-master-key').read_text().strip()
+    master = master_key()
     key = prepare_key(master,key)
     private_write(key_file, key + '\n')
     context = runpy.run_path(str(ROOT / 'scripts/provision-repository-context.py'))
@@ -148,7 +152,7 @@ if __name__ == '__main__':
         parser.add_argument('--ui', choices=('connect', 'check'), help='Configure or verify the local LiteLLM UI link')
         args = parser.parse_args()
         if args.ui:
-            master = (ROOT / '.local/litellm-master-key').read_text().strip()
+            master = master_key()
             (connect_ui if args.ui == 'connect' else check_ui)(master)
             print('LiteLLM Moyai UI link verified: http://127.0.0.1:8787')
         else:

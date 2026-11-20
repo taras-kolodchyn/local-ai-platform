@@ -203,7 +203,7 @@ def main():
     spec = importlib.util.spec_from_file_location('provision_workspace', ROOT / 'scripts/provision-workspace.py')
     provision = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(provision)
-    request = provision.gateway((provision.LOCAL / 'litellm-master-key').read_text().strip())
+    request = provision.gateway(provision.master_key())
     if args.purge_data:
         print(json.dumps(purge(request, provision.LOCAL)))
     elif args.check:

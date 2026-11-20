@@ -57,7 +57,8 @@ class RetrievalProbeTests(unittest.TestCase):
             (local / 'litellm-master-key').write_text('admin')
             stores = {'user-checkout:main': 'vs_other', f'{probe.REPOSITORY}:{probe.BRANCH}': 'vs_platform'}
             (local / 'workspace-registry.json').write_text(json.dumps({'stores': stores}))
-            with (patch.object(vector.provision, 'LOCAL', local), patch.object(vector.provision, 'vectors'),
+            with (patch.object(vector.provision, 'master_key', return_value='admin'),
+                  patch.object(vector.provision, 'LOCAL', local), patch.object(vector.provision, 'vectors'),
                   patch.object(vector.provision, 'gateway', keys.__getitem__), patch.object(vector, 'check_citations'),
                   patch.object(sys, 'argv', ['vector-smoke.py', '--indexed'])):
                 vector.main()
