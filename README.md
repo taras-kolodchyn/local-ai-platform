@@ -1,37 +1,26 @@
 # Local AI Platform
 
-Moyai runs coding tasks locally on Apple Silicon using Qwen through LiteLLM and
-Docker Model Runner. PostgreSQL/pgvector provides repository context, Redis
-caches gateway responses, and Grafana displays platform metrics.
+Run Moyai on an Apple Silicon Mac to write and test code in a local sandbox. Qwen
+handles inference through LiteLLM, PostgreSQL and pgvector supply cited repository
+context, and Moyai returns files for download. The default profile runs locally
+after the initial downloads using local credentials.
 
-The [Rust demo acceptance report](docs/results/repository-reliability-2026-11-17.md)
-records the task, independent checks and downloaded patch. Run `make verify`
-to produce a fresh report on this Mac.
+## Quick start
 
-Current dependency pins and upgrade verification: [2026-11-16 update](docs/dependency-update-2026-11-16.md).
+Use an Apple Silicon Mac with Docker Desktop, Docker Compose and Docker Model
+Runner. The default Qwen3-Coder artifact is about 16.5 GB. Allow at least 30 GiB
+of free disk space for a fresh setup. The host check requires 32 GiB of unified
+memory. For the default 65,536-token context, use 48 GiB or more. With 32–47 GiB,
+run `make bootstrap` after cloning and set `QWEN_CONTEXT_SIZE=32768` in the
+generated `.env` before starting. The project recorded Docker Desktop 4.99.0 on
+2026-11-16 and Model Runner 1.2.9 on 2026-11-17. [Docker Model Runner](https://docs.docker.com/ai/model-runner/) ·
+[Desktop environment](docs/dependency-update-2026-11-16.md) ·
+[Model Runner environment](docs/results/repository-workflow-2026-11-17.md#runtime-identity)
 
-## Why this exists
-
-A coding agent is more than a local chat UI. It needs a model gateway, tool permissions, retrieval, caching, auditability, and a safe execution boundary. This repository puts those pieces behind one OpenAI-compatible endpoint:
-
-```text
-Moyai -> LiteLLM -> local Qwen on Apple Silicon
-           |
-           +-> Redis response cache
-           +-> MCP Gateway
-           +-> PostgreSQL + pgvector retrieval
-           +-> Prometheus / Loki / Grafana
-```
-
-## Quick start target
-
-Requirements: an Apple Silicon Mac and Docker Desktop 4.40 or newer with at least 32 GiB unified memory. The default 30B coding model is approximately 16.5 GB before runtime and KV-cache overhead; 48 GiB is recommended for a useful coding context.
-
-Cargo must also be available on `PATH`: install the Rust toolchain using the
-official [Rust installer](https://rust-lang.org/tools/install/) or
-[`brew install rust`](https://formulae.brew.sh/formula/rust), then check
-`cargo --version`. `make doctor` checks both command availability and whether
-Cargo can run. Verified 2026-11-17 with Homebrew Cargo and Rust 1.100.0.
+Install Git, Make, curl, jq, OpenSSL, Python and Cargo. The test suite supports
+Python 3.11–3.14. Check that `cargo --version` works. The first setup needs
+internet access for images, model artifacts and build dependencies.
+[Rust installation](https://rust-lang.org/tools/install/) · [Offline preparation](docs/offline.md)
 
 ```sh
 git clone https://github.com/taras-kolodchyn/local-ai-platform.git
@@ -39,196 +28,191 @@ cd local-ai-platform
 make up
 ```
 
-`make up` diagnoses the host, creates a local `.env`, renders the effective model
-configuration, enables Docker Model Runner, pulls pinned model artifacts, and
-starts the core services and local Moyai as the single default agent. It retires
-the old workspace A2A registrations and verifies health, gateway, cache and scoped
-knowledge access.
+`make up` creates local credentials, renders the gateway configuration, prepares
+the models, checks the host, starts the core services and Moyai, and runs live
+smoke checks. Open [Moyai](http://127.0.0.1:8787) and sign in as `admin` using the
+generated password in `.local/moyai/admin-password`. For a first task, ask it to
+create a Python function and a test, run pytest and save both files. Open **Files**
+in the conversation to download the artifacts.
 
-### Local prompt compression
+Use `make status` to see the services and resident models. `make down` stops
+Moyai, then the core services and any connected profile, and unloads the
+configured coding and embedding models. It preserves conversations, volumes and
+downloaded model artifacts. `make restart` performs the full stop/start cycle.
+[Platform operations](docs/platform-operations.md) · [Docker model unload](https://docs.docker.com/reference/cli/docker/model/unload/)
 
-LiteLLM automatically applies Headroom to eligible requests from all clients,
-including Moyai, before forwarding them to the model. Headroom runs on a
-private Docker network shared with the gateway. It uses
-structural compression for eligible history such as older tool results. LiteLLM
-preserves system messages, the latest user instruction and the latest assistant
-tool exchange. If the sidecar is unavailable, the gateway forwards the original
-context. To compare one request with compression bypassed, send the header
-`x-headroom-bypass: true`. The gateway policy lives in `litellm/config.yaml`.
-[LiteLLM integration](https://docs.litellm.ai/docs/proxy/headroom)
-· [Headroom compression API](https://docs.headroomlabs.ai/docs/proxy#post-v1compress)
+## How requests run
 
-Verified on Apple Silicon on 2026-11-19 with LiteLLM 1.109.1 and Headroom
-0.44.0. On a synthetic 240-line timestamped log, Qwen's reported input fell
-from 6,558 to 280 tokens on both API routes. The answer retained the exact
-error code. An unstructured repetitive text sample yielded no reduction.
-Run `python3 scripts/compression-smoke.py` against the running stack to repeat
-the log comparison. It also runs during `make smoke-test`.
-
-In a live Moyai repair of the Rust retry ceiling on the same date, both patches
-passed independent acceptance. The baseline took 213.8 seconds and used
-239,112 input tokens across 20 model calls. With compression, the task took
-241.2 seconds and used 267,634 input tokens across 22 calls. Headroom reported
-611 tokens removed across the compressed run. The agent took different tool
-steps, so the elapsed difference includes variation between runs.
-
-`make up` seeds the **Skills** section of the [local LiteLLM dashboard](http://127.0.0.1:4000/ui)
-with [25 reviewed, text-only workflows](integrations/moyai/skills) adapted from
-[Addy Osmani’s MIT-licensed catalog](https://github.com/addyosmani/agent-skills/tree/39b723ceebf81474d0557c1fecd01eddab585563/skills).
-At the start of a turn, Moyai reads the enabled text guides from the local
-LiteLLM marketplace. Qwen sees their one-line summaries, selects the relevant
-workflows and loads the selected instructions through native `load_capability`
-calls. A simple question can select zero skills. This works offline, including
-in a fresh chat. The upstream Git links record provenance.
-
-To change a guide, open its LiteLLM Skills entry and edit **Description**.
-The first line is the selection summary. A blank line separates it from the
-Markdown instructions. The `moyai-text-v1` keyword identifies this format.
-Use **Enabled** to control availability. Changes apply on the next turn without
-rebuilding or restarting Moyai. Each turn pins its catalog so retries and worker
-restarts see the same instructions. Re-running `make up` preserves dashboard
-edits and enablement. The marketplace entry `addyosmani-test-driven-development`
-uses the native ID `test-driven-development` in chat.
-
-Skills contribute instructions. Moyai enforces the tool permissions of the active
-chat or repository phase. The browser workflow can interpret a local DevTools
-trace and the release workflow can prepare a rollout from local evidence.
-
-Choose **local-qwen-analysis** in Moyai's model picker for chat-only analysis.
-It uses the same local Qwen through LiteLLM. The profile permits reading and
-listing existing files and loading the selected LiteLLM skills. The workspace
-refuses commands and file changes. Plans, proposed code and ADRs go in the
-chat. For a shortcut, start a web message with `/analysis` or end it with
-“без змін у файлах”. Moyai records the analysis profile on the turn and as the
-chat's selected model. Choose **local-qwen** to resume editing on a later turn.
-The local integration uses Pydantic AI 2.55.0's
-[read-only workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/#read-only-access).
-
-With the platform running, `python3 scripts/moyai-skills-smoke.py` checks a
-Rust task that needs planning, code simplification and an ADR. Run
-`python3 scripts/moyai-skills-smoke.py --case latency` to check a measurement
-and alerting task, or use `--case arithmetic` to check that a simple calculation
-loads zero workflows. Each command sends one natural-language message to a new
-private chat and prints its URL. It verifies Qwen's selection, the instructions
-returned by the native loader, the inline answer and the untouched sandbox.
-Marketplace registration and native chat loading were checked on 2026-11-18
-with LiteLLM 1.109.1 and Pydantic AI 2.55.0. See the
-[LiteLLM marketplace API](https://docs.litellm.ai/docs/tutorials/claude_code_plugin_marketplace)
-and [Pydantic AI tool choice](https://ai.pydantic.dev/tools-advanced/#tool-choice).
-
-`make down` stops Moyai, then all platform containers (including previously
-enabled profiles), then unloads the configured coding and embedding models from
-Model Runner memory. Volumes, conversations and downloaded model artifacts stay
-on disk. `make restart` performs this same stop/start cycle. `make status` shows
-both service groups and distinguishes resident models from downloaded artifacts.
-
-The former development/review/research workspace runtimes are retired from the
-default Compose stack. Moyai keeps its existing files and conversations. The
-separate, one-time migration in `scripts/reconcile-agents.py --purge-data` removes only the
-retired profiles' volumes, memory database, local state and dedicated keys; it
-requires the gateway and database to be running. See [platform operations](docs/platform-operations.md).
-
-Moyai keeps its isolated Compose definition and existing data volumes, while the
-public commands manage it as part of the complete stack. The shutdown order
-removes its bridge before the core gateway network, then unloads inference after
-all platform clients have stopped. A failed cleanup phase makes `make down` fail
-after attempting the remaining phases, so it cannot silently report success.
-Managed commands pin the canonical Compose project names and files, ignore
-ambient Compose overrides, and load model settings from `.env` for both startup
-and shutdown. Connected profiles require their explicit opt-in command.
-
-Model unloading uses the official [`docker model unload`](https://docs.docker.com/reference/cli/docker/model/unload/)
-command for `QWEN_MODEL` and `EMBEDDING_MODEL` from `.env`; unrelated models and
-Docker projects are outside this shutdown. Without `.env`, shutdown uses the
-repository defaults and reports that fallback. Docker Desktop remains running;
-macOS may retain reclaimable file cache after inference allocations are released.
-Verified 2026-11-16 with Docker CLI 29.9.3 and Docker Model Runner 1.2.9.
-
-Useful commands:
-
-```sh
-make help
-make doctor
-make status
-make logs
-make smoke-test
-make verify
-make index REPO=/absolute/path/to/repository
-make connected-up
-make down
-```
-
-## Tests
-
-`make test` requires Python 3.11–3.14 and Cargo. It runs unit and contract tests,
-real PostgreSQL memory isolation, and the Rust demo tests using
-`cargo test --locked`. Missing or unusable Cargo fails before Python environment
-setup, package installation, or database startup; Rust tests are required and
-their failures fail the command.
-
-The DB test starts a disposable `pgvector/pgvector:0.8.7-pg17-bookworm` container,
-binds a random port on `127.0.0.1`, and runs the production memory provisioner.
-Its data lives in tmpfs; the container is removed after success or failure.
-This requires a running Docker engine, but no `.env`, models, or running platform
-stack. Database startup or provisioning failures fail the test instead of
-skipping it. GitHub CI runs the same fixture automatically.
-
-`make verify` runs lint, the full required test suite, startup, JSON status,
-endpoint smoke checks and real Moyai file/shell/pytest/artifact acceptance with a
-restart. It always attempts `make down` and checks the final owned-container and
-resident-model inventories, including after failures or interruption. Private
-phase logs and a result receipt are written under `.local/verification/`.
-
-For an explicitly provisioned disposable database, `MEMORY_TEST_DSN` can still
-be supplied to use that database instead. The default generates temporary
-credentials and exports the DSN only inside pytest.
-
-## Endpoints
-
-All host-facing services bind to loopback by default.
-
-| Service | URL |
+| Task | Execution path |
 | --- | --- |
+| Chat and code generation | Moyai or an OpenAI-compatible client → LiteLLM → Docker Model Runner on the Mac. The llama.cpp inference engine uses Metal in Docker Desktop's macOS host sandbox. |
+| File edits and commands | Moyai connects over SSH to a separate Linux sandbox. Temporal persists workflow state and Moyai delivers saved files through the local UI. |
+| Repository search | An internal bridge uses a dedicated search credential for the selected snapshot and indexed generation. Retrieval combines pgvector cosine search with PostgreSQL full-text search over source, symbols and paths. |
+| Observability | Prometheus collects metrics, Alloy sends service logs to Loki, and Grafana displays them locally. Request and response body logging is off by default. |
+
+Moyai uses an inference credential restricted to `local-qwen` and runs commands in
+a sandbox with a private workspace and no mounted Docker socket, host home or
+writable source checkout. This setup is designed for one trusted local operator.
+Conversations have separate directories and share one sandbox OS user. Treat
+repository content, tool output and retrieved passages as untrusted data.
+[Inference engines and Metal](https://docs.docker.com/ai/model-runner/inference-engines/) ·
+[Local Moyai architecture](docs/moyai-local.md) · [Security design](docs/security.md)
+
+### Models and access
+
+Point an OpenAI-compatible client at `http://127.0.0.1:4000/v1` and use the scoped
+virtual key provisioned by `make up`. For a shell client, `source .local/client.env`
+loads the key as `LITELLM_API_KEY`. Client requests use these stable aliases.
+
+| LiteLLM alias | Default model | Use |
+| --- | --- | --- |
+| `local-qwen` | Qwen3-Coder 30B-A3B, UD-Q4_K_XL | Chat Completions and streamed Responses with tool calls |
+| `local-embeddings` | Qwen3-Embedding 0.6B, F16 | 1,024-dimensional repository embeddings |
+| `local-reranker` | MS MARCO MiniLM-L6-v2, ARM64 INT8 | Local CPU ranking when repository search needs a second pass |
+
+The stack pins LiteLLM **1.110.2**. On 2026-11-20 the dashboard API returned all
+three aliases and their configured model metadata. Bootstrap renders the
+[LiteLLM template](litellm/config.yaml) into `.local/litellm/config.yaml` using
+the model references and context from `.env`. `make status FORMAT=json` reports
+the resolved settings, artifact identities and residency without starting the
+services. Requested context, artifact limits and process RSS are separate
+measurements. [Default model settings](.env.example) ·
+[LiteLLM 1.110.2](https://github.com/BerriAI/litellm/releases/tag/v1.110.2) ·
+[Model management](https://docs.litellm.ai/docs/proxy/ui_store_model_db_setting) ·
+[Pinned reranker assets](https://huggingface.co/cross-encoder/ms-marco-MiniLM-L6-v2/tree/df500e56a59fc34f37322735a40eff666200312e/onnx)
+
+### Local services
+
+All published ports bind to loopback.
+
+| Service | Address |
+| --- | --- |
+| Moyai web app | [Open a chat](http://127.0.0.1:8787) |
+| LiteLLM dashboard | [Manage the gateway](http://127.0.0.1:4000/ui) |
 | LiteLLM API | `http://127.0.0.1:4000/v1` |
-| LiteLLM UI | `http://127.0.0.1:4000/ui` |
 | Retrieval API | `http://127.0.0.1:8000` |
 | Offline MCP tools | `http://127.0.0.1:8001/mcp/` |
-| Grafana | `http://127.0.0.1:3000` |
-| Prometheus | `http://127.0.0.1:9090` |
-| Moyai agent | `http://127.0.0.1:8787` |
+| Grafana | [View dashboards](http://127.0.0.1:3000) |
+| Prometheus | [Query metrics](http://127.0.0.1:9090) |
 
-LiteLLM exposes `local-qwen` for chat, `local-embeddings` for embeddings and `local-reranker` for local CPU reranking. Moyai repository search uses the reranker automatically when the hybrid results have a weak lead.
+### Analysis and skills in Moyai
 
-The checked-in [`litellm/config.yaml`](litellm/config.yaml) is a template.
-`make bootstrap` renders `.local/litellm/config.yaml` from the same `.env` model
-references and context used to pull and unload models. Each entry includes an
-English `model_info.description` identifying the actual model and its purpose.
-Known artifact metadata is attached only to its matching model reference;
-overriding the reference cannot retain the old model's label. All LiteLLM
-comments and descriptions remain English.
-These descriptions are deployment metadata exposed by LiteLLM's `/model/info`
-management API, as documented in [model management](https://docs.litellm.ai/docs/proxy/ui_store_model_db_setting).
-On 2026-11-20, LiteLLM 1.110.2 preserved the configured metadata and returned
-all three local model aliases through the dashboard API.
+Choose **local-qwen-analysis** in Moyai's model picker to read existing files and
+discuss plans, code or architecture decisions in chat. This Moyai profile uses
+the `local-qwen` gateway alias and limits workspace tools to reading and listing.
+Starting a web message with `/analysis` or ending it with “без змін у файлах”
+also selects the profile for the chat. Choose **local-qwen** to resume editing.
+[Pydantic AI read-only workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/#read-only-access)
 
-`make status` and `make status FORMAT=json` report resolved aliases, model
-references, artifact digests/size, resident models and measured host/process
-memory when available, without starting services. Artifact context metadata is
-separate from the requested context; it does not prove the live engine's context.
-Process RSS and artifact size are not reported as Metal memory allocations.
+`make up` seeds **Skills** in the LiteLLM dashboard with 25 text-only engineering
+workflows. Each turn pins the enabled catalog. Qwen selects relevant guides from
+their summaries and loads them through native `load_capability` calls. A simple
+question can select zero. The guides work offline. The active chat or repository
+phase still controls tool permissions. The integration was checked on 2026-11-18 with LiteLLM 1.109.1
+and Pydantic AI 2.55.0. [Local guides](integrations/moyai/skills) ·
+[Upstream catalog and license](https://github.com/addyosmani/agent-skills/tree/39b723ceebf81474d0557c1fecd01eddab585563) ·
+[LiteLLM marketplace](https://docs.litellm.ai/docs/tutorials/claude_code_plugin_marketplace)
 
-Retrieval now combines pgvector cosine search with PostgreSQL full-text search
-over source, symbol names and paths, using reciprocal rank fusion. HTTP, MCP and
-scoped vector-store searches share the same scope filters and context bounds.
-Raw cosine similarity remains available separately. Vector-store `score` and
-`score_threshold` use normalized hybrid relevance rather than cosine similarity;
-they are ranking signals, not calibrated probabilities. See [platform operations](docs/platform-operations.md).
+Edit a guide's **Description** to change its one-line summary and Markdown
+instructions, separated by a blank line. The `moyai-text-v1` keyword identifies
+this format. Use **Enabled** to control availability. Edits take effect on the
+next turn and survive another `make up`. The marketplace entry
+`addyosmani-test-driven-development` uses the native ID `test-driven-development`.
+
+### Repository search and verified changes
+
+For a searchable local repository, use `make index REPO=/absolute/path/to/repository`.
+Indexing reuses compatible embeddings for unchanged chunks. Hybrid search fuses
+vector and full-text ranks and applies repository and path filters. The vector
+store's `score_threshold` uses normalized hybrid relevance. Raw cosine similarity
+is available separately. [Retrieval and scoring](docs/platform-operations.md) ·
+[PostgreSQL full-text search](https://www.postgresql.org/docs/17/textsearch-controls.html) ·
+[pgvector hybrid search](https://github.com/pgvector/pgvector#hybrid-search)
+
+To try a complete repair with the running stack, use `make repository-smoke`.
+It stages the bundled Rust example from the pinned commit before its retry
+policy was repaired. Moyai retrieves cited context, records a plan, edits a copy
+and runs protected checks. The observer downloads `changes.patch`,
+`test-report.json` and `result.json` and checks the patch against the verified
+tree. A full clone includes the demonstration commit. For controlled execution
+on an operator-selected snapshot, `make repository-add REPO=/absolute/path`
+registers a source tree matching the supported `rust-retry` profile.
+[Repository workflow and shallow-clone instructions](docs/repository-workflow.md) ·
+[Rust demo](examples/rust-service/README.md) ·
+[Recorded repair and download](docs/results/repository-reliability-2026-11-17.md)
+
+### Prompt compression and caching
+
+LiteLLM sends eligible history (such as older tool output) to the private
+Headroom sidecar before inference. It preserves system instructions, the latest
+user message and the latest assistant tool exchange. If Headroom is unavailable,
+LiteLLM forwards the original context. Use the header `x-headroom-bypass: true`
+for a one-request comparison. [LiteLLM integration](https://docs.litellm.ai/docs/proxy/headroom) ·
+[Headroom compression API](https://docs.headroomlabs.ai/docs/proxy#post-v1compress)
+
+On 2026-11-20, LiteLLM 1.110.2 and Headroom 0.44.0 reduced a synthetic 240-line
+log from 6,558 to 280 reported input tokens on both Chat Completions and Responses.
+Both routes returned the exact error code. In a separate 2026-11-19 comparison
+with LiteLLM 1.109.1, an unstructured text sample showed no reduction. In two
+independently accepted Rust repairs that day, the baseline used 239,112 input tokens over
+20 calls in 213.8 seconds. The compressed run used 267,634 over 22 calls in
+241.2 seconds and Headroom reported removing 611 tokens. The runs took different
+tool steps. `python3 scripts/compression-smoke.py` repeats the synthetic log
+comparison on the running stack.
+
+Redis stores exact responses only for eligible chat requests that explicitly
+opt in with `"cache": {"use-cache": true}`. The default TTL is 300 seconds.
+Semantic response caching is disabled. The inference engine owns its KV cache.
+PostgreSQL/pgvector stores source chunks and reusable embeddings for retrieval.
+[Gateway cache configuration](litellm/config.yaml) · [Cache terminology](docs/architecture.md#cache-taxonomy)
+
+## Optional GitHub workflows
+
+| To do this | Enable this workflow |
+| --- | --- |
+| Read GitHub from an MCP client | Configure `.env.connected` and run `make connected-up`. The official GitHub MCP server exposes nine allowlisted read-only tools through LiteLLM. `make connected-down` stops it. [Connected mode](docs/connected.md) |
+| Publish a verified Rust repair or coverage change | Start a foreground publisher on the Mac, then submit the issue URL in a private Moyai chat. The host verifies the delivered patch and opens a draft PR. The GitHub App can also merge after verified CI if explicitly granted `AUTO_MERGE=1` for one issue. GitHub credentials stay on the host. [Issue publisher and supported profiles](docs/moyai-github-issues.md) |
+| Request documentation for the bundled Rust example | When the Moyai Developer and Verifier schedules are configured, the Developer picks up an owner-filed issue labeled `moyai:ready` and opens a linked PR. The Verifier reviews the proposed commit. GitHub Actions checks the verdict, the single-file scope and PR CI, then merges and posts the `main` CI result on the issue. [Issue form](.github/ISSUE_TEMPLATE/moyai-docs.yml) · [Progress workflow](.github/workflows/moyai-progress.yml) · [Merge workflow](.github/workflows/moyai-merge.yml) |
+
+Ordinary `make up` starts Moyai with local tools and no external publisher. The
+offline MCP servers allow scoped retrieval and read-only filesystem, Git and
+PostgreSQL operations. Runtime operation is local after preparation. Network-wide egress enforcement requires a separate firewall policy. [Offline operation](docs/offline.md)
+
+## Verification
+
+```sh
+make lint
+make test
+make smoke-test
+```
+
+`make lint` checks shell, Python, Compose and configuration. `make test` requires
+a working Docker engine, Python 3.11–3.14 and Cargo. It runs Python and contract
+tests, real database checks using a disposable PostgreSQL 17 / pgvector 0.8.7
+container on loopback, and the Rust example with `cargo test --locked`. The
+database fixture uses tmpfs and cleans up after the run. A provisioned disposable
+database can be supplied through `MEMORY_TEST_DSN`. Models and a running platform
+stack are unnecessary for this suite.
+
+`make smoke-test` requires the running stack and checks the local model routes,
+tool calls, compression, cache, retrieval, MCP, dashboard logins and metrics. For
+end-to-end acceptance, `make verify` runs the suite, starts the platform, exercises
+real Moyai sandbox and repository tasks with service restarts, and attempts full
+shutdown even on failure. It checks that the stack's containers and resident
+models are gone. Its private logs and result receipt are in `.local/verification/`.
+[Verification phases](scripts/verify.py) · [Recorded acceptance and limits](docs/results/repository-workflow-2026-11-17.md)
+
+To exercise skill selection separately, run `python3 scripts/moyai-skills-smoke.py`
+for the Rust planning case, or add `--case latency` or `--case arithmetic`. Each
+case creates a private chat and checks the chosen workflows, native loading and
+inline answer. `make help` lists all supported commands.
 
 ## Shared dashboard login (optional)
 
-To use `admin` and one chosen password for both local dashboards, first run
-`make bootstrap` from the repository root. Edit these entries in the generated,
-Git-ignored `.env`, replacing both placeholders with the same password:
+Bootstrap generates separate credentials for the LiteLLM and Grafana dashboards.
+For a shared login, run `make bootstrap` and edit the following entries in the
+generated, Git-ignored `.env`. Use the same password in both password fields.
+Single quotes keep shell characters such as `$` literal.
 
 ```dotenv
 UI_USERNAME=admin
@@ -236,20 +220,10 @@ UI_PASSWORD='YOUR_SHARED_LOCAL_PASSWORD'
 GRAFANA_ADMIN_PASSWORD='YOUR_SHARED_LOCAL_PASSWORD'
 ```
 
-Keep the single quotes around the password so characters such as `$` remain
-literal. Keep `.env` private; only these dashboard entries need changing.
-This is an opt-in setup: bootstrap normally generates separate credentials.
-
-Apply the settings using the supported entry point:
-
-```sh
-make up
-```
-
-For an existing Grafana data volume, also update its stored admin password;
-changing the environment variable alone does not replace it. This command reads
-the configured password inside the container and passes it through stdin,
-without putting the value in shell history or command arguments:
+Apply the settings with `make up`. When reusing a Grafana volume, Grafana also
+needs its stored admin password updated. Once the container is running with the
+new environment, run this command to pass its configured password through stdin,
+then rerun `make smoke-test` if startup reported a failed login.
 
 ```sh
 docker compose exec -T grafana sh -c '
@@ -259,57 +233,25 @@ docker compose exec -T grafana sh -c '
 '
 ```
 
-User ID `1` is the default Grafana admin created by this stack. Sign in with
-`admin` and your chosen password at [LiteLLM](http://127.0.0.1:4000/ui) and
-[Grafana](http://127.0.0.1:3000). Sign out of an existing browser session first
-to verify the new login.
-
-`make smoke-test` (also run by `make up`) checks fresh logins using `.env`:
-LiteLLM uses `UI_USERNAME` (default `admin`) and `UI_PASSWORD` (falling back to
-`LITELLM_MASTER_KEY` when empty); Grafana uses `admin` and
-`GRAFANA_ADMIN_PASSWORD`. The check requires a new LiteLLM UI session and
-verifies the Grafana session's admin identity. A stale Grafana volume password
-therefore fails the smoke test. Passwords and session tokens are kept out of
-test output and artifacts.
-
-Dashboard logins were verified on 2026-11-20 with LiteLLM 1.110.2 and Grafana 13.3.1.
-[LiteLLM UI credentials](https://docs.litellm.ai/docs/proxy/ui) and
-[Grafana password configuration](https://grafana.com/docs/grafana/latest/setup-grafana/configure-grafana/#admin_password)
-and [admin CLI](https://grafana.com/docs/grafana/latest/administration/cli/).
-
-## macOS inference boundary
-
-Docker Model Runner uses llama.cpp with automatic Metal acceleration on Apple Silicon. On macOS, its inference engine does not run in a normal Linux container; Docker Desktop runs it in a host sandbox and exposes an API to containers. See [ADR 0001](docs/adr/0001-inference-runtime.md) for the decision and fallback design.
+The smoke check opens fresh sessions using `UI_USERNAME` and `UI_PASSWORD` for
+LiteLLM (the default password is `LITELLM_MASTER_KEY`), and `admin` and
+`GRAFANA_ADMIN_PASSWORD` for Grafana. User ID 1 is this stack's initial Grafana
+admin. Dashboard logins were verified on 2026-11-20 with LiteLLM 1.110.2 and
+Grafana 13.3.1. [LiteLLM UI credentials](https://docs.litellm.ai/docs/proxy/ui) ·
+[Grafana password configuration](https://grafana.com/docs/grafana/latest/setup-grafana/configure-grafana/#admin_password) ·
+[Grafana admin CLI](https://grafana.com/docs/grafana/latest/administration/cli/)
 
 ## Documentation
 
-- [Architecture](docs/architecture.md)
-- [Verified capability matrix](docs/capability-matrix.md)
-- [Implementation plan](docs/implementation-plan.md)
-- [Inference runtime ADR](docs/adr/0001-inference-runtime.md)
-- [Threat model and security design](docs/security.md)
-- [Risk register](docs/risks.md)
-- [Offline operation](docs/offline.md)
-- [Local Moyai coding MVP](docs/moyai-local.md)
-- [Opt-in connected mode](docs/connected.md)
-- [GitHub issue to a verified Moyai draft PR](docs/moyai-github-issues.md)
-- [Troubleshooting](docs/troubleshooting.md)
-- [Benchmark method](docs/benchmarking.md)
-- [Measured results and agent validation](docs/results/agent-validation-2026-07-19.md)
-- [Ukrainian DOU article draft](docs/dou-article.md)
+- [Architecture](docs/architecture.md), [macOS inference decision](docs/adr/0001-inference-runtime.md) and [platform operations](docs/platform-operations.md)
+- [Local Moyai](docs/moyai-local.md), [repository tasks](docs/repository-workflow.md) and [UI verification](docs/moyai-ui-verification.md)
+- [Troubleshooting](docs/troubleshooting.md), [benchmark method](docs/benchmarking.md), [historical capability matrix](docs/capability-matrix.md) and [July agent validation](docs/results/agent-validation-2026-07-19.md)
+- [Implementation plan](docs/implementation-plan.md), [November 16 dependency report](docs/dependency-update-2026-11-16.md) and [retired workspace profiles](docs/workspace-memory.md)
+- [Security design](docs/security.md), [risk register](docs/risks.md) and [vulnerability reporting](SECURITY.md)
 
 ![Provisioned Local AI Platform dashboard](output/playwright/grafana-local-ai-platform.png)
 
-## Security posture
-
-The default profile is offline and localhost-only. MCP tools are allowlisted, external credentials are absent, request bodies are not shipped to a remote telemetry service, and the Docker socket is not mounted. Local does not mean automatically safe: code, documentation, models, containers, MCP servers, and generated shell commands remain part of the attack surface.
-
-See [SECURITY.md](SECURITY.md) for reporting vulnerabilities.
-
 ## License
 
-Apache-2.0. See [LICENSE](LICENSE).
-
-See [current platform operations](docs/platform-operations.md) for models,
-verification, hybrid search and the single-agent stack. The previous
-[workspace profile design](docs/workspace-memory.md) is retained as historical documentation.
+[Apache-2.0](LICENSE). The bundled [Moyai integration](integrations/moyai/LICENSE.upstream)
+and [engineering guides](integrations/moyai/skills/LICENSE) include their upstream licenses.
