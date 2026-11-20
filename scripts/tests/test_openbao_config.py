@@ -16,13 +16,14 @@ class OpenBaoConfigTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         (self.root / 'scripts').mkdir()
-        for path in ('.env.example', 'compose.yaml', 'compose.openbao.yaml', 'compose.openbao-local.yaml', 'scripts/lib.sh'):
+        for path in ('.env.example', 'compose.yaml', 'compose.openbao.yaml', 'compose.openbao-local.yaml',
+                     'scripts/lib.sh', 'scripts/compose.sh'):
             shutil.copyfile(ROOT / path, self.root / path)
 
     def render(self, settings):
         (self.root / '.env').write_text(settings)
         return subprocess.run(
-            ['bash', '-c', 'source scripts/lib.sh && load_env && docker compose config --format json'],
+            ['bash', 'scripts/compose.sh', 'config', '--format', 'json'],
             cwd=self.root, capture_output=True, text=True, timeout=20,
             env={**os.environ, 'COMPOSE_FILE': 'unrelated.yaml', 'COMPOSE_PATH_SEPARATOR': ';',
                  'LITELLM_UI_PASSWORD_SOURCE': 'openbao'},

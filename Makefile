@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 .DEFAULT_GOAL := help
 
-COMPOSE := docker compose --project-name local-ai-platform --file compose.yaml
+COMPOSE := bash scripts/compose.sh
 REPO ?=
 
 .PHONY: help doctor bootstrap pull-model up down restart logs status smoke-test test lint verify index reindex benchmark connected-up connected-smoke connected-down clean reset

@@ -70,7 +70,7 @@ class PlatformLifecycleTests(unittest.TestCase):
         self.scripts = self.root / 'scripts'
         self.scripts.mkdir()
         shutil.copy(ROOT / 'Makefile', self.root / 'Makefile')
-        for name in ('lib.sh', 'up.sh', 'down.sh'):
+        for name in ('lib.sh', 'up.sh', 'down.sh', 'compose.sh'):
             if (ROOT / 'scripts' / name).exists():
                 shutil.copy(ROOT / 'scripts' / name, self.scripts / name)
         (self.root / '.env').write_text('QWEN_MODEL=fixture-coder\nEMBEDDING_MODEL=fixture-embed\n')
