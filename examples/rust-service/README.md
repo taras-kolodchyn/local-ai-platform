@@ -32,6 +32,10 @@ The router and handlers are defined in [src/lib.rs](src/lib.rs).
 3. The handler passes the owner to `build_report_query` and places the resulting string in `ReportResponse.query`.
 4. The handler returns `200 OK` with that field as JSON. It never opens a database connection or executes the SQL.
 
+## Server startup
+
+The server starts listening on `0.0.0.0:8080` as defined in [src/main.rs](src/main.rs). The `app()` function supplies the router, and the `axum::serve()` call starts serving requests on the listener.
+
 ## Running focused Rust retry tests
 
 The [retry regression target](tests/retry_regression.rs) covers the initial delays, the 30,000 ms ceiling and the extreme input `u32::MAX` for both `bounded_backoff_ms` and `legacy_retry_delay_ms`. Run it from the repository root.
