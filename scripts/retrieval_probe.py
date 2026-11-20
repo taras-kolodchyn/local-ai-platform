@@ -30,7 +30,7 @@ def index_documents():
             shutil.copyfile(ROOT / name, dest)
             dest.chmod(0o644)
         outcome = subprocess.run(
-            ['docker', 'compose', '--project-name', 'local-ai-platform', '--file', 'compose.yaml',
+            ['bash', str(ROOT / 'scripts/compose.sh'),
              '--profile', 'tools', 'run', '--rm', '--no-deps', '--pull', 'never', 'ingestion', 'index', '/workspace',
              '--repository', REPOSITORY],
             cwd=ROOT, env={**os.environ, 'INDEX_REPO_PATH': str(source)},

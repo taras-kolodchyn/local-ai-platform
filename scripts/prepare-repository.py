@@ -78,8 +78,7 @@ def _index_prepared_locked(catalog, manifest, artifact):
     environment = {k: v for k, v in os.environ.items() if not k.startswith('COMPOSE_')}
     environment['INDEX_REPO_PATH'] = str(snapshot / 'source')
     # Never inherit an operator's alternate Compose file/project or mount the host checkout.
-    result = subprocess.run(['docker', 'compose', '--project-name', 'local-ai-platform',
-        '--file', str(ROOT / 'compose.yaml'), '--env-file', str(ROOT / '.env'),
+    result = subprocess.run(['bash', str(ROOT / 'scripts/compose.sh'),
         '--profile', 'tools', 'run', '--rm', '--no-deps', '--volume',
         str(catalog) + ':/run/local-repositories:ro', 'ingestion', 'index-snapshot',
         f"/run/local-repositories/snapshots/{manifest['snapshot_id']}/manifest.json",

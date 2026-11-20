@@ -75,6 +75,8 @@ checks the whole round trip and separately checks a streamed Responses call.
 LiteLLM uses `UI_USERNAME` (default `admin`) and `UI_PASSWORD` (defaults to
 the master key) in the default mode. With OpenBao enabled, check the Agent login,
 KV v2 path and gateway readiness after rotation. Test with a fresh browser session.
+If the local Compose server is sealed after Docker Desktop restarts, unlock
+the Mac login Keychain and run `make openbao-start`.
 [OpenBao setup and rotation](openbao.md)
 
 Grafana's initial admin password is persisted in its volume.

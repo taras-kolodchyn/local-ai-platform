@@ -1,6 +1,5 @@
 # LiteLLM dashboard password from OpenBao
 
-Use this mode when an OpenBao service is reachable from the gateway container.
 The default `make up` reads the dashboard password from `.env` and works with
 the ordinary LiteLLM image. The optional image adds OpenBao Agent 2.7.3 to
 LiteLLM 1.110.2. The Agent supervises LiteLLM and injects `UI_PASSWORD` into its
@@ -9,7 +8,37 @@ it public beta) and works with the standard LiteLLM image and license.
 [OpenBao process supervisor](https://openbao.org/docs/agent-and-proxy/agent/process-supervisor/) ·
 [LiteLLM UI credentials](https://docs.litellm.ai/docs/proxy/ui)
 
-## Prepare OpenBao
+## Run OpenBao on this Mac
+
+Run `make bootstrap`, then set `LITELLM_UI_PASSWORD_SOURCE=openbao-local` and
+clear `UI_PASSWORD` in the private `.env`. Run `make up`. The first start
+creates a single-node Raft store, a private TLS certificate and a random
+dashboard password. The gateway reaches the server at `https://openbao:8200`.
+Operator commands use HTTPS on `127.0.0.1:8200`.
+
+| Command | Use |
+| --- | --- |
+| `make openbao-copy-password` | Copy the current password to the Mac clipboard. Paste it into the LiteLLM UI with the configured `UI_USERNAME`. |
+| `make openbao-rotate` | Generate the next password with a KV version check. Allow the Agent to restart the gateway before signing in. |
+| `make openbao-start` | Start or unlock the local server after Docker Desktop restarts. Ordinary `make up` also does this. |
+
+The server uses a single Shamir share in the current user's macOS login
+Keychain under `local-ai-platform.openbao.unseal`. The account ID is in
+`.local/openbao-local/instance`. Unlock the login Keychain before starting
+a sealed server. Bootstrap revokes the initial root token after provisioning.
+Only the host operator has the AppRole that can rotate this one KV entry.
+
+`make down` preserves the Raft data. For recovery on another Mac, stop the
+server and back up `.local/openbao-local/` securely, including the TLS key,
+AppRole files and Raft directory. Back up the matching Keychain share
+separately. Both are needed to restore. The server certificate is issued
+for 825 days. To replace the TLS certificates, run `make down`, move only
+`.local/openbao-local/tls` to a protected backup, then run `make up`.
+Startup issues a fresh certificate and installs its CA in the gateway.
+[OpenBao seal and unseal](https://openbao.org/docs/concepts/seal/) ·
+[Raft storage](https://openbao.org/docs/configuration/storage/raft/)
+
+## Use an existing OpenBao server
 
 Use a KV v2 engine mounted at `secret/` and AppRole authentication mounted at
 `auth/approle/`. From an authorized OpenBao CLI session, create a dedicated
@@ -47,7 +76,7 @@ make bootstrap
 )
 ```
 
-## Enable and sign in
+### Connect the gateway
 
 Set these entries in the checkout's private `.env`. Supply the HTTPS address
 as seen by the container. For a private CA, copy its public PEM to
@@ -64,7 +93,7 @@ Run `make up`. Open the [local LiteLLM dashboard](http://127.0.0.1:4000/ui)
 and sign in with `UI_USERNAME` (default `admin`) and the password in OpenBao.
 The master key, API keys, PostgreSQL and Grafana credentials use their existing
 configuration. The Agent in the gateway container can read the mounted AppRole
-files. No OpenBao listener or server is deployed by this mode.
+files. This mode connects to the specified external server.
 
 ## Rotate and verify
 
@@ -86,7 +115,9 @@ desired local `UI_PASSWORD` in `.env`, then run `make up`. A blank local
 password selects the platform's existing master-key fallback.
 [Agent configuration](../integrations/openbao/agent.hcl) · [Compose overlay](../compose.openbao.yaml)
 
-On 2026-11-20 a disposable Apple Silicon deployment with OpenBao 2.7.3,
-LiteLLM 1.110.2 and PostgreSQL 17 issued a fresh `proxy_admin` session after
-rotation. A fresh login with the retired password returned HTTP 401. The
-gateway container and database stayed in place during the password change.
+Verified on the working Apple Silicon Mac on 2026-11-20 with OpenBao 2.7.3
+and LiteLLM 1.110.2. KV version 2 opened a fresh `proxy_admin` session.
+Both version 1 and the original pre-migration password returned HTTP 401
+without issuing a session cookie. The gateway and database containers
+stayed in place during rotation. After restarting OpenBao and unlocking it
+from Keychain, the same Raft cluster served version 2 and login succeeded.

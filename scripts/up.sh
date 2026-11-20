@@ -10,6 +10,9 @@ if [[ ${LITELLM_UI_PASSWORD_SOURCE:-env} == openbao ]]; then
   done
 fi
 bash scripts/ensure-docker.sh
+if [[ ${LITELLM_UI_PASSWORD_SOURCE:-env} == openbao-local ]]; then
+  python3 scripts/openbao-local.py start
+fi
 bash scripts/pull-model.sh
 bash scripts/doctor.sh
 

@@ -185,9 +185,9 @@ inline answer. `make help` lists all supported commands.
 
 ## Shared dashboard login (optional)
 
-To manage just the LiteLLM dashboard password with AppRole and automatic rotation,
-see the [optional OpenBao Agent setup](docs/openbao.md). The default offline
-setup uses the local credentials below.
+To store the LiteLLM dashboard password in a persistent OpenBao service on this
+Mac, select `openbao-local` in `.env`. The Agent applies password rotations
+automatically. Setup, login and rotation commands are in the [OpenBao guide](docs/openbao.md).
 
 Bootstrap generates separate credentials for the LiteLLM and Grafana dashboards.
 For a shared login, run `make bootstrap` and edit the following entries in the

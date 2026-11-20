@@ -1,0 +1,43 @@
+services:
+  openbao:
+    image: ghcr.io/openbao/openbao:2.7.3@sha256:ba4b133eb9586630024e71a617e66f37f29cc3534cdd46a6233e098ceded8dc9
+    entrypoint: ["/usr/bin/bao"]
+    command: ["server", "-config=/etc/openbao/server.hcl"]
+    user: "${WORKSPACE_UID:?run make bootstrap}:${WORKSPACE_GID:?run make bootstrap}"
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    ports: ["127.0.0.1:8200:8200"]
+    volumes:
+      - ./integrations/openbao/server.hcl:/etc/openbao/server.hcl:ro
+      - ./.local/openbao-local/tls:/etc/openbao/tls:ro
+      - ./.local/openbao-local/data:/var/lib/openbao
+    environment:
+      BAO_ADDR: https://127.0.0.1:8200
+      BAO_CACERT: /etc/openbao/tls/ca.pem
+    healthcheck:
+      test: ["CMD", "/usr/bin/bao", "status"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    networks: [openbao, openbao-host]
+
+  litellm:
+    depends_on:
+      openbao:
+        condition: service_healthy
+    networks: [openbao]
+    volumes:
+      - type: bind
+        source: ./.local/openbao-local/auth
+        target: /run/openbao-auth
+        read_only: true
+        bind:
+          create_host_path: false
+
+networks:
+  openbao:
+    internal: true
+  # Docker Desktop publishes loopback ports through a non-internal bridge.
+  openbao-host: {}
