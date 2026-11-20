@@ -8,6 +8,18 @@ it public beta) and works with the standard LiteLLM image and license.
 [OpenBao process supervisor](https://openbao.org/docs/agent-and-proxy/agent/process-supervisor/) ·
 [LiteLLM UI credentials](https://docs.litellm.ai/docs/proxy/ui)
 
+## What appears in the LiteLLM UI
+
+The Compose integration runs OpenBao Agent as the gateway's parent process.
+Agent signs in to OpenBao using AppRole, reads KV and starts LiteLLM with the
+rendered environment. The dashboard displays the usual login and virtual keys.
+It has no connection record for the Agent or controls for its KV rotation.
+Use `make status` to see the local services and the rotation commands below to
+verify credentials. In LiteLLM 1.110.2, **Settings → Admin Settings → Hashicorp
+Vault** configures LiteLLM's separate native Vault adapter, which requires a
+premium license. [LiteLLM native Vault configuration](https://docs.litellm.ai/docs/secret_managers/hashicorp_vault) ·
+[OpenBao Agent process supervisor](https://openbao.org/docs/agent-and-proxy/agent/process-supervisor/)
+
 ## Run OpenBao on this Mac
 
 Run `make bootstrap`, then set `LITELLM_UI_PASSWORD_SOURCE=openbao-local` and

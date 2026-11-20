@@ -209,7 +209,8 @@ def provision_master(client, token, *, fresh=False):
     # The legacy master was also the encryption key when no separate salt was set.
     # Preserve that value independently of all future API credential rotations.
     legacy_file = Path('.local/litellm-master-key')
-    legacy = os.environ.get('LITELLM_MASTER_KEY')
+    legacy = (os.environ.get('LITELLM_MASTER_KEY')
+              if os.environ.get('LITELLM_MASTER_KEY_SOURCE', 'env') == 'env' else None)
     if not legacy or legacy == 'GENERATE_ME':
         legacy = legacy_file.read_text().strip() if legacy_file.exists() else None
     live_salt = os.environ.get('LITELLM_SALT_KEY') or legacy
@@ -250,8 +251,8 @@ def enable_master(client):
 
 def finalize_master(client):
     legacy = Path('.local/litellm-master-key')
-    if os.environ.get('LITELLM_MASTER_KEY') not in ('', None, 'GENERATE_ME') or os.environ.get('LITELLM_SALT_KEY'):
-        raise ValueError('Clear the migrated master key and salt from .env before finalizing.')
+    if os.environ.get('LITELLM_SALT_KEY'):
+        raise ValueError('Clear the migrated salt from .env before finalizing.')
     if legacy.is_file():
         current = api(client, MASTER_KV, token=login(client, MASTER_OPERATOR))['data']['data']['key']
         if admin_status(current) != 200 or admin_status(legacy.read_text().strip()) != 401:
