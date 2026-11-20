@@ -92,3 +92,58 @@ def test_scoped_auto_fetches_48_before_packing(db_settings, monkeypatch):
     settings, opts = calls.pop()
     assert settings.max_limit == opts['limit'] == 48
     assert opts['exact_path'] == 'implementation.py' and opts['generation_id'] == 'g' and opts['snapshot_id'] == 's'
+
+
+def test_literal_file_mentions_are_relative_deduplicated_and_case_sensitive():
+    assert search.mentioned_paths('Compare `./src/My File.py` with src/run.rs:23 and (Dockerfile).') == [
+        'src/My File.py', 'src/run.rs', 'Dockerfile']
+    assert search.mentioned_paths('See ./src/one.rs#L2-L5 and src/one.rs.') == ['src/one.rs']
+    assert search.mentioned_paths('Ignore /etc/passwd.txt ../src/x.py a/../b.c https://x/a.js *.rs') == []
+
+
+def test_cross_file_selection_prefers_dependency_and_covers_both_named_files():
+    entry = row(1, 'app/run.py', .9, 'use lib.py')
+    second = row(2, 'app/run.py', .88)
+    dep = row(3, 'app/lib.py', .87)
+    caller = row(4, 'app/call.py', .99, 'uses run.py')
+    policy = row(5, 'docs/rules.md', .7)
+    candidates = [caller, second, policy, entry, dep]
+    assert search.file_context([[entry, second], [policy]], candidates, 4) == [entry, policy, dep, second]
+    assert search.file_context([[entry, second], [policy]], candidates, 2) == [entry, policy]
+
+
+def test_missing_candidates_use_same_scope_and_explicit_filter_wins(db_settings, monkeypatch):
+    base = row(1, 'top.py', .9)
+    extra = row(2, 'dir/file.rs', .8)
+    calls = []
+
+    def fetch(settings, vector, **kw):
+        calls.append(kw)
+        return {None: [base], 'dir/file.rs': [extra], 'top.py': [base]}.get(kw['exact_path'], [])
+
+    from local_ai_retrieval import ingestion
+    monkeypatch.setattr(ingestion, 'embedding_fingerprint', lambda *a: 'fp')
+    monkeypatch.setattr(vector_registry, 'search_chunks', fetch)
+    monkeypatch.setattr(vector_registry, 'compatible_scope_exists', lambda *a, **kw: True)
+    monkeypatch.setattr(vector_registry, 'embed_texts', lambda *a, **kw: [[0.]])
+    scope = dict(repository='repo', branch='b', snapshot_id='s', generation_id='g', embedding_fingerprint='fp')
+    settings = replace(db_settings, embedding_artifact_id='test')
+
+    def paths(query, path=None):
+        return [r['path'] for r in vector_registry.scoped_search(settings, scope, query, path, 4, auto_rank=True)]
+
+    assert paths('Look in dir/file.rs') == ['dir/file.rs', 'top.py']
+    assert [c['exact_path'] for c in calls] == [None, 'dir/file.rs']
+    assert all((c['repository'], c['branch'], c['snapshot_id'], c['generation_id'], c['compatible_fingerprint'])
+               == ('repo', 'b', 's', 'g', 'fp') for c in calls)
+    assert paths('Compare dir/file.rs with stale.py') == ['top.py']
+    calls.clear()
+    assert paths('Look in dir/file.rs', 'top.py') == ['top.py']
+    assert [c['exact_path'] for c in calls] == ['top.py']
+
+
+def test_focused_packing_shares_a_small_budget_across_named_sources():
+    rows = [row(i, f'{i}.py', .8, 'a line\n' * 60) for i in range(3)]
+    packed = search.pack_chunks(rows, 120, preserve_leader=False)
+    assert [r['id'] for r in packed] == [0, 1, 2]
+    assert sum(len(r['content']) for r in packed) <= 120

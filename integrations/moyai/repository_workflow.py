@@ -114,7 +114,7 @@ class RepositoryWorkflow(AbstractCapability):
             return await backend.status(scope_of(ctx), ctx.deps.turn_id)
 
         async def search_repository(ctx: RunContext, query: str, limit: int = 6, exact_path: str | None = None) -> dict:
-            """Search the pinned source for implementation code. To cite a known document, set exact_path to its repository path."""
+            """Search pinned source. Include filenames from the question in query to find related code. Set exact_path to restrict all citations to one repository path."""
             return await backend.search(scope_of(ctx), query, limit, exact_path)
 
         async def begin_repository_changes(ctx: RunContext) -> dict:

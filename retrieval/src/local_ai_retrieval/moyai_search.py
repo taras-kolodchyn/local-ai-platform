@@ -1,6 +1,7 @@
 """Candidate selection and source budgeting for Moyai repository lookups."""
 from collections import Counter
 from pathlib import PurePosixPath
+import re
 
 import httpx
 
@@ -12,6 +13,43 @@ CODE_SUFFIXES = frozenset(
     '.rb .php .swift .sql .toml .yaml .yml .proto .css .html .json'.split()
 )
 NON_CODE_DIRS = {'doc', 'docs', 'test', 'tests', '__tests__', 'fixtures', 'testdata'}
+
+
+def mentioned_paths(query):
+    """Recognize literal repository-relative filenames. The index decides if they exist."""
+    paths = []
+    for quoted, plain in re.findall(r"`([^`\n]+)`|([^\s`]+)", query):
+        token = (quoted or plain).lstrip('([{\'"<').rstrip(')]}\'">,;:!?.')
+        token = re.sub(r'(?:#L\d+(?:-L?\d+)?|:\d+(?::\d+)?)$', '', token)
+        token = token.removeprefix('./')
+        if (not re.fullmatch(r'[\w.+-][\w .+-]*(?:/[\w.+-][\w .+-]*)*', token)
+                or any(part in ('.', '..') for part in token.split('/'))):
+            continue
+        path = PurePosixPath(token)
+        if (path.suffix or path.name in ('Makefile', 'Dockerfile', 'LICENSE', 'README')) and token not in paths:
+            paths.append(token)
+    return paths
+
+
+def file_context(groups, candidates, limit):
+    """Keep each named file, then a potential dependency and a second relevant chunk per file."""
+    selected = [group[0] for group in groups]
+    named = {row['path'] for row in selected}
+    others = [row for row in candidates if row['path'] not in named]
+    if others and len(selected) < limit:
+        # Prefer a dependency or caller that also ranked for the question. Shell,
+        # config and documentation often use a relative sibling filename.
+        def references(source, target):
+            target_path = PurePosixPath(target)
+            name = target_path.name if PurePosixPath(source['path']).parent == target_path.parent else target
+            return re.search(r'(?<![\w.-])' + re.escape(name) + r'(?![\w.-])', source['content']) is not None
+
+        related = next((row for row in others if any(references(src, row['path']) for src in selected)), None)
+        if related is None:
+            related = next((row for row in others if any(references(row, src['path']) for src in selected)), others[0])
+        selected.append(related)
+    selected.extend(group[1] for group in groups if len(group) > 1)
+    return selected[:limit]
 
 
 def implementation(row):
@@ -110,13 +148,13 @@ def head_tail(text, size):
     return GAP.join(part for part in (head, tail) if part)
 
 
-def pack_chunks(rows, budget):
+def pack_chunks(rows, budget, *, preserve_leader=True):
     if not rows:
         return []
     lengths = [len(row['content']) for row in rows]
-    sizes = [min(lengths[0], budget)] + [0] * (len(rows) - 1)
+    sizes = [min(lengths[0], budget) if preserve_leader else 0] + [0] * (len(rows) - 1)
     remaining = budget - sizes[0]
-    pending = sorted(range(1, len(rows)), key=lengths.__getitem__)
+    pending = sorted(range(1 if preserve_leader else 0, len(rows)), key=lengths.__getitem__)
     for j, i in enumerate(pending):
         share, extra = divmod(remaining, len(pending) - j)
         if lengths[i] > share:
