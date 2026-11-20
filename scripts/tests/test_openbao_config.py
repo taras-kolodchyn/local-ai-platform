@@ -16,7 +16,7 @@ class OpenBaoConfigTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         (self.root / 'scripts').mkdir()
-        for path in ('.env.example', 'compose.yaml', 'compose.openbao.yaml', 'scripts/lib.sh'):
+        for path in ('.env.example', 'compose.yaml', 'compose.openbao.yaml', 'compose.openbao-local.yaml', 'scripts/lib.sh'):
             shutil.copyfile(ROOT / path, self.root / path)
 
     def render(self, settings):
@@ -54,3 +54,20 @@ class OpenBaoConfigTests(unittest.TestCase):
         for settings in ('LITELLM_UI_PASSWORD_SOURCE=typo\n', 'LITELLM_UI_PASSWORD_SOURCE=openbao\n'):
             with self.subTest(settings=settings):
                 self.assertNotEqual(self.render(settings).returncode, 0)
+
+    def test_local_server_is_persistent_private_and_only_the_gateway_gets_the_reader(self):
+        result = self.render('LITELLM_UI_PASSWORD_SOURCE=openbao-local\nWORKSPACE_UID=501\nWORKSPACE_GID=20\n')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        services = json.loads(result.stdout)['services']
+        server, agent = services['openbao'], services['litellm']
+        self.assertEqual(server['ports'][0]['host_ip'], '127.0.0.1')
+        self.assertEqual(server['restart'], 'unless-stopped')
+        self.assertTrue(any(v['target'] == '/var/lib/openbao' and v['type'] == 'bind' for v in server['volumes']))
+        self.assertEqual(agent['depends_on']['openbao']['condition'], 'service_healthy')
+        self.assertEqual(agent['environment']['BAO_ADDR'], 'https://openbao:8200')
+        self.assertEqual(agent['environment']['UI_PASSWORD'], '')
+        mounts = [v for v in agent['volumes'] if v['target'] == '/run/openbao-auth']
+        self.assertEqual(len(mounts), 1)
+        self.assertTrue(mounts[0]['read_only'])
+        self.assertTrue(mounts[0]['source'].endswith('/.local/openbao-local/auth'))
+        self.assertEqual({name for name, s in services.items() if 'openbao' in s['networks']}, {'openbao', 'litellm'})

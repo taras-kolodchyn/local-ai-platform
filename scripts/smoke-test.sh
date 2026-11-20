@@ -48,7 +48,7 @@ done
 ok "All host listeners are loopback-only"
 
 info "Checking fresh LiteLLM and Grafana dashboard logins..."
-if [[ ${LITELLM_UI_PASSWORD_SOURCE:-env} == openbao ]]; then
+if [[ ${LITELLM_UI_PASSWORD_SOURCE:-env} == openbao* ]]; then
   docker compose exec -T litellm cat /run/openbao-ui/ui-password |
     python3 scripts/check-dashboard-login.py --litellm-password-stdin
 else

@@ -54,7 +54,11 @@ load_env() {
   case ${LITELLM_UI_PASSWORD_SOURCE:-env} in
     env) ;;
     openbao) export COMPOSE_FILE="$COMPOSE_FILE:$ROOT_DIR/compose.openbao.yaml" ;;
-    *) die 'LITELLM_UI_PASSWORD_SOURCE must be env or openbao' ;;
+    openbao-local)
+      export COMPOSE_FILE="$COMPOSE_FILE:$ROOT_DIR/compose.openbao.yaml:$ROOT_DIR/compose.openbao-local.yaml"
+      export OPENBAO_ADDR=https://openbao:8200 OPENBAO_CACERT=/run/openbao-auth/ca.pem
+      ;;
+    *) die 'LITELLM_UI_PASSWORD_SOURCE must be env, openbao or openbao-local' ;;
   esac
 }
 
