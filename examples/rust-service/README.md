@@ -1,48 +1,48 @@
 # Reports API training fixture
 
-This deliberately imperfect service is the repeatable Codex/Hermes exercise used in the article. Do not deploy it. The Rust training crate is not published to a registry.
+This service is intentionally imperfect. Use it for local coding-agent exercises only. The original [Codex and Hermes evaluation](../../docs/results/agent-validation-2026-07-19.md) records the early experiments. Moyai uses the retry policy in its [GitHub issue workflow](../../docs/moyai-github-issues.md).
 
-The Rust training crate is published under the MIT license and is intended for educational purposes only.
+The [Cargo manifest](Cargo.toml) defines `local-ai-rust-service` 0.1.0, uses Rust edition 2024 and disables registry publication with `publish = false`. The repository includes the [Apache License 2.0](../../LICENSE).
 
 ## Documented contract
 
-- `GET /health` is public.
-- `GET /reports?owner=alice` requires a bearer JWT and uses a parameterized database query.
-- Retry delays follow the shared architecture rule and never exceed 30 seconds.
-- The runtime image uses a non-root user.
+The [architecture rules](docs/architecture-rules.md) define the exercise. Compare the implementation with an indexed rule, add a regression test for the gap and submit a reviewable diff. The following observations describe revision `8fad124`, reviewed on 2026-11-20.
 
-The current implementation intentionally disagrees with this contract. The agent must find the gaps, use the indexed rules, add regression tests, and leave a reviewable diff.
+| Area | Required behavior | Current implementation |
+| --- | --- | --- |
+| Health | `GET /health` is public. | The handler returns `ok`. |
+| Reports | `GET /reports` requires a valid, correctly scoped bearer JWT. SQL values use typed parameters. | The router has no JWT check. The handler returns a SQL string containing the supplied owner. |
+| Retries | All callers share one helper with a 30,000 ms ceiling. | `bounded_backoff_ms` enforces the ceiling. The deprecated `legacy_retry_delay_ms` calls it. |
+| Container | The runtime uses a numeric non-root user. | The [Dockerfile](Dockerfile) leaves the runtime image running as root. |
+
+From the repository root, run the complete Rust test suite with the checked-in lockfile. The [CI workflow](../../.github/workflows/ci.yml) runs the same command.
 
 ```sh
-cargo test
-cargo run
-curl http://127.0.0.1:8080/health
+cargo test --locked --manifest-path examples/rust-service/Cargo.toml
 ```
+
+For a manual health check in an isolated development environment, run `cargo run --locked` from this crate’s directory. From a second shell in the same environment, `curl http://127.0.0.1:8080/health` prints `ok`.
 
 ## Request flow
 
-1. A request to `GET /reports?owner=alice` is handled by the `reports` function in [src/lib.rs](src/lib.rs)
-2. The `ReportFilter` struct extracts the `owner` parameter from the query string
-3. The `build_report_query` function constructs the SQL query string
-4. The `app` function sets up the router and routes the request to the `reports` handler
-5. The response contains the query in the `query` field of the `ReportResponse` struct
-6. The HTTP status code returned is `200 OK`
+The router and handlers are defined in [src/lib.rs](src/lib.rs).
 
-This handler constructs a SQL query string as a representation, not a database query. The implementation shows no database interaction.
+1. When the router is constructed, `app()` registers `GET /reports` with the `reports` handler.
+2. For a request such as `GET /reports?owner=alice`, the `Query<ReportFilter>` extractor reads `owner` from the query string.
+3. The handler passes the owner to `build_report_query` and places the resulting string in `ReportResponse.query`.
+4. The handler returns `200 OK` with that field as JSON. It never opens a database connection or executes the SQL.
 
 ## Running focused Rust retry tests
 
-Contributors can run only the Rust retry regression integration target using:
+The [retry regression target](tests/retry_regression.rs) covers the initial delays, the 30,000 ms ceiling and the extreme input `u32::MAX` for both `bounded_backoff_ms` and `legacy_retry_delay_ms`. Run it from the repository root.
 
 ```sh
 cargo test --locked --manifest-path examples/rust-service/Cargo.toml --test retry_regression
 ```
 
-Both `bounded_backoff_ms` and `legacy_retry_delay_ms` are checked against the 30,000 ms ceiling.
-
 ## Running the router construction test
 
-Contributors can run the `health` integration target that checks that the application router can be constructed using:
+The [health target](tests/health.rs) constructs the router by calling `app()`. Its coverage ends before any HTTP request reaches a handler. Run it from the repository root.
 
 ```sh
 cargo test --locked --manifest-path examples/rust-service/Cargo.toml --test health
