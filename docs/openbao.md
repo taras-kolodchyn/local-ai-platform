@@ -163,9 +163,19 @@ a pipe from a mode-0600 file in the gateway's private tmpfs. The password does
 not go into the Compose environment, the host filesystem or command arguments
 during this check.
 
-To return to local credentials, set `LITELLM_UI_PASSWORD_SOURCE=env` and the
-desired local `UI_PASSWORD` in `.env`, then run `make up`. A blank local
-password selects the platform's existing master-key fallback.
+### Return to the private .env file
+
+While OpenBao is available, transfer the current `UI_PASSWORD` and, if
+managed there, `LITELLM_MASTER_KEY` and `LITELLM_SALT_KEY` to the private
+`.env` (mode 0600). Preserve the exact salt that encrypted the existing
+database. Set both `LITELLM_UI_PASSWORD_SOURCE` and `LITELLM_MASTER_KEY_SOURCE`
+to `env`. Run `make up` and verify a fresh dashboard login, model requests,
+repository search and Prometheus scrapes. Prometheus keeps its scoped key in
+both modes. The base Compose project starts independently of OpenBao.
+
+If the local OpenBao container was already running, remove that specific
+container after checking the env gateway. Keep its private Raft directory
+and matching Keychain share for recovery.
 [Agent configuration](../integrations/openbao/agent.hcl) · [Compose overlay](../compose.openbao.yaml)
 
 Verified on the working Apple Silicon Mac on 2026-11-20 with OpenBao 2.7.3

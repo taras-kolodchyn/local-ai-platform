@@ -78,20 +78,12 @@ chmod 700 .local .local/smoke
 chmod 777 .local/logs
 
 umask 077
-if [[ ${LITELLM_MASTER_KEY_SOURCE:-env} == env ]]; then
-  read_admin_key > .local/litellm-master-key
-  chmod 600 .local/litellm-master-key
-  if [[ ! -s .local/litellm-api-key ]]; then
-    read_admin_key > .local/litellm-api-key
-  fi
-else
-  # Compose mounts the files before provisioning the first virtual keys.
-  touch .local/litellm-api-key
-  if [[ ! -s .local/litellm-metrics-key ]]; then
-    printf 'sk-metrics-%s' "$(generate_hex 32)" > .local/litellm-metrics-key
-  fi
-  chmod 600 .local/litellm-metrics-key
+# Compose mounts these files before the gateway registers the virtual keys.
+touch .local/litellm-api-key
+if [[ ! -s .local/litellm-metrics-key ]]; then
+  printf 'sk-metrics-%s' "$(generate_hex 32)" > .local/litellm-metrics-key
 fi
+chmod 600 .local/litellm-metrics-key
 
 for service in litellm retrieval ingestion mcp-tools postgres redis; do
   touch ".local/logs/${service}.log"

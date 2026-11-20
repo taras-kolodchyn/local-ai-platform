@@ -3,6 +3,7 @@ services:
     command: ["agent", "-config=/opt/openbao/agent-master.hcl"]
     environment:
       LITELLM_MASTER_KEY: ""
+      LITELLM_SALT_KEY: ""
       LITELLM_MASTER_KEY_SOURCE: openbao-local
     volumes:
       - type: bind
@@ -11,7 +12,3 @@ services:
         read_only: true
         bind:
           create_host_path: false
-
-secrets:
-  prometheus_bearer:
-    file: ./.local/litellm-metrics-key
