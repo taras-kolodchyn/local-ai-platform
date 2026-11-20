@@ -2,14 +2,12 @@
 
 ## Reporting a vulnerability
 
-Please do not open a public issue for a vulnerability that could expose credentials, source code, or host access. Use GitHub's private vulnerability reporting for this repository.
-
-Include the affected version/commit, reproduction steps, impact, and any suggested mitigation. Do not include real secrets or private source in the report.
+Send a private report to the maintainers with the affected commit, impact and steps to reproduce using synthetic data. Keep live credentials, private source and conversation transcripts out of the report. [Report a vulnerability on GitHub](https://github.com/taras-kolodchyn/local-ai-platform/security/advisories/new)
 
 ## Supported versions
 
-Until the first tagged release, only the current `main` branch receives security fixes.
+The current `main` branch receives security fixes.
 
-## Operational warning
+## Running the platform
 
-This project gives AI agents access to local tools. Keep it bound to localhost, review generated commands, use the default offline profile, and do not add Docker socket or broad filesystem access without a separate threat review.
+Use the default offline profile on a trusted Mac. Keep published ports on loopback and review the permissions for any external connector you enable. [Platform security boundaries](docs/security.md)

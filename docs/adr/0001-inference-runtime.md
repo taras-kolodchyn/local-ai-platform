@@ -1,79 +1,39 @@
-# ADR 0001: Use Docker Model Runner as the default macOS inference runtime
+# ADR 0001 — Docker Model Runner for macOS inference
 
-- Status: accepted
-- Date: 2026-07-19
-- Decision owners: repository maintainers
-
-## Context
-
-The platform must use Apple Silicon acceleration, keep `make up` as the entry point, and avoid the false claim that an ordinary Linux container can access Metal. It needs an OpenAI-compatible API for Qwen3-Coder and Qwen3-Embedding, streaming, tool calling, configurable context, pinned model artifacts, and connectivity from Docker Compose.
-
-The target development machine used for the initial implementation is arm64 with 48 GiB unified memory, Docker Desktop 4.79.0, Docker Model Runner 1.2.1, and Ollama 0.32.1.
+Accepted on 2026-07-19. Configuration reviewed on 2026-11-20 with Docker
+Desktop 4.100.0 and Model Runner 1.2.9 installed on the reference Mac.
 
 ## Decision
 
-Use Docker Model Runner (DMR) with its llama.cpp backend as the default runtime.
+Use Docker Model Runner (DMR) as the default generation and embedding runtime
+on Apple Silicon. Its llama.cpp backend can use Metal on the macOS host.
+The Linux containers run the gateway, retrieval, agent and supporting services.
+The CPU reranker runs in its own container. [DMR inference engines](https://docs.docker.com/ai/model-runner/inference-engines/) ·
+[Platform architecture](../architecture.md)
 
-- On Apple Silicon, DMR enables Metal automatically.
-- On macOS, the inference engine runs outside ordinary Linux containers in a Docker Desktop host sandbox.
-- DMR exposes OpenAI-compatible chat-completions and embeddings endpoints to host and Compose clients.
-- Compose can declare model dependencies, while the MVP uses explicit pinned artifact names and the documented host endpoint for transparent diagnostics.
-- The generation artifact is `ai/qwen3-coder:30B-A3B-UD-Q4_K_XL` (about 16.5 GB, Q4 family quantization).
-- The embedding artifact is `ai/qwen3-embedding:0.6B-F16` (1024 output dimensions in the upstream model).
-- The coding context starts at 65,536 tokens. Higher values require measurement because KV-cache memory grows with context.
-
-LiteLLM exposes the aliases `local-qwen` and `local-embeddings`. Because the local provider may only offer chat completions for all required request shapes, LiteLLM explicitly enables the Responses-to-Chat-Completions bridge.
-
-## Alternatives
-
-### Native Ollama
-
-Ollama is the fallback runtime for Phase 2. It is mature, easy to install, supports tools and OpenAI-compatible APIs, and is already present on the initial test Mac. It stays secondary because DMR can now integrate model lifecycle with Docker Desktop and Compose while still using Metal outside Linux containers.
-
-### MLX-LM
-
-MLX-LM is optimized for Apple Silicon and may provide excellent performance. Its local server is maintained as an OpenAI-compatible endpoint, but tool-call parsing is a fast-moving compatibility surface. It is a benchmark candidate, not the default compatibility baseline.
-
-### llama.cpp directly
-
-llama.cpp treats Apple Silicon as a first-class Metal target and exposes an OpenAI-compatible server. It gives maximum control but makes installation, artifact lifecycle, server supervision, and model switching the repository's responsibility. DMR already uses llama.cpp and supplies those lifecycle pieces.
+Docker Desktop already manages the local services. DMR also provides the model
+pull, configuration, inspection and unloading commands needed by the platform
+lifecycle. Using a separate Ollama, MLX or standalone llama.cpp server would
+require a second runtime to provision and supervise.
 
 ## Consequences
 
-Positive:
-
-- One Docker-oriented lifecycle for containers and model artifacts.
-- Honest Metal boundary on macOS.
-- Pinned, verified-publisher model artifacts.
-- A direct path to Compose model declarations.
-
-Negative:
-
-- Docker Desktop 4.40+ and Model Runner must be enabled.
-- The DMR API is unauthenticated, so it must remain loopback-scoped and behind LiteLLM for clients.
-- Model startup and switching can add cold-start latency.
-- The selected 30B model plus long KV cache may pressure 32 GiB machines; `make doctor` must fail or recommend a smaller profile rather than overpromise.
-
-## Validation gates
-
-The decision remains provisional in performance terms until all of these pass on an Apple Silicon Mac:
-
-1. DMR reports the model available and Metal-backed inference in its logs.
-2. LiteLLM `/v1/chat/completions` and `/v1/responses` both return a completion.
-3. Responses streaming works through the bridge.
-4. A tool call survives Qwen -> DMR -> LiteLLM -> client conversion.
-5. Embeddings return exactly 1024 finite values.
-6. Codex performs a sandboxed multi-file edit and runs tests.
-7. Hermes completes a tool-using turn through the same alias.
-8. Peak memory and latency are recorded for 32K and 64K contexts.
-
-## Official references
-
-- Docker Model Runner: https://docs.docker.com/ai/model-runner/
-- DMR inference engines and Metal: https://docs.docker.com/ai/model-runner/inference-engines/
-- Compose models: https://docs.docker.com/ai/compose/models-and-compose/
-- Qwen3-Coder artifact: https://hub.docker.com/r/ai/qwen3-coder
-- Qwen3-Embedding artifact: https://hub.docker.com/r/ai/qwen3-embedding
-- Ollama OpenAI compatibility: https://docs.ollama.com/api/openai-compatibility
-- MLX-LM: https://github.com/ml-explore/mlx-lm
-- llama.cpp: https://github.com/ggml-org/llama.cpp
+- `make up` enables DMR's host TCP endpoint on port 12434, prepares the selected
+  artifacts and configures the context size and embedding mode. LiteLLM reaches
+  DMR through the host bridge and publishes stable client aliases at
+  `127.0.0.1:4000/v1`. [DMR setup](https://docs.docker.com/ai/model-runner/get-started/) ·
+  [DMR API](https://docs.docker.com/ai/model-runner/api-reference/) ·
+  [Model preparation](../../scripts/pull-model.sh)
+- Authenticated clients use LiteLLM. DMR's host-side TCP endpoint is local to the
+  Mac. `make smoke-test` checks its listener alongside the gateway listeners and
+  sends inference requests through LiteLLM. [Endpoint checks](../../scripts/smoke-test.sh)
+- The default profile requests 65,536 coding tokens. The host check requires
+  at least 32 GiB of unified memory and recommends 32,768 tokens on Macs with
+  32–47 GiB. Set `QWEN_CONTEXT_SIZE` in the generated `.env` before startup
+  on those machines. [Host checks](../../scripts/doctor.sh) ·
+  [DMR context configuration](https://docs.docker.com/ai/model-runner/configuration/)
+- `make down` stops the clients and requests unloading of the two configured DMR
+  models. Downloaded artifacts survive shutdown. Use `make benchmark` to
+  measure cold and warm latency on a specific Mac.
+  [Docker model unload](https://docs.docker.com/reference/cli/docker/model/unload/) ·
+  [Benchmark method](../benchmarking.md)

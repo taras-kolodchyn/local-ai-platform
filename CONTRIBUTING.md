@@ -1,13 +1,13 @@
 # Contributing
 
-Thank you for improving Local AI Platform.
+Open an issue for an architectural change. For vulnerabilities, follow the [private reporting instructions](SECURITY.md).
 
-1. Open an issue for architectural or security-sensitive changes.
-2. Keep changes small and preserve `make up` on Apple Silicon.
-3. Add or update tests for behavior changes.
-4. Run `make lint`, `make test`, and the relevant smoke tests.
-5. Update the capability matrix when changing a version or compatibility claim.
+Keep `make up` as the supported entry point on Apple Silicon and the offline profile as the default. Add or update tests for behavior changes and document the operator-facing commands in the relevant guide.
 
-Never commit model files, `.env`, generated keys, private repositories, indexed content, or logs containing prompts/source.
+## Verify a change
 
-Compatibility PRs should include host model, unified memory, macOS, Docker Desktop, Model Runner, LiteLLM, agent, model artifact/digest, context size, exact commands, and observed pass/fail results.
+Run `make lint` and `make test`. With the platform running on an Apple Silicon Mac, run `make smoke-test`. Include the checks you ran and any checks you skipped in the pull request. GitHub CI exercises Linux tests and validates Compose configuration. The macOS smoke test also exercises local inference and the running services. [Verification guide](README.md#verification)
+
+For compatibility changes, update the [capability matrix](docs/capability-matrix.md) and link the official upstream documentation. Record the verification date, exact component versions and commands. For inference changes, also record the Mac's memory, model identity and context size.
+
+Keep generated credentials, private source, indexed data, model files and request bodies out of commits and pull requests.

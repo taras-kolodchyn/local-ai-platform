@@ -1,43 +1,49 @@
 # Offline operation
 
-The default runtime starts no external MCP service and publishes services only on host loopback. The GitHub MCP definition is inert because its Compose profile is disabled and the default virtual key does not grant access to it. After the offline images and both model artifacts have been pulled, chat, embeddings, indexing, retrieval, dashboards, and logs work without an internet connection.
-
-Here, "offline" means no configured remote provider/tool and full operation
-while the Mac has no Internet connection. It is not a packet-filtering claim:
-the Docker bridge used to reach host-side Model Runner and publish loopback
-ports is not `internal`, so a compromised container must still be treated as
-having possible egress. Enforce host firewall/air-gap policy separately when
-network-level denial is required.
+The default offline stack publishes services only on host loopback. Local chat,
+repository retrieval, the Moyai sandbox and dashboards use the resources on
+the Mac. The GitHub MCP service and the host-side issue publisher require
+separate opt-in commands.
 
 ## Prepare while connected
 
 ```sh
-make pull-model
-docker compose pull
-docker compose build retrieval
-docker compose -f compose.moyai.yaml pull --ignore-buildable
-docker compose -f compose.moyai.yaml build
 make up
-make smoke-test
 ```
 
-For an auditable offline transfer, record image and model digests on the connected Mac, export container images with `docker image save`, and follow Docker Model Runner's supported model packaging flow. Do not copy Docker Desktop's internal disk image while it is running.
+Complete the first startup while connected. It pulls the two configured DMR
+models, downloads and verifies the pinned MiniLM tokenizer and ARM64 ONNX weights,
+and builds the core and Moyai images. The sandbox build installs its toolchain
+dependencies and vendors the packages needed by the supported Rust verification
+profile. Startup finishes by running the local smoke checks.
+[Startup](../scripts/up.sh) · [Model preparation](../scripts/pull-model.sh) ·
+[Pinned assets and versions](capability-matrix.md)
+
+With the prepared stack running, disconnect the Mac and run `make smoke-test`
+to exercise inference, retrieval, scoped tools, dashboard logins and monitoring.
+Each invocation of `make up` calls `docker model pull` and Compose build steps.
+These steps can require registry access even when a previous session ran locally.
 
 ## What remains local
 
-- Model inference runs through Docker Model Runner on the Mac.
-- Prompts reach LiteLLM and DMR but no configured remote provider.
-- Embeddings and indexed chunks stay in the local Compose volumes.
-- Grafana, Prometheus, Loki, and retrieval bind to `127.0.0.1`.
-- `.env`, virtual keys, smoke artifacts, and logs stay under ignored local paths.
+- DMR serves generation and embeddings on macOS. Headroom compresses eligible
+  inputs and MiniLM ranks source excerpts in private local services.
+- PostgreSQL/pgvector stores the indexed text and embeddings. Moyai stores
+  conversations and workspace files in named volumes. Keep `.env`, `.local/`
+  and backups private.
+- Host clients reach the core HTTP endpoints and the Moyai UI over loopback.
+  Alloy sends local log files to Loki over an internal network. Loki has no
+  published port. [Network and cache layout](architecture.md)
 
 ## Offline limitations
 
-- The first model/image pull and dependency installation require connectivity.
-- The GitHub Actions workflow is a connected CI check; it does not run the Metal-backed integration suite.
-- Connected MCP, web search, package lookup, and repository hosting are unavailable.
-- A local process running as the same macOS user may still reach loopback services; offline is not a multi-user authorization boundary.
-- The default profile does not configure external calls, but it does not enforce
-  an egress firewall for every container.
+The offline profile controls configured providers and tools. Some container
+networks permit outbound connections so services can reach the macOS host.
+Use an air gap or a separate host network policy when egress must be blocked.
+Other processes on the same Mac can reach published loopback services.
+[Security design](security.md)
 
-To confirm the external service is absent, run `docker compose ps github-mcp`; it must not be running unless connected mode was explicitly enabled. `make up` also starts the local Moyai agent. To stop both Compose projects and unload the configured models from memory while preserving data and downloaded artifacts, run `make down`.
+Use `docker compose --profile connected ps --status running github-mcp` to check
+whether a previous session enabled GitHub MCP. Stop it with `make connected-down`.
+Use `make down` to stop both projects and unload the two DMR models while
+retaining the downloaded artifacts and persistent volumes. [Connected mode](connected.md)

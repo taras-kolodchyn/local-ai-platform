@@ -1,161 +1,117 @@
 # Repository tasks in local Moyai
 
-This workflow attaches a registered source snapshot to a Moyai conversation,
-retrieves cited context, records a native plan, edits an isolated copy, and returns
-a patch with independent verification evidence. The selected host checkout is
-never the agent's writable workspace. Start the platform with `make up`.
+Use `make index REPO=/absolute/path/to/project` to search an external checkout.
+For a verified code change, Moyai also needs an execution profile that matches
+the project. The two shipped profiles test one Rust retry policy. They stage an
+immutable snapshot, edit a separate sandbox copy and return a patch for review.
 
-## Register and run the first profile
+## Register a compatible crate
+
+The crate must contain `src/lib.rs` and match the protected `Cargo.toml` and
+`Cargo.lock` byte for byte. The importer accepts up to 512 UTF-8 files, 512 KiB
+per file, 8 MiB in total, and 16 MiB in its escaped wire format.
+[Protected package files](../integrations/moyai/oracles) · [Import checks](../retrieval/src/local_ai_retrieval/profiles.py)
+
+| Profile | Starting point | Changes the verifier accepts |
+| --- | --- | --- |
+| `rust-retry` | The legacy retry implementation fails the 30,000 ms ceiling. | Repair `src/lib.rs` and add an integration regression under `tests/*.rs`. The profile also admits edits to `README.md`. |
+| `rust-retry-tests` | The original implementation already passes the project tests and protected policy checks. | Add new integration-test files under `tests/`. All original files are protected. |
+
+For the repair profile, select a crate with its retry policy in
+`docs/architecture-rules.md` and run the following commands. A crate in a
+subdirectory of an external Git checkout is supported.
 
 ```sh
 make up
 make repository-add REPO=/absolute/path/to/compatible-crate
 ```
 
-Registration prints the opaque repository ID. In [Moyai](http://127.0.0.1:8787),
-create a conversation and ask it to repair that registered repository's retry
-policy: expose `bounded_backoff_ms(u32) -> u64`, start at 100 ms, increase
-exponentially, cap at 30,000 ms even for extreme attempts, retain the legacy public
-name/signature with identical corrected values, and add a regression test covering
-both entry points. Ask it to complete the trusted checks and
-deliver the patch through Files.
-
-The controller explains this profile's integration-test requirements to the
-model and returns actionable check feedback. An unchanged-tree retry reuses its
-latest settled check without spending another validation attempt. See
-[UI verification and bounded download observation](moyai-ui-verification.md).
-
-The `rust-retry` profile requires the Cargo manifest and lockfile accepted by the
-[sandbox verifier](../integrations/moyai/oracles), the expected Rust API, project
-tests and a documented retry policy. Use `make index REPO=/absolute/path` for
-repository search independent of an execution profile.
-
-The model's tools follow these gates:
-
-1. `list_repositories` and `open_repository` select an operator registration.
-2. `search_repository` retrieves passages from the pinned indexed generation.
-   Native file tools inspect the corresponding isolated source copy.
-3. `run_repository_checks` demonstrates the original policy violation. The
-   native `write_plan` must include a measurable retry ceiling criterion.
-4. `begin_repository_changes` admits edits. This profile permits `src/lib.rs`,
-   `tests/*.rs`, and README; package/dependency and verifier inputs are protected.
-5. `run_repository_checks` builds offline and runs project tests, protected
-   policy tests and the added tests. All added tests must pass the repair, and
-   their counterexamples must compile and complete. At least one added test must
-   fail the 60,000-ms counterexample; supporting tests may pass both versions.
-6. `finish_repository_task` creates and verifies three native Files entries:
-   `changes.patch`, `test-report.json`, and `result.json`.
-
-The controller enforces phases when a tool executes, including definitions cached
-before attachment. Repository mode uses the fixed check tool for execution.
-Ordinary unattached conversations retain the existing native shell workflow.
-
-## Source, context and authority
-
-The operator prepares filtered immutable source bytes under
-`.local/repositories/snapshots/`. The snapshot records Git head, branch, dirty
-state, subtree, exact file hashes and profile. The catalog publishes a generation
-only after indexing and gateway registration. Existing conversations retain their
-selected generation when another snapshot is registered.
-
-Embedding provenance includes the configured alias, immutable DMR artifact,
-dimensions, input format and chunker implementation. Incompatible generations
-cannot silently reuse embeddings or enter unpinned searches. The generic MCP
-`get_chunk` lookup applies the same generation and embedding filters as unpinned
-search. It accepts a numeric chunk ID. A legacy chunk is eligible only while its
-repository and branch have no active generation and its embedding fingerprint
-matches. Previously pinned conversations can still search their compatible snapshot
-through the scoped vector store. Native inference
-still runs through Docker Model Runner on macOS; Linux containers do not have
-direct Metal access.
-
-Moyai's inference key remains restricted to `local-qwen`. A separate internal
-read-only MCP bridge uses a distinct credential scoped to approved vector stores
-and search routes. The controller supplies repository/snapshot/generation scope;
-the model cannot select a gateway URL, store, host path or credential. Source and
-retrieved passages remain untrusted data.
-
-Source preparation, database activation, gateway grants and catalog publication
-span different systems. Failed gateway provisioning preserves the published
-catalog and prior pinned generations. A complete new database generation may
-already be visible to legacy unpinned search before that failure; this is not a
-transaction across the database and filesystem.
-
-## Failure handling and evidence
-
-The controller persists phases, budgets, operation identities, source hashes,
-plans, citations and native artifact IDs in its own SQLite ledger. Default limits
-are one hour, 60 model requests, 120 tool calls and four repair validations, with
-a separate baseline check. The fixed command has its own bounded timeout.
-
-Fresh check receipts are authenticated using a per-operation controller key sent
-only over SSH stdin. Each Cargo or test command runs under its own Linux child
-subreaper. It reaps the command and its remaining descendants and reports when
-the kernel confirms it has no children left. The guest also checks that output
-reached EOF. The controller requires both kinds of evidence before settling a
-launched check. A verified issue with an older receipt runs fresh checks before
-delivery. An unknown outcome stays fenced; a missing response does not authorize
-replaying a command. A subsequent authorized turn can reconcile recorded check
-evidence or a provable write postimage. Ambiguous writes remain uncertain.
-
-The supervisor's cleanup and cancellation tests passed on the local Linux
-7.0.14-linuxkit sandbox with Python 3.14.10 on 2026-11-18.
-
-Completed files and workspace data survive a service restart. Running process
-memory does not. The authenticated owner endpoint
-`GET /api/sessions/{session_id}/repository-task` provides persisted diagnostics
-without consuming execution budget or starting remote work.
+For the tests-only profile, use the registration script directly after startup.
 
 ```sh
-make repository-smoke REPO=/absolute/path/to/compatible-crate
-make verify REPO=/absolute/path/to/compatible-crate
+python3 scripts/prepare-repository.py --repo /absolute/path/to/compatible-crate --profile rust-retry-tests
 ```
 
-For the optional repair acceptance run, select a clean Git checkout or crate
-directory whose original implementation exhibits the failing 60,000 ms retry
-ceiling. The runner pins its commit and subtree, then compares the checkout
-again after verification. Run `make verify` without a repository to check the
-platform lifecycle and native sandbox tasks.
+Copy the `repository_id` from the registration output into a new Moyai chat.
+For a repair, a request can read as follows. [Open local Moyai](http://127.0.0.1:8787)
 
-Repository acceptance uses actual local-model turns in fresh conversations. It
-checks scoped context, native planning/edit/check tool receipts, signed baseline
-and repaired results, downloaded hashes, patch applicability, current workspace
-bytes and unchanged host source. Private evidence and operator-side resource
-samples are retained under `.local/verification/`; generated source and request
-bodies must not be committed. `make verify` also runs the original checks and
-plain Moyai acceptance, then always shuts down and checks owned container/model
-inventories.
+> Use list_repositories and open_repository for repository_id YOUR_ID.
+> Read the documented retry policy. Implement bounded_backoff_ms(u32) -> u64
+> starting at 100 ms, doubling to a 30,000 ms ceiling even at u32::MAX.
+> Preserve the legacy_retry_delay_ms signature and give both entry points the
+> same values. Add an integration regression and deliver the checked patch in Files.
 
-Grafana includes repository task phases, mean phase duration, context outcomes
-and telemetry availability. Labels omit conversation IDs, source paths and
-queries. Host-side Docker statistics and native inference RSS observations belong
-to individual acceptance receipts; container memory includes cache and filesystem
-pages and is not equivalent to macOS inference memory.
+## Source and citations
 
-## Execution limits
+Registration filters and hashes the selected source under
+`.local/repositories/snapshots/`. The manifest records the Git commit, subtree,
+dirty state and verification profile. The host checks the profile, indexes the
+snapshot and provisions search permissions before publishing the catalog entry.
+Existing conversations keep their pinned snapshot and index generation.
+If provisioning fails after indexing, the published catalog keeps its previous
+entry, although unpinned database searches may already see the new generation.
+[Registration](../scripts/prepare-repository.py)
 
-Runtime Cargo uses prepared vendored dependencies with `--offline --locked` and
-one build job. Connected image/model preparation is separate from offline
-execution. A container egress test does not establish a disconnected-host
-rehearsal. No Docker socket, host home, writable host checkout or context key is
-mounted in the execution sandbox.
+The controller supplies the repository, snapshot and generation to a read-only
+bridge. Search returns up to six excerpts by default and accepts a limit from
+one to twelve. It can restrict a lookup to an exact path before ranking.
+The backend considers up to 48 hybrid candidates and can rerank implementation
+excerpts via the `local-reranker` alias. The selected source shares a
+24,000-character budget. Citations refer to the original chunk's path and line
+range, including when the displayed excerpt has been shortened. Treat retrieved
+text as untrusted source material. [Context bridge](../integrations/moyai/context_bridge.py) ·
+[Selection and excerpt budgeting](../retrieval/src/local_ai_retrieval/moyai_search.py)
 
-This is a trusted single-user local platform. Conversations share one sandbox
-UID; separate directories, phase guards and authenticated receipts do not
-establish hostile-code or tenant isolation. Artifact delivery returns a
-reviewable patch; applying it to the host checkout is an explicit operator step.
-Capacity measurements cover sequential repository tasks. Concurrent Rust checks
-share the sandbox's memory limit and have not been capacity-tested.
+## From baseline to patch
 
-Compatibility sources: [Linux child subreapers](https://man7.org/linux/man-pages/man2/PR_SET_CHILD_SUBREAPER.2const.html),
-[waitpid child accounting](https://man7.org/linux/man-pages/man2/wait.2.html),
-[Cargo offline and locked execution](https://doc.rust-lang.org/cargo/commands/cargo-test.html),
-[Cargo vendoring](https://doc.rust-lang.org/cargo/commands/cargo-vendor.html),
-[LiteLLM virtual key permissions](https://docs.litellm.ai/docs/proxy/virtual_keys),
-[pinned LiteLLM route checks](https://github.com/BerriAI/litellm/blob/v1.110.2/litellm/proxy/auth/route_checks.py).
-See the [approved design](superpowers/specs/2026-11-17-repository-workflow-design.md)
-for the implementation boundaries and the
-[2026-11-17 verified results](https://github.com/taras-kolodchyn/local-ai-platform/blob/5029427f3b0d228b3eafe52f41f3d6337575e4a2/docs/results/repository-workflow-2026-11-17.md) for
-three actual local-model cycles, lifecycle checks, measurements and limits.
+1. Moyai attaches the snapshot, retrieves cited source and runs
+   `run_repository_checks` on the original tree. The baseline establishes the
+   precondition for the chosen profile.
+2. Moyai records a native plan with a measurable retry ceiling, then calls
+   `begin_repository_changes` to unlock writes to the permitted paths.
+3. The fixed verifier runs Cargo offline against locked, vendored dependencies
+   with one build job. It checks the project, the protected policy and the added
+   integration regressions. Every added regression must pass on the candidate.
+   At least one must fail against the compiled 60,000 ms counterexample.
+   [Sandbox verifier](../integrations/moyai/repository_guest.py) · [Cargo test options](https://doc.rust-lang.org/cargo/commands/cargo-test.html)
+4. After a passing check, `finish_repository_task` delivers three artifacts to
+   **Files**. For GitHub issues, independent documentation review must also
+   approve the verified tree. [Optional GitHub publisher](moyai-github-issues.md)
 
-The opt-in host publisher can run this Rust profile from an issue URL and open a draft PR. See the [Moyai GitHub issue workflow](moyai-github-issues.md).
+A check reply includes `next_action`. A missing regression belongs in a Cargo
+integration target under `tests/`. A repeated check on identical input can
+reuse the signed receipt for a pass or a settled missing-regression failure.
+A new admitted write invalidates the pass, even if it produces identical bytes.
+An uncertain write or command must be reconciled against recorded evidence
+before work can resume.
+
+The ledger's defaults are one hour, 60 model requests, 120 tool calls and four
+candidate validations in addition to the baseline. Each fixed check has a
+240-second timeout. Repository mode exposes the fixed check tool for execution.
+The authenticated session owner can inspect the phase and receipts at
+`GET /api/sessions/{session_id}/repository-task` after a failure or restart.
+[Task ledger](../integrations/moyai/repository_ledger.py) · [Check runner](../integrations/moyai/repository_backend.py)
+
+## Verify the delivered files
+
+Open the completed conversation's **Files** panel. Select an artifact and use
+**Download original**. For manual verification, compute the downloaded file's
+SHA-256 (on macOS, `shasum -a 256 FILENAME`) and compare it with the controller's
+`files` entry for `repository-results/FILENAME` in the authenticated session
+endpoint above.
+
+| Download | What to inspect |
+| --- | --- |
+| `changes.patch` | The diff against the registered snapshot. Applying it to a host checkout is a separate operator action. |
+| `test-report.json` | Baseline and candidate check receipts, including command results and the tree hash for each check. |
+| `result.json` | The pinned source binding, verified tree, citations and hashes of the patch and test report. |
+
+For automated acceptance, use a clean external checkout with the failing
+`rust-retry` baseline and a documented 30,000 ms ceiling. With the platform
+running, `make repository-smoke REPO=/absolute/path/to/compatible-crate` runs
+two fresh model tasks and independently checks patch applicability, receipts,
+downloaded bytes, citation ranges and the host source. Add `RESTART=1` to check
+persistence between tasks. Private evidence is written under `.local/verification/`.
+For the complete platform checks and shutdown, use
+`make verify REPO=/absolute/path/to/compatible-crate`. [Acceptance runner](../scripts/repository-smoke.py) ·
+[Platform verification](platform-operations.md)

@@ -6,7 +6,6 @@ import fcntl
 import errno
 import re
 import hashlib
-import importlib.util
 import json
 import os
 from pathlib import Path
@@ -14,14 +13,19 @@ import subprocess
 import stat
 import tempfile
 
-_spec = importlib.util.spec_from_file_location('source_guards', Path(__file__).with_name('source-snapshot.py'))
-_guards = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(_guards)
 SCANNER_VERSION = 'repository-source-v1'
 MAX_FILES = 5000
 MAX_BYTES = 100_000_000
 MAX_SOURCE_BYTES = 1_000_000
 MAX_CATALOG_BYTES = 1 << 20  # The context bridge reads catalogs up to 1 MiB.
+SOURCE_EXTENSIONS = {'.rs', '.py', '.sh', '.md', '.toml', '.yaml', '.yml', '.json', '.sql',
+                     '.txt', '.js', '.ts', '.tsx', '.jsx', '.go', '.c', '.h', '.cpp', '.swift', '.html', '.css'}
+DENIED_STEMS = {'secret', 'secrets', 'credential', 'credentials', 'node_modules', 'target',
+                'vendor', 'build', 'dist', '__pycache__'}
+DENIED_PATH_PARTS = DENIED_STEMS | {'coverage'}
+SECRET_PATTERN = re.compile(
+    r'-----BEGIN .*PRIVATE KEY-----|(?:ghp_|github_pat_|sk-)[A-Za-z0-9_-]{20,}|AKIA[A-Z0-9]{16}|'
+    r'(?:api[_-]?key|client[_-]?secret|access[_-]?token)\s*[:=]\s*[\x22\x27]?[A-Za-z0-9_./+=-]{20,}', re.I)
 
 
 def canonical(value):
@@ -160,7 +164,7 @@ def walk_source_paths(root):
     paths = []
     for base, directories, names in os.walk(root, topdown=True, followlinks=False, onerror=fail):
         directories[:] = [name for name in directories if not name.startswith('.') and
-            name.lower() not in (_guards.DENIED | {'secret', 'credential', 'coverage'})]
+            name.lower() not in DENIED_PATH_PARTS]
         paths.extend((Path(base) / name).relative_to(root).as_posix() for name in names)
     return paths
 
@@ -183,13 +187,12 @@ def read_source(root, relative):
 
 
 def source_path_allowed(relative):
-    denied = _guards.DENIED | {'secret', 'credential', 'coverage'}
     if relative.is_absolute() or not relative.parts or any(
-            part == '..' or part.startswith('.') or part.lower() in denied for part in relative.parts):
+            part == '..' or part.startswith('.') or part.lower() in DENIED_PATH_PARTS for part in relative.parts):
         return False
-    if relative.stem.lower() in (_guards.DENIED | {'secret', 'credential'}):
+    if relative.stem.lower() in DENIED_STEMS:
         return False
-    return relative.suffix in _guards.EXTENSIONS or relative.name in {
+    return relative.suffix in SOURCE_EXTENSIONS or relative.name in {
         'Cargo.lock', 'Makefile', 'Dockerfile', 'Containerfile'}
 
 
@@ -197,7 +200,7 @@ def source_content_allowed(raw):
     if len(raw) > MAX_SOURCE_BYTES or b'\0' in raw:
         return False
     try:
-        return _guards.PATTERN.search(raw.decode('utf-8')) is None
+        return SECRET_PATTERN.search(raw.decode('utf-8')) is None
     except UnicodeError:
         return False
 

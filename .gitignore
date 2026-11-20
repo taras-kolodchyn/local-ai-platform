@@ -1,7 +1,8 @@
 .DS_Store
 .env
 .env.connected
-.local/
+# Local runtime state may be a directory or a symlink in a worktree.
+.local
 .venv/
 __pycache__/
 .pytest_cache/
@@ -19,13 +20,12 @@ data/
 *.gguf
 *.safetensors
 
-# Demo/build output.
+# Build output.
 target/
 dist/
 build/
 node_modules/
-*.docx
 
-# Also ignore the local-runtime symlink used by isolated checkouts.
-.local
+# Operator-local documents.
+*.docx
 docs/demo-runbook.md
