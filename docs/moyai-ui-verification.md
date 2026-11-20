@@ -1,9 +1,9 @@
 # Local Moyai UI verification
 
-Use `make up`, register the bundled fixture as described in
-[repository tasks](repository-workflow.md), and submit an ordinary retry-repair
-task in one conversation. The controller supplies the verification profile's
-integration-test contract; the user does not need to name its test directory.
+Start the platform with `make up`. To verify artifact delivery for a repository
+task, register an external checkout that matches the retry-repair profile and
+submit the task in a private Moyai conversation. The controller supplies the
+profile's integration-test contract. [Repository registration](repository-workflow.md)
 
 ## Rust feedback and retries
 
@@ -105,6 +105,6 @@ Private evidence: `.local/verification/download-diagnosis-20261117.json` and
 the browser observations recorded with the repair acceptance results. Generated
 source, downloaded artifacts and request bodies remain outside Git.
 
-The [2026-11-17 reliability results](results/repository-reliability-2026-11-17.md)
+The [2026-11-17 reliability results](https://github.com/taras-kolodchyn/local-ai-platform/blob/5029427f3b0d228b3eafe52f41f3d6337575e4a2/docs/results/repository-reliability-2026-11-17.md)
 record final one-task UI acceptance, independent artifact validation and the
 275-ms download on the final controller.

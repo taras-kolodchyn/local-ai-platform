@@ -20,16 +20,15 @@ from urllib.error import HTTPError, URLError
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'integrations/moyai'))
-from github_app import AppError, Installation, request as app_request
+from github_app import AppError, Installation, credentials_directory, request as app_request
 from client import MoyaiClient, MoyaiUnavailable
-from github_issue import ISSUES, REPO, atomic_json, issue_number, issue_scope
+from github_issue import atomic_json, issue_number, issue_scope, matches_target, selected_target
 from repository_backend import bounded_read, canonical, coverage_path, editable
 from repository_ledger import ARTIFACT_PATHS, approved_review, baseline_established, clean_coverage_baseline, validate_checks, verify_artifact
 
 STATE = ROOT / '.local/github-issues'
-PROJECT = 'examples/rust-service'
 BASE = 'main'
-COMPOSE = ['docker', 'compose', '-f', 'compose.moyai.yaml', '-f', 'compose.moyai-issues.yaml']
+COMPOSE = ['docker', 'compose', '--project-name', 'local-ai-moyai', '-f', 'compose.moyai.yaml', '-f', 'compose.moyai-issues.yaml']
 
 
 class Refused(ValueError):
@@ -39,6 +38,11 @@ class Refused(ValueError):
 def require(condition, message):
     if not condition:
         raise Refused(message)
+
+
+def state_directory():
+    target = selected_target()
+    return STATE / 'targets' / target.repository / 'scopes' / target.identity
 
 
 def run(args, *, data=None, env=None, timeout=60):
@@ -63,15 +67,15 @@ class GitHub:
         if self.installation is not None:
             return self.installation.api(endpoint, body)
         if self.operator_issue is None:
-            path = STATE / 'installation-token'
+            path = credentials_directory() / 'installation-token'
             require(path.is_file() and not path.is_symlink() and path.stat().st_mode & 0o077 == 0,
                     'Provide a private GitHub installation-token file or select one issue with --operator-issue.')
             token = path.read_text().strip()
             require(bool(token), 'The dedicated GitHub token is empty.')
-            return app_request('/repos/' + REPO + '/' + endpoint, token, body)
+            return app_request('/repos/' + selected_target().repository + '/' + endpoint, token, body)
         env = {**os.environ, 'GH_PROMPT_DISABLED':'1', 'GH_NO_UPDATE_NOTIFIER':'1'}
         args = ['gh', 'api', '--hostname', 'github.com', '-H', 'X-GitHub-Api-Version: 2026-03-10',
-                'repos/' + REPO + '/' + endpoint]
+                'repos/' + selected_target().repository + '/' + endpoint]
         if body is not None:
             args += ['--method', 'POST', '--input', '-']
         return json.loads(run(args, data=None if body is None else canonical(body), env=env))
@@ -79,8 +83,8 @@ class GitHub:
     def ticket(self, number):
         require(self.operator_issue is None or number == self.operator_issue, 'This publisher is enabled for another issue.')
         row = self.api(f'issues/{number}')
-        require(row['html_url'] == ISSUES + str(number) and 'pull_request' not in row and row['state'] == 'open',
-                'The selected URL must be an open issue in local-ai-platform.')
+        require(row['html_url'] == selected_target().url(f'issues/{number}') and 'pull_request' not in row and row['state'] == 'open',
+                'The selected URL must be an open issue in the configured repository.')
         require(self.operator_issue is not None or any(label['name'] == 'moyai:rust-retry' for label in row['labels']),
                 'This publisher supports issues assigned the moyai:rust-retry verification profile.')
         body = row['body'] or ''
@@ -90,13 +94,14 @@ class GitHub:
 
 def prepare(base, profile='rust-retry'):
     require(bool(re.fullmatch('[a-f0-9]{40}', base)), 'Invalid GitHub main commit.')
-    repo = STATE / 'sources' / base
-    repo.parent.mkdir(exist_ok=True)
+    target = selected_target()
+    repo = state_directory() / 'sources' / base
+    repo.parent.mkdir(parents=True, exist_ok=True)
     if not repo.exists():
         with tempfile.TemporaryDirectory(dir=repo.parent) as temp:
             checkout = Path(temp) / 'checkout'
             git(ROOT, 'clone', '--depth', '1', '--single-branch', '--branch', BASE,
-                'https://github.com/' + REPO + '.git', str(checkout))
+                'https://github.com/' + target.repository + '.git', str(checkout))
             require(git(checkout, 'rev-parse', 'HEAD').decode().strip() == base,
                     'GitHub main moved during preparation. Restart the publisher.')
             checkout.rename(repo)
@@ -104,11 +109,13 @@ def prepare(base, profile='rust-retry'):
     registration = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(registration)
     catalog = ROOT / '.local/repositories'
-    prefix = 'repo_github_tests_' if profile == 'rust-retry-tests' else 'repo_github_'
+    source = repo / target.project
+    require(source.resolve() == repo.resolve() / target.project, 'The configured project path cannot traverse symbolic links.')
+    identity = hashlib.sha256(canonical([target.identity, base, profile])).hexdigest()
     manifest = registration.sibling('repository-snapshot').prepare_snapshot(
-        repo / PROJECT, catalog, profile, repository_id=prefix + base)
+        source, catalog, profile, repository_id='repo_github_' + identity)
     require(manifest['git']['head'] == base and manifest['git']['dirty'] is False
-            and manifest['git']['subtree'] == PROJECT, 'GitHub checkout differs from its pinned base.')
+            and manifest['git']['subtree'] == target.project, 'GitHub checkout differs from its pinned base.')
     # The indexer reuses a completed generation only for the active embedding fingerprint.
     binding = registration.index_prepared(catalog, manifest)
     return manifest, binding
@@ -172,6 +179,8 @@ def verified_patch(client, job):
 
 def reproduce(repo, base, manifest, patch, verified):
     """Apply only to a temporary Git index. Hash staged blobs; never execute the checkout."""
+    project = selected_target().project
+    prefix = project + '/' if project else ''
     with tempfile.TemporaryDirectory() as temp:
         index = Path(temp) / 'index'
         def staged(*args, data=None):
@@ -179,15 +188,14 @@ def reproduce(repo, base, manifest, patch, verified):
         staged('read-tree', base)
         expected = {}
         for row in manifest['files']:
-            data = staged('show', ':' + PROJECT + '/' + row['path'])
+            data = staged('show', ':' + prefix + row['path'])
             require(hashlib.sha256(data).hexdigest() == row['sha256'] and len(data) == row['size'],
                     'Registered snapshot bytes differ from the GitHub base tree.')
             expected[row['path']] = row
-        staged('apply', '--cached', '--whitespace=nowarn', '--directory=' + PROJECT, '-', data=patch)
+        staged('apply', '--cached', '--whitespace=nowarn', *(['--directory=' + project] if project else []), '-', data=patch)
         names = staged('diff', '--cached', '--no-renames', '--name-only', '-z', base).decode().split('\0')[:-1]
         entries = []
         for path in names:
-            prefix = PROJECT + '/'
             name = path.removeprefix(prefix)
             require(path.startswith(prefix) and editable(name), 'Patch includes a path outside the Rust profile.')
             if manifest.get('verification_profile') == 'rust-retry-tests':
@@ -211,7 +219,7 @@ def issue_branch(number, installation):
 def publication_body(job, patch, checks, coverage):
     baseline = ('The original project and retry oracle passed before adding tests.'
                 if coverage else 'The failing baseline was reproduced.')
-    return (f"Closes #{job['number']}\n\nMoyai verified the Rust example locally against base `{job['base']}`. "
+    return (f"Closes #{job['number']}\n\nMoyai verified the Rust project locally against base `{job['base']}`. "
             f'{baseline} The verified tree passed {checks["project_tests_run"]} '
             f'project tests and {checks["oracle_tests_run"]} protected tests. '
             'The added regression suite detected the previous 60-second ceiling.\n\n'
@@ -222,7 +230,7 @@ def publish(api, repo, manifest, job, patch, digest, checks, save, *, installati
     number, base = job['number'], job['base']
     branch = issue_branch(number, installation)
     coverage = manifest.get('verification_profile') == 'rust-retry-tests'
-    title = 'Add Rust retry integration coverage' if coverage else 'Fix the Rust example retry ceiling'
+    title = 'Add Rust retry integration coverage' if coverage else 'Fix the Rust retry ceiling'
     def refs():
         return [r['object']['sha'] for r in api(f'git/matching-refs/heads/{branch}') if r['ref'] == 'refs/heads/' + branch]
     tree, entries = reproduce(repo, base, manifest, patch, digest)
@@ -231,7 +239,7 @@ def publish(api, repo, manifest, job, patch, digest, checks, save, *, installati
         prs = [api(f'pulls/{int(job["pr"]["number"])}')]
     else:
         # Include closed and retargeted PRs before creating or restoring any ref.
-        query = 'pulls?state=all&head=' + REPO.split('/')[0] + ':' + branch
+        query = 'pulls?state=all&head=' + selected_target().repository.split('/')[0] + ':' + branch
         prs = api(query)
     if not job.get('commit'):
         require(not prs and not refs(), 'The issue branch was already used. The publisher cannot claim it.')
@@ -255,7 +263,7 @@ def publish(api, repo, manifest, job, patch, digest, checks, save, *, installati
     pr = prs[0]
     require(pr['draft'] is True and pr['state'] == 'open' and pr['head']['sha'] == head
             and pr['head']['ref'] == branch and pr['base']['ref'] == BASE and pr['base']['sha'] == base
-            and pr['head']['repo']['full_name'] == pr['base']['repo']['full_name'] == REPO,
+            and pr['head']['repo']['full_name'] == pr['base']['repo']['full_name'] == selected_target().repository,
             'GitHub did not confirm the expected open draft at the verified commit.')
     result = {'number':pr['number'], 'head':head}
     if installation is not None:
@@ -299,31 +307,34 @@ class Publisher:
                         for t in previous['turns']), 'The earlier private owner turn has not settled.')
         task = self.client.request(f"/api/sessions/{job['session']}/repository-task")
         require(task['phase'] == 'verified' and not task['pending'] and not task['artifacts']
-                and task['binding'] == job['binding'] and task['github_issue']['turn'] == job['turn']
+                and task['binding'] == job['binding'] and matches_target(task.get('github_issue'))
+                and task['github_issue']['turn'] == job['turn']
                 and task['github_issue']['number'] == job['number'], 'Only an undelivered checked task can restart.')
         branch = issue_branch(job['number'], self.github.installation)
         refs = self.github.api('git/matching-refs/heads/' + branch)
-        prs = self.github.api('pulls?state=all&head=' + REPO.split('/')[0] + ':' + branch)
+        prs = self.github.api('pulls?state=all&head=' + selected_target().repository.split('/')[0] + ':' + branch)
         require(not prs and not any(r['ref'] == 'refs/heads/' + branch for r in refs),
                 'An issue branch or PR already exists. The claim cannot be replaced.')
         return [*job.get('prior_attempts', []), {k:job[k] for k in ('session','turn','base','binding')}]
 
     def dispatch(self, request):
+        require(matches_target(request), 'Issue request differs from the configured repository or project path.')
         number, session, turn = (request[k] for k in ('number','session','turn'))
         require(type(number) is int and 0 < number < 10**10, 'Invalid issue number.')
         require(all(str(uuid.UUID(v)) == v for v in (session, turn)), 'Invalid conversation identity.')
         require(self.github.operator_issue in (None, number), 'Issue outside the operator grant.')
         owner = self.authorize_turn(number, session, turn)
-        claim_directory = STATE
+        claim_directory = state_directory()
         if self.github.installation is not None:
-            claim_directory = STATE / f'app-{self.github.installation.app_id}'
-            claim_directory.mkdir(mode=0o700, exist_ok=True)
+            claim_directory = state_directory() / f'app-{self.github.installation.app_id}'
+            claim_directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         jobfile = claim_directory / f'issue-{number}.json'
         job = json.loads(jobfile.read_text()) if jobfile.exists() else None
         def save(value):
             atomic_json(jobfile, value)
         action = request['action']
         if job:
+            require(matches_target(job), 'Saved claim belongs to a different repository or project path.')
             require(job['binding'].get('verification_profile', 'rust-retry') == self.binding.get('verification_profile', 'rust-retry'),
                     'The granted profile differs from the original issue binding.')
         if action == 'open':
@@ -343,7 +354,7 @@ class Publisher:
                     ticket = self.github.ticket(number)
                 require(self.github.api('commits/main')['sha'] == self.manifest['git']['head'],
                         'GitHub main moved. Restart the publisher to index the new base.')
-                job = {'number':number, 'session':session, 'turn':turn, 'base':self.manifest['git']['head'],
+                job = {'number':number, 'target':selected_target().identity, 'session':session, 'turn':turn, 'base':self.manifest['git']['head'],
                        'binding':self.binding, 'issue':ticket}
                 if self.auto_merge:
                     job['auto_merge'] = True
@@ -357,7 +368,7 @@ class Publisher:
         patch, digest, checks = verified_patch(self.client, job)
         directory = ROOT / '.local/repositories/snapshots' / job['binding']['snapshot_id']
         manifest = json.loads((directory / 'manifest.json').read_text())
-        require(manifest['git']['head'] == job['base'] and manifest['git']['subtree'] == PROJECT
+        require(manifest['git']['head'] == job['base'] and manifest['git']['subtree'] == selected_target().project
                 and not manifest['git']['dirty'], 'The snapshot differs from the pinned GitHub source.')
         require(self.github.api('commits/main')['sha'] == job['base'], 'GitHub main moved since verification.')
         def checked_api(endpoint, body=None):
@@ -368,7 +379,7 @@ class Publisher:
                     require(self.github.api('commits/main')['sha'] == job['base'], 'GitHub main moved since verification.')
                 self.authorize_turn(number, session, turn)
             return self.github.api(endpoint, body)
-        result = publish(checked_api, STATE/'sources'/job['base'], manifest, job, patch, digest, checks, save,
+        result = publish(checked_api, state_directory()/'sources'/job['base'], manifest, job, patch, digest, checks, save,
                          installation=self.github.installation)
         save({**job, 'pr':result})
         return {**result, 'auto_merge':True} if self.auto_merge and job.get('auto_merge') else result
@@ -384,7 +395,7 @@ def verified_ci(github, job):
         return None
     run = runs[0]
     require(run['event'] == 'pull_request' and run['path'] == '.github/workflows/ci.yml'
-            and run['repository']['full_name'] == run['head_repository']['full_name'] == REPO
+            and run['repository']['full_name'] == run['head_repository']['full_name'] == selected_target().repository
             and run['head_branch'] == branch and run['head_sha'] == head
             and run['display_title'] == f'CI PR {pr} head {head} base {base}',
             'The CI run does not identify the verified PR, head and base.')
@@ -399,13 +410,14 @@ def verified_ci(github, job):
 
 def merge_verified_issue(github, client, jobfile, *, deadline=None):
     job = json.loads(jobfile.read_text())
+    require(matches_target(job), 'Saved merge grant belongs to a different repository or project path.')
     app, pr = github.installation, job['pr']
     require(app is not None and job.get('auto_merge') is True and github.operator_issue == job['number']
             and pr['app_id'] == app.app_id and pr['author'] == app.bot and pr['head'] == job['commit'],
             'This publication has no matching single-issue App merge grant.')
     patch, digest, checks = verified_patch(client, job)
     manifest = json.loads((ROOT/'.local/repositories/snapshots'/job['binding']['snapshot_id']/'manifest.json').read_text())
-    repo = STATE/'sources'/job['base']
+    repo = state_directory()/'sources'/job['base']
     tree, _ = reproduce(repo, job['base'], manifest, patch, digest)
     check_merge_examples(repo, tree, patch)
     body = publication_body(job, patch, checks, manifest.get('verification_profile') == 'rust-retry-tests')
@@ -420,7 +432,7 @@ def merge_verified_issue(github, client, jobfile, *, deadline=None):
     while time.monotonic() < deadline:
         live = github.api(route)
         require(live['number'] == pr['number'] and live['user']['login'] == app.bot and live['user']['type'] == 'Bot'
-                and live['head']['repo']['full_name'] == live['base']['repo']['full_name'] == REPO
+                and live['head']['repo']['full_name'] == live['base']['repo']['full_name'] == selected_target().repository
                 and live['head']['sha'] == head and live['head']['ref'] == branch and live['base']['ref'] == BASE,
                 'PR identity, branch or verified head changed.')
         if live['merged']:
@@ -474,7 +486,7 @@ def merge_verified_issue(github, client, jobfile, *, deadline=None):
 def check_merge_examples(repo, tree, patch):
     from documentation_review import (direct_retry_formula, prose_passages, reference_lines,
                                       retry_example_errors, retry_implementation)
-    candidate = {'src/lib.rs':git(repo, 'show', f'{tree}:{PROJECT}/src/lib.rs')}
+    candidate = {'src/lib.rs':git(repo, 'show', f'{tree}:' + (Path(selected_target().project) / 'src/lib.rs').as_posix())}
     refs = reference_lines(candidate, candidate)
     location = retry_implementation(candidate, refs)
     formula = direct_retry_formula(candidate) if location else None
@@ -527,7 +539,7 @@ def serve(publisher, exchange, lease):
                 request = json.loads(bounded_read(exchange/'requests', path.name, 1024))
             except (OSError, ValueError):
                 continue
-            if not isinstance(request, dict) or set(request) != {'action', 'number', 'session', 'turn', 'lease'}:
+            if not isinstance(request, dict) or set(request) != {'action', 'number', 'session', 'turn', 'lease', 'target'}:
                 continue
             reply = exchange/'replies'/path.name
             if request.get('lease') != lease or (reply.exists() and json.loads(reply.read_text()).get('lease') == lease):
@@ -564,8 +576,13 @@ def main():
         parser.error('restart requires the GitHub App scoped to one operator-approved issue')
     if args.profile == 'rust-retry-tests' and not args.operator_issue:
         parser.error('the tests-only publisher requires one operator-approved issue')
+    try:
+        selected_target()
+    except ValueError as error:
+        parser.error(str(error))
     os.chdir(ROOT)
     STATE.mkdir(exist_ok=True, parents=True, mode=0o700)
+    state_directory().mkdir(mode=0o700, parents=True, exist_ok=True)
     exchange = STATE / 'exchange'
     exchange.mkdir(exist_ok=True)
     (exchange/'requests').mkdir(exist_ok=True)
@@ -584,7 +601,7 @@ def main():
         github = GitHub(args.operator_issue, installation=Installation() if args.app else None)
         client = MoyaiClient()
         if auto_merge:
-            jobfile = STATE/f'app-{github.installation.app_id}'/f'issue-{args.operator_issue}.json'
+            jobfile = state_directory()/f'app-{github.installation.app_id}'/f'issue-{args.operator_issue}.json'
             if jobfile.exists():
                 prior = json.loads(jobfile.read_text())
                 require(prior.get('auto_merge') and prior['binding']['verification_profile'] == args.profile,

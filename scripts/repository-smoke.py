@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Run real local-model repository tasks and retain every acceptance outcome privately."""
+"""Verify the rust-retry repair profile on an operator-selected clean Git checkout."""
 import argparse
 from datetime import datetime, timezone
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -19,16 +20,17 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'integrations/moyai'))
 from client import MoyaiClient, NoRedirects
 from repository_acceptance import require, validate_evidence
+from repository_ledger import has_acceptance_criteria
+
+spec = importlib.util.spec_from_file_location('prepare_repository', Path(__file__).with_name('prepare-repository.py'))
+registration = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(registration)
 
 COMPOSE = ['docker', 'compose', '--project-name', 'local-ai-moyai', '--file', 'compose.moyai.yaml']
 
 
 def compose(*arguments):
     return subprocess.check_output(COMPOSE + list(arguments), cwd=ROOT, text=True, timeout=240)
-
-
-def canonical(value):
-    return json.dumps(value, sort_keys=True, separators=(',', ':'), ensure_ascii=True).encode()
 
 
 def file_rows(directory):
@@ -118,7 +120,7 @@ def validate_patch(patch, manifest, snapshot, observed):
         require(file_rows(checkout) == observed['files'], 'Downloaded patch does not reproduce the verified source')
 
 
-def run_one(client, binding, manifest, snapshot, directory, number):
+def run_one(client, binding, manifest, snapshot, directory, number, policy_lines):
     session = client.session(f'Repository acceptance {number}: bounded Rust retry')
     record = {'session':session,'started_at':datetime.now(timezone.utc).isoformat(),'status':'failed'}
     started = time.monotonic()
@@ -161,9 +163,9 @@ report with source citations and download links. Do not ask questions or delegat
             bodies[path.split('/')[-1]] = data
             (directory / f'{number}-{path.split("/")[-1]}').write_bytes(data)
         result = json.loads(bodies['result.json']); report = json.loads(bodies['test-report.json'])
-        validate_evidence(task, observed, result, report, completed, binding,
-                          {'repository-results/'+name:hashlib.sha256(bodies[name]).hexdigest()
-                           for name in ('changes.patch','test-report.json')})
+        policy_citations = validate_evidence(task, observed, result, report, completed, binding,
+            {'repository-results/'+name:hashlib.sha256(bodies[name]).hexdigest()
+             for name in ('changes.patch','test-report.json')}, policy_lines)
         for citation in task['citations']:
             name = citation['path']
             require(name in {row['path'] for row in manifest['files']}, 'Citation refers to foreign source')
@@ -171,8 +173,7 @@ report with source citations and download links. Do not ask questions or delegat
             require(1 <= citation['start_line'] <= citation['end_line'] <= len(lines), 'Citation line range is invalid')
         replies = [m['content'] for m in detail['messages']
                    if m.get('turn_id') == turn and m.get('role') == 'assistant']
-        policy_ranges = [f"{c['path']}:{c['start_line']}–{c['end_line']}" for c in task['citations']
-                         if c['path'] == 'docs/architecture-rules.md' and c['start_line'] <= 7 <= c['end_line']]
+        policy_ranges = [f"{c['path']}:{c['start_line']}–{c['end_line']}" for c in policy_citations]
         require(replies and any(ref in replies[-1] for ref in policy_ranges),
                 'Final chat reply is missing the retrieved policy citation')
         validate_patch(bodies['changes.patch'],manifest,snapshot,observed)
@@ -197,26 +198,34 @@ report with source citations and download links. Do not ask questions or delegat
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--repo', type=Path, required=True,
+                        help='Local crate with the protected rust-retry package and the failing baseline')
     parser.add_argument('--runs',type=int,default=2,choices=range(1,4))
     parser.add_argument('--restart',action='store_true')
     args = parser.parse_args()
+    source = args.repo.resolve(strict=True)
     os.chdir(ROOT); os.umask(0o077)
     (ROOT/'.local/verification').mkdir(parents=True,exist_ok=True,mode=0o700)
     directory = Path(tempfile.mkdtemp(prefix=datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ-'),
                                      dir=ROOT/'.local/verification'))
     print(f'Repository acceptance: private evidence {directory}',flush=True)
-    source = ROOT/'examples/rust-service'; before = file_rows(source)
+    catalog = ROOT / '.local/repositories'
+    manifest = None
     summary = {'status':'failed','requested_runs':args.runs,'runs':[],
                'restart_requested':args.restart,'model_alias':'local-qwen'}
     report_path = directory/'result.json'
     report_path.write_text(json.dumps(summary,indent=2)+'\n')
     try:
-        registration = subprocess.run([sys.executable,'scripts/prepare-repository.py','--smoke-fixture'],
-                                     check=True,stdout=subprocess.PIPE,text=True,timeout=1800)
-        binding = json.loads(registration.stdout); summary['binding'] = binding
-        snapshot = ROOT/'.local/repositories/snapshots'/binding['snapshot_id']
-        manifest = json.loads((snapshot/'manifest.json').read_text())
-        summary['fixture_git'] = manifest['git']
+        manifest = registration.prepare_smoke_source(source, catalog)
+        summary['source_git'] = manifest['git']
+        snapshot = catalog / 'snapshots' / manifest['snapshot_id']
+        policy = snapshot / 'source/docs/architecture-rules.md'
+        require(policy.is_file(), 'rust-retry acceptance requires docs/architecture-rules.md in the snapshot')
+        policy_lines = [number for number, line in enumerate(policy.read_text().splitlines(), start=1)
+                        if has_acceptance_criteria(line)]
+        require(policy_lines, 'The policy document must specify the 30,000 ms retry ceiling')
+        binding = registration.index_prepared(catalog, manifest)
+        summary['binding'] = binding
         client = MoyaiClient(); client.login()
         access = gateway_access_guards(binding)
         (directory/'gateway-access.json').write_text(json.dumps(access,indent=2)+'\n')
@@ -226,7 +235,7 @@ def main():
         with ResourceSampler(directory/'resources.jsonl'):
             for number in range(1,args.runs+1):
                 print(f'Repository acceptance: fresh local-model task {number}/{args.runs}',flush=True)
-                record,bodies = run_one(client,binding,manifest,snapshot,directory,number)
+                record,bodies = run_one(client,binding,manifest,snapshot,directory,number,policy_lines)
                 if args.restart and number == 1:
                     compose('restart','moyai','moyai-sandbox','moyai-temporal','moyai-bridge')
                     compose('up','--detach','--wait','--wait-timeout','180')
@@ -243,15 +252,22 @@ def main():
         summary['error'] = traceback.format_exc()
         raise
     finally:
-        unchanged = file_rows(source) == before
-        summary['host_source_unchanged'] = unchanged
+        if manifest is not None:
+            try:
+                with tempfile.TemporaryDirectory() as verification_catalog:
+                    current = registration.prepare_smoke_source(source, Path(verification_catalog))
+                unchanged = current['snapshot_id'] == manifest['snapshot_id']
+            except (OSError, ValueError):
+                unchanged = False
+            summary['host_source_unchanged'] = unchanged
+            if not unchanged:
+                summary['status'] = 'failed'
         summary['runs'] = [{key:record.get(key) for key in ('session','turn','status','seconds')}
                            for path in sorted(directory.glob('*-receipt.json'))
                            for record in [json.loads(path.read_text())]]
-        if not unchanged:
-            summary['status'] = 'failed'
         report_path.write_text(json.dumps(summary,indent=2)+'\n')
-        require(unchanged, 'The host fixture was modified')
+        if manifest is not None:
+            require(unchanged, 'The selected host checkout changed during verification')
 
 
 if __name__ == '__main__':

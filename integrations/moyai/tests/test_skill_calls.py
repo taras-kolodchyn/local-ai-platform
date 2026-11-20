@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 import unittest
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 from pydantic_ai.capabilities import CombinedCapability
 from gateway_skills import GatewaySkill
@@ -82,8 +82,10 @@ class SkillCallTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.check_response(TextPart(MARKUP))).text, MARKUP)
 
     async def test_issue_selection_requires_the_open_receipt_from_this_owner_turn(self):
-        from github_issue import ISSUES
-        self.ctx.prompt = ISSUES + '19'
+        import github_issue
+        target = github_issue.GitHubTarget('fixture-owner/fixture-repo', '')
+        self.enterContext(patch.object(github_issue, 'TARGET', target))
+        self.ctx.prompt = target.url('issues/19')
         self.ctx.deps.visibility = 'private'
         self.ctx.deps.surface = 'web'
         step = lambda: self.workspace.engineering_skills.issue_step(self.ctx, self.request.messages)

@@ -14,6 +14,9 @@ from repository_ledger import RepositoryError
 class DocumentationReviewTests(unittest.IsolatedAsyncioTestCase):
     path = 'tests/compat.rs'
     refs = {'src/lib.rs:1': '#[deprecated(note = "use current")]'}
+    capped_retry = {'src/lib.rs': b'pub fn bounded_backoff_ms(n: u32) -> u64 {\n'
+                    b' 100_u64.saturating_mul(2_u64.saturating_pow(n)).min(30_000)\n}\n'
+                    b'pub fn legacy_retry_delay_ms(n: u32) -> u64 { bounded_backoff_ms(n) }\n'}
     def decide(self, line, refs, **assessment):
         patch = self.diff(line)
         item = {'passage':'C1','source':'src/lib.rs:1','source_fact':'The API is deprecated.',
@@ -24,8 +27,7 @@ class DocumentationReviewTests(unittest.IsolatedAsyncioTestCase):
         return f'--- /dev/null\n+++ b/{self.path}\n@@ -0,0 +1 @@\n+//! {line}\n'
 
     async def test_approved_formula_citation_cannot_override_false_concrete_examples(self):
-        path = Path(__file__).resolve().parents[2]/'examples/rust-service/src/lib.rs'
-        candidate = {'src/lib.rs':path.read_bytes()}
+        candidate = self.capped_retry
         formula = retry_implementation(candidate, reference_lines(candidate, candidate))
         patch = self.diff('Attempt 0 and 65536 both return 100 ms (low 16 bits: 0)').encode()
         patch += (b'+//! - Attempt 8 and 65544 both return 25,600 ms (low 16 bits: 8)\n'
@@ -70,9 +72,7 @@ class DocumentationReviewTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(self.decide(claim, refs)['verdict'], 'approved')
 
     def test_only_the_legacy_wrapper_delegates_in_the_verified_implementation(self):
-        files = {'src/lib.rs': b'pub fn bounded_backoff_ms(n: u32) -> u64 {\n'
-                 b' 100_u64.saturating_mul(2_u64.saturating_pow(n)).min(30_000)\n}\n'
-                 b'pub fn legacy_retry_delay_ms(n: u32) -> u64 {\n bounded_backoff_ms(n)\n}\n'}
+        files = self.capped_retry
         refs = reference_lines(files,files)
         loc = retry_implementation(files,refs)
         self.assertEqual(loc,'src/lib.rs:2')

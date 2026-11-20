@@ -12,7 +12,7 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[2]
-PHASES = ['lint', 'test', 'up', 'status', 'smoke-test', 'moyai-smoke', 'repository-smoke']
+PHASES = ['lint', 'test', 'up', 'status', 'smoke-test', 'moyai-smoke']
 PRIVATE_OUTPUT = 'fixture request body and generated credential must stay private'
 
 DRIVER = r'''import json, os, signal, subprocess, sys, time
@@ -130,7 +130,7 @@ class VerificationTests(unittest.TestCase):
         docker.chmod(0o755)
         (scripts / 'moyai.sh').write_text(
             '#!/bin/sh\nexec "$TASK_PYTHON" "$TASK_DRIVER" moyai "$@"\n')
-        for phase in PHASES[:-2]:
+        for phase in PHASES[:-1]:
             (scripts / (phase + '.sh')).write_text(
                 '#!/bin/sh\nexec "$TASK_PYTHON" "$TASK_DRIVER" phase ' + phase + ' "$@"\n')
         (scripts / 'status.sh').write_text(
@@ -156,11 +156,11 @@ class VerificationTests(unittest.TestCase):
             'COMPOSE_FILE': '/tmp/unrelated.yaml', 'COMPOSE_PROFILES': 'connected',
         }
 
-    def run_verify(self, **overrides):
+    def run_verify(self, *arguments, **overrides):
         shutil.rmtree(self.root / '.local' / 'verification', ignore_errors=True)
         self.events_file.write_text('')
         self.state_file.write_text(json.dumps(self.initial_state))
-        return subprocess.run(['make', '--no-print-directory', 'verify'], cwd=self.root,
+        return subprocess.run(['make', '--no-print-directory', 'verify', *arguments], cwd=self.root,
                               env=self.env | overrides, text=True, capture_output=True,
                               timeout=20)
 
@@ -185,11 +185,9 @@ class VerificationTests(unittest.TestCase):
         calls = self.calls()
         self.assertEqual([call[1] for call in calls if call[0] == 'phase'], PHASES)
         self.assertIn(['phase', 'moyai-smoke', '--restart'], calls)
-        self.assertIn(['phase', 'repository-smoke', '--restart'], calls)
         self.assertIn(['phase', 'status', 'json'], calls)
         down = calls.index(['moyai', 'down'])
         self.assertLess(calls.index(['phase', 'moyai-smoke', '--restart']), down)
-        self.assertLess(calls.index(['phase', 'repository-smoke', '--restart']), down)
         self.assertGreater(calls.index(['docker', 'model', 'ps'], down + 1), down)
         self.assert_stopped()
         path, report = self.result()
@@ -198,6 +196,25 @@ class VerificationTests(unittest.TestCase):
         self.assertEqual([phase['name'] for phase in report['phases']], PHASES + ['down'])
         self.assertTrue(report['inventory']['passed'])
         self.assertIn(str(path), result.stdout)
+
+    def test_external_repo_adds_repository_acceptance_before_shutdown(self):
+        source = self.root / "developer's source"
+        source.mkdir()
+        for fail in (False, True):
+            with self.subTest(repository_failure=fail):
+                result = self.run_verify('REPO=' + str(source), FAIL_PHASE='repository-smoke' if fail else '')
+                self.assertEqual(result.returncode == 0, not fail, result.stdout + result.stderr)
+                calls = self.calls()
+                phases = [call for call in calls if call[0] == 'phase']
+                self.assertEqual([call[1] for call in phases], PHASES + ['repository-smoke'])
+                argv = phases[-1][2:]
+                self.assertEqual(argv[argv.index('--repo') + 1], str(source))
+                self.assertIn('--restart', argv)
+                self.assertLess(calls.index(phases[-1]), calls.index(['moyai', 'down']))
+                self.assert_stopped()
+                _, report = self.result()
+                self.assertEqual(report['failed_phase'], 'repository-smoke' if fail else None)
+                self.assertEqual(report['status'], 'failed' if fail else 'passed')
 
     def test_phase_failure_stops_later_work_but_always_runs_supported_shutdown(self):
         for phase in PHASES:

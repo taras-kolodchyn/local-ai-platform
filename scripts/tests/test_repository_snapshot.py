@@ -36,31 +36,26 @@ class RepositorySnapshotTests(unittest.TestCase):
     def prepare(self, root=None):
         return load().prepare_snapshot(root or self.root, self.catalog, 'rust-retry')
 
-    def test_smoke_fixture_uses_the_same_pinned_subtree_after_host_edits(self):
-        from unittest.mock import patch
+    def test_smoke_pins_the_selected_clean_subtree_and_refuses_uncommitted_edits(self):
         spec = importlib.util.spec_from_file_location('prepare', Path(__file__).parents[1] / 'prepare-repository.py')
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-        fixture = self.root / 'examples/rust-service'
-        fixture.mkdir(parents=True)
-        lib = fixture / 'lib.rs'
-        lib.write_text('pub const CEILING: u64 = 60_000;\n')
-        git(self.root, 'add', '.')
-        git(self.root, 'commit', '-qm', 'original demo')
-        pinned = git(self.root, 'rev-parse', 'HEAD')
-        lib.write_text('pub const CEILING: u64 = 30_000;\n')
-        git(self.root, 'commit', '-qam', 'repair')
-        lib.write_text('// uncommitted host edit\n')
-        with patch.object(module, 'ROOT', self.root), patch.object(module, 'SMOKE_FIXTURE_COMMIT', pinned):
-            first = module.prepare_smoke_fixture(self.catalog)
-            second = module.prepare_smoke_fixture(self.catalog)
-        self.assertEqual(first, second)
-        self.assertEqual(first['git'], {'head': pinned, 'branch': 'detached', 'dirty': False,
-                                        'subtree': 'examples/rust-service'})
+        source = self.root / 'src'
+        first = module.prepare_smoke_source(source, self.catalog)
+        self.assertEqual(first, module.prepare_smoke_source(source, self.catalog))
+        self.assertEqual(first['git']['head'], git(self.root, 'rev-parse', 'HEAD'))
+        self.assertEqual(first['git']['subtree'], 'src')
         self.assertEqual([r['path'] for r in first['files']], ['lib.rs'])
+        lib = source / 'lib.rs'
+        lib.write_text('pub fn changed() {}\n')
+        with self.assertRaisesRegex(ValueError, 'clean Git'):
+            module.prepare_smoke_source(source, self.catalog)
+        git(self.root, 'commit', '-qam', 'updated source')
+        second = module.prepare_smoke_source(source, self.catalog)
+        self.assertNotEqual(first['snapshot_id'], second['snapshot_id'])
+        self.assertEqual(second['git']['head'], git(self.root, 'rev-parse', 'HEAD'))
         staged = self.catalog / 'snapshots' / first['snapshot_id'] / 'source/lib.rs'
-        self.assertEqual(staged.read_text(), 'pub const CEILING: u64 = 60_000;\n')
-        self.assertEqual(lib.read_text(), '// uncommitted host edit\n')
+        self.assertEqual(staged.read_text(), 'pub fn old() {}\n')
 
     def test_root_dirty_content_bytes_and_immutable_publication(self):
         (self.root / 'src/lib.rs').write_bytes(b'pub fn dirty() {}\r\n')

@@ -8,22 +8,75 @@ from pathlib import Path
 import re
 import tempfile
 import time
+from typing import NamedTuple
 import uuid
 
-REPO = 'taras-kolodchyn/local-ai-platform'
-ISSUES = f'https://github.com/{REPO}/issues/'
-PULLS = f'https://github.com/{REPO}/pull/'
 EXCHANGE = Path('/run/moyai-github-issues')
 SOCKET = Path('/run/moyai-publisher/issue.sock')
 
 
+class GitHubTarget(NamedTuple):
+    repository: str
+    project: str
+
+    @property
+    def identity(self):
+        return hashlib.sha256((self.repository + '\0' + self.project).encode()).hexdigest()
+
+    def url(self, path):
+        return f'https://github.com/{self.repository}/{path}'
+
+
+def parse_target(repository, project):
+    if not repository and not project:
+        return None
+    if (not re.fullmatch(r'[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?/[A-Za-z0-9._-]{1,100}', repository)
+            or repository.split('/')[1] in {'.', '..'}):
+        raise ValueError('Set MOYAI_GITHUB_REPOSITORY to the canonical GitHub owner/name.')
+    if project and (any(not part or part.startswith('.') for part in project.split('/'))
+                    or any(ord(c) < 32 or ord(c) == 127 or c in '\\:*?[]' for c in project)):
+        raise ValueError('MOYAI_GITHUB_PROJECT_PATH must be a safe relative directory, or empty for the root.')
+    return GitHubTarget(repository, project)
+
+
+try:
+    TARGET = parse_target(os.getenv('MOYAI_GITHUB_REPOSITORY', ''), os.getenv('MOYAI_GITHUB_PROJECT_PATH', ''))
+    TARGET_ERROR = ''
+except ValueError as error:
+    # Invalid optional publisher settings must leave ordinary offline chats available.
+    TARGET = None
+    TARGET_ERROR = str(error)
+
+
+def selected_target():
+    if TARGET is None:
+        raise ValueError(TARGET_ERROR or 'Set MOYAI_GITHUB_REPOSITORY to the canonical GitHub owner/name.')
+    return TARGET
+
+
+def matches_target(ticket):
+    return TARGET is not None and (ticket or {}).get('target') == TARGET.identity
+
+
 def issue_number(prompt):
-    match = re.fullmatch(re.escape(ISSUES) + r'([1-9][0-9]{0,9})/?', prompt.strip()) if isinstance(prompt, str) else None
+    if TARGET is None or not isinstance(prompt, str):
+        return None
+    match = re.fullmatch(re.escape(TARGET.url('issues/')) + r'([1-9][0-9]{0,9})/?', prompt.strip())
     return int(match[1]) if match else None
 
 
+def requested_issue_url(ctx):
+    """Parse the user's direct URL without consulting mutable publisher configuration."""
+    prompt = getattr(ctx, 'prompt', None)
+    if private_issue_root(ctx) and isinstance(prompt, str):
+        match = re.fullmatch(r'(https://github\.com/[A-Za-z0-9_-]+/[A-Za-z0-9._-]+/issues/[1-9][0-9]{0,9})/?', prompt.strip())
+        if match:
+            return match[1]
+    return None
+
+
 def issue_scope(number, turn, issue, binding):
-    scope = {'number':number, 'turn':turn}
+    scope = {'number':number, 'turn':turn, 'target':selected_target().identity}
     text = (issue.get('title','') + '\n' + issue.get('body','')).lower()
     if (binding.get('verification_profile') == 'rust-retry-tests' and 'interleav' in text
             and ('u32::max' in text or re.search(r'\bextreme (?:attempt|input)s?\b', text))):
@@ -98,7 +151,8 @@ async def start_relay(address, directory):
                 if not line:  # Health probe or disconnected controller.
                     return
                 request = json.loads(line)
-                if (not isinstance(request, dict) or set(request) != {'action','number','session','turn'}
+                if (not isinstance(request, dict) or set(request) != {'action','number','session','turn','target'}
+                        or not matches_target(request)
                         or request['action'] not in ('open','publish') or type(request['number']) is not int
                         or not 0 < request['number'] < 10**10
                         or not all(isinstance(request[k], str) and str(uuid.UUID(request[k])) == request[k]
@@ -121,12 +175,14 @@ async def start_relay(address, directory):
 
 
 async def exchange(action, number, session, turn, *, address=SOCKET):
+    target = selected_target()
     try:
         reader, writer = await asyncio.open_unix_connection(str(address), limit=256*1024)
     except (FileNotFoundError, ConnectionRefusedError) as exc:
         raise ValueError('The local GitHub issue publisher is offline.') from exc
     try:
-        writer.write(json.dumps(dict(action=action, number=number, session=session, turn=turn)).encode() + b'\n')
+        writer.write(json.dumps(dict(action=action, number=number, session=session, turn=turn,
+                                     target=target.identity)).encode() + b'\n')
         await writer.drain()
         response = json.loads(await asyncio.wait_for(reader.readline(), 95))
         if 'error' in response:

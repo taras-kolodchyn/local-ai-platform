@@ -2,6 +2,7 @@ import asyncio
 from hashlib import sha256
 import importlib.util
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -17,11 +18,17 @@ sys.path.insert(0, str(MODULE.parent))
 spec = importlib.util.spec_from_file_location('github_issues', MODULE)
 publisher = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(publisher)
-from github_issue import ISSUES, issue_number, user_issue
+from github_issue import GitHubTarget, issue_number, user_issue
 import github_issue
+
+TARGET = GitHubTarget("fixture-owner/fixture-repo", "crates/input")
+ISSUES = TARGET.url("issues/")
 
 
 class ControllerRestartTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.enterContext(patch.object(github_issue, 'TARGET', TARGET))
+
     async def test_fresh_controller_connection_recovers_same_receipt_only_during_grant(self):
         with tempfile.TemporaryDirectory(dir='/tmp') as tmp:
             root = Path(tmp)
@@ -30,19 +37,20 @@ class ControllerRestartTests(unittest.IsolatedAsyncioTestCase):
             address = root/'relay.sock'
             session, turn = str(uuid.uuid4()), str(uuid.uuid4())
             request = dict(action='publish', number=17, session=session, turn=turn)
-            key = sha256(json.dumps(request, sort_keys=True).encode()).hexdigest() + '.json'
+            wire = {**request, 'target':TARGET.identity}
+            key = sha256(json.dumps(wire, sort_keys=True).encode()).hexdigest() + '.json'
             github_issue.atomic_json(root/'lease.json', {'id':'active', 'updated':time.time()})
             async with await github_issue.start_relay(address, root):
                 # The first controller dies after submitting the request.
                 _, writer = await asyncio.open_unix_connection(str(address))
-                writer.write(json.dumps(request).encode() + b'\n')
+                writer.write(json.dumps(wire).encode() + b'\n')
                 await writer.drain()
                 writer.close()
                 await writer.wait_closed()
                 async with asyncio.timeout(3):
                     while not (root/'requests'/key).exists():
                         await asyncio.sleep(0.01)
-                self.assertEqual(json.loads((root/'requests'/key).read_text()), {**request,'lease':'active'})
+                self.assertEqual(json.loads((root/'requests'/key).read_text()), {**wire,'lease':'active'})
                 receipt = {'number':18, 'auto_merge':True}
                 github_issue.atomic_json(root/'replies'/key, {'lease':'active','result':receipt})
                 self.assertEqual(await github_issue.exchange(**request, address=address),receipt)
@@ -62,7 +70,7 @@ class IssuePublishingTests(unittest.TestCase):
             (root/'requests').mkdir()
             (root/'replies').mkdir()
             with publisher.live_lease(root) as lease:
-                request = dict(action='publish',number=17,session=str(uuid.uuid4()),turn=str(uuid.uuid4()),lease=lease)
+                request = dict(action='publish',number=17,session=str(uuid.uuid4()),turn=str(uuid.uuid4()),lease=lease,target=TARGET.identity)
                 path = 'a'*64 + '.json'
                 publisher.atomic_json(root/'requests'/path, request)
                 host = Mock()
@@ -80,7 +88,7 @@ class IssuePublishingTests(unittest.TestCase):
         job = {'number':7,'pr':{'number':8},'base':'a'*40,'commit':'b'*40}
         title = f"CI PR 8 head {job['commit']} base {job['base']}"
         run = {'id':42,'run_attempt':3,'event':'pull_request','path':'.github/workflows/ci.yml','display_title':title,
-               'repository':{'full_name':publisher.REPO},'head_repository':{'full_name':publisher.REPO},
+               'repository':{'full_name':TARGET.repository},'head_repository':{'full_name':TARGET.repository},
                'head_branch':'codex/app-12/issue-7','head_sha':job['commit'],'status':'completed','conclusion':'success'}
         test = {'name':'test','head_sha':job['commit'],'status':'completed','conclusion':'success'}
         def ci(rows, jobs):
@@ -101,11 +109,11 @@ class IssuePublishingTests(unittest.TestCase):
         app = Mock(app_id=12, bot='demo[bot]')
         gh = Mock(operator_issue=7, installation=app)
         base, head, tree, merged = (v*40 for v in 'abcd')
-        job = {'number':7,'base':base,'commit':head,'tree':tree,'auto_merge':True,
+        job = {'number':7,'target':TARGET.identity,'base':base,'commit':head,'tree':tree,'auto_merge':True,
                'binding':{'snapshot_id':'s'},'issue':{'title':'test'},
                'pr':{'number':8,'head':head,'app_id':12,'author':app.bot}}
         checks = {'project_tests_run':2,'oracle_tests_run':4}
-        side = {'repo':{'full_name':publisher.REPO}}
+        side = {'repo':{'full_name':TARGET.repository}}
         live = {'number':8,'node_id':'PR_8','draft':True,'state':'open','merged':False,'mergeable':True,
                 'user':{'login':app.bot,'type':'Bot'}, 'head':{**side,'ref':'codex/app-12/issue-7','sha':head},
                 'base':{**side,'ref':'main','sha':base},'body':publisher.publication_body(job,b'patch',checks,True)}
@@ -160,7 +168,7 @@ class IssuePublishingTests(unittest.TestCase):
         self.assertNotIn('caller_note_required',publisher.issue_scope(34,'turn',issue,{'verification_profile':'rust-retry'}))
 
     def test_issue_scope_selects_extreme_interleaving_only_for_the_tests_profile(self):
-        basic = {'number':29,'turn':'turn'}
+        basic = {'number':29,'turn':'turn','target':TARGET.identity}
         scope = lambda text, profile: publisher.issue_scope(29,'turn',{'title':text},{'verification_profile':profile})
         for text in ('Interleaved calls after u32::MAX','Interleave both calls after an extreme attempt'):
             self.assertEqual(scope(text,'rust-retry-tests'), {**basic,'retry_contract':'interleaved-extremes'})
@@ -176,7 +184,7 @@ class IssuePublishingTests(unittest.TestCase):
         old = {'session':{'owner_id':'owner','active_turn':None,'visibility':'private','surface':'web'},
                'turns':[{'id':'turn','actor_id':'owner','status':'completed'}]}
         task = {'phase':'verified','pending':None,'artifacts':{},'binding':job['binding'],
-                'github_issue':{'turn':'turn','number':29}}
+                'github_issue':{'turn':'turn','number':29, 'target':TARGET.identity}}
         client.request.side_effect = lambda url: task if url.endswith('repository-task') else old
         github.api.return_value = []
         host = publisher.Publisher(github,client,{},job['binding'],restart_from='previous')
@@ -204,11 +212,53 @@ class IssuePublishingTests(unittest.TestCase):
             with patch.object(deps, key, value, create=True):
                 self.assertIsNone(user_issue(ctx))
 
+    def test_disabled_and_invalid_targets_cannot_match_issues(self):
+        self.assertIsNone(github_issue.parse_target('', ''))
+        with patch.object(github_issue, 'TARGET', None):
+            self.assertIsNone(issue_number(ISSUES + '1'))
+            self.assertIsNone(issue_number('1'))
+            with self.assertRaisesRegex(ValueError, 'MOYAI_GITHUB_REPOSITORY'):
+                publisher.state_directory()
+        for name, project in [('only-owner', ''), ('../repo', ''), ('owner/..', ''),
+                              ('owner/repo#other', ''), ('', 'src'), ('owner/repo', '../elsewhere'),
+                              ('owner/repo', '/root'), ('owner/repo', 'a//b'), ('owner/repo', 'x/.git')]:
+            with self.subTest(repository=name, project=project), self.assertRaises(ValueError):
+                github_issue.parse_target(name, project)
+        self.assertIsNone(issue_number('https://github.com/another-owner/fixture-repo/issues/6'))
+        self.assertEqual(github_issue.parse_target(TARGET.repository, '@група/my crate').project, '@група/my crate')
+
+    def test_invalid_publisher_setting_keeps_offline_import_available(self):
+        env = {**os.environ, 'MOYAI_GITHUB_REPOSITORY':'', 'MOYAI_GITHUB_PROJECT_PATH':'stale/subdir'}
+        check = ('import github_issue as g; assert g.TARGET is None and g.issue_number("1") is None; '
+                 'assert "MOYAI_GITHUB_REPOSITORY" in g.TARGET_ERROR')
+        subprocess.run([sys.executable, '-c', check], cwd=MODULE.parents[1]/'integrations/moyai',
+                       env=env, check=True)
+        disabled = subprocess.run([sys.executable, str(MODULE)], env=env, capture_output=True, text=True)
+        self.assertNotEqual(disabled.returncode, 0)
+        self.assertIn('MOYAI_GITHUB_REPOSITORY', disabled.stderr)
+
+    def test_target_changes_isolate_sources_claims_and_stale_requests(self):
+        (self.state/'issue-6.json').write_text('old claim')
+        (self.state/'sources').mkdir()
+        host = publisher.Publisher(Mock(), Mock(), {}, {})
+        for target in (GitHubTarget(TARGET.repository, ''), GitHubTarget('another/fixture-repo', TARGET.project)):
+            with self.subTest(target=target), patch.object(github_issue, 'TARGET', target):
+                self.assertNotEqual(self.state, publisher.state_directory())
+                self.assertFalse((publisher.state_directory()/'issue-6.json').exists())
+                self.assertFalse((publisher.state_directory()/'sources').exists())
+                with self.assertRaisesRegex(ValueError, 'configured repository'):
+                    host.dispatch({'target':TARGET.identity})
+                host.client.request.assert_not_called()
+
     def setUp(self):
+        self.enterContext(patch.object(github_issue, 'TARGET', TARGET))
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.repo = Path(self.tmp.name)
-        self.project = self.repo / publisher.PROJECT
+        self.enterContext(patch.object(publisher, 'STATE', self.repo))
+        self.state = publisher.state_directory()
+        self.state.mkdir(parents=True)
+        self.project = self.repo / TARGET.project
         (self.project/'src').mkdir(parents=True)
         (self.project/'src/lib.rs').write_text('old\n')
         (self.repo/'untouched').write_text('unrelated\n')
@@ -244,7 +294,7 @@ class IssuePublishingTests(unittest.TestCase):
 
     def test_publish_reconstructs_pinned_full_tree_and_confines_paths(self):
         tree, entries = publisher.reproduce(self.repo,self.base,self.manifest,self.patch,self.digest)
-        self.assertEqual(entries[0]['path'],publisher.PROJECT+'/src/lib.rs')
+        self.assertEqual(entries[0]['path'],TARGET.project+'/src/lib.rs')
         self.assertEqual(publisher.git(self.repo,'show',tree+':untouched'),b'unrelated\n')
         self.assertEqual((self.project/'src/lib.rs').read_text(),'old\n')
         with self.assertRaisesRegex(ValueError,'reproduce'):
@@ -253,6 +303,18 @@ class IssuePublishingTests(unittest.TestCase):
         with self.assertRaises((ValueError,subprocess.CalledProcessError)):
             publisher.reproduce(self.repo,self.base,self.manifest,bad,self.digest)
 
+    def test_root_project_applies_and_verifies_patch_at_git_root(self):
+        root_src = self.repo / 'src'
+        root_src.mkdir()
+        (root_src / 'lib.rs').write_text('old\n')
+        publisher.git(self.repo, 'add', 'src/lib.rs')
+        publisher.git(self.repo, '-c', 'user.email=test@localhost', '-c', 'user.name=Test', 'commit', '-qm', 'root crate')
+        head = publisher.git(self.repo, 'rev-parse', 'HEAD').decode().strip()
+        with patch.object(github_issue, 'TARGET', GitHubTarget(TARGET.repository, '')):
+            tree, entries = publisher.reproduce(self.repo, head, self.manifest, self.patch, self.digest)
+            self.assertEqual([row['path'] for row in entries], ['src/lib.rs'])
+            self.assertEqual(publisher.git(self.repo, 'show', tree + ':src/lib.rs'), b'new\n')
+            self.assertEqual(publisher.git(self.repo, 'show', tree + ':' + TARGET.project + '/src/lib.rs'), b'old\n')
     def test_coverage_publisher_only_accepts_new_integration_targets(self):
         manifest = dict(self.manifest, verification_profile='rust-retry-tests')
         with self.assertRaises(ValueError):
@@ -263,17 +325,17 @@ class IssuePublishingTests(unittest.TestCase):
         digest = sha256(publisher.canonical(rows)).hexdigest()
         patch = b'--- /dev/null\n+++ b/tests/boundary.rs\n@@ -0,0 +1 @@\n+' + content
         _, entries = publisher.reproduce(self.repo, self.base, manifest, patch, digest)
-        self.assertEqual([e['path'] for e in entries], [publisher.PROJECT + '/' + path])
+        self.assertEqual([e['path'] for e in entries], [TARGET.project + '/' + path])
 
     def test_prepare_reconciles_existing_snapshot_with_active_embedding_generation(self):
-        (self.repo / 'sources' / self.base).mkdir(parents=True)
+        (self.state / 'sources' / self.base).mkdir(parents=True)
         catalog = self.repo / '.local/repositories'
         catalog.mkdir(parents=True)
         scope = {'repository_id': 'repo_github_' + self.base, 'snapshot_id': 'a' * 64}
         old = {**scope, 'generation_id': 'gen_old', 'store_id': 'vs_old'}
         current = {**scope, 'generation_id': 'gen_current', 'store_id': 'vs_current'}
         (catalog / 'catalog.json').write_text(json.dumps({'repositories': [old]}))
-        manifest = {**scope, 'git': {'head': self.base, 'dirty': False, 'subtree': publisher.PROJECT}}
+        manifest = {**scope, 'git': {'head': self.base, 'dirty': False, 'subtree': TARGET.project}}
         registration = Mock()
         registration.sibling.return_value.prepare_snapshot.return_value = manifest
         registration.index_prepared.return_value = current
@@ -287,7 +349,7 @@ class IssuePublishingTests(unittest.TestCase):
         tree, _ = publisher.reproduce(self.repo,self.base,self.manifest,self.patch,self.digest)
         head, refs, prs, calls = 'c'*40, [], [], []
         branch = 'codex/issue-6'
-        side = {'ref':branch,'sha':head,'repo':{'full_name':publisher.REPO}}
+        side = {'ref':branch,'sha':head,'repo':{'full_name':TARGET.repository}}
         def api(path, body=None):
             calls.append(path)
             if path == 'git/trees': return {'sha':tree}
@@ -322,7 +384,7 @@ class IssuePublishingTests(unittest.TestCase):
         installation = SimpleNamespace(app_id=42, bot='moyai-test[bot]')
         job = {'number':6, 'base':self.base, 'commit':'a'*40}
         branch = 'codex/app-42/issue-6'
-        side = {'ref':branch,'sha':job['commit'],'repo':{'full_name':publisher.REPO}}
+        side = {'ref':branch,'sha':job['commit'],'repo':{'full_name':TARGET.repository}}
         author = {'type':'User','login':'operator'}
         base = {**side,'ref':'main','sha':self.base}
         def api(endpoint, body=None):
@@ -355,15 +417,15 @@ class IssuePublishingTests(unittest.TestCase):
 
     def test_cancelled_turn_cannot_create_branch_or_draft_after_verification(self):
         session, turn = str(uuid.uuid4()), str(uuid.uuid4())
-        request = {'number':6, 'session':session, 'turn':turn, 'action':'publish'}
+        request = {'number':6, 'session':session, 'turn':turn, 'action':'publish', 'target':TARGET.identity}
         binding = {'snapshot_id':'snapshot'}
-        manifest = {**self.manifest,'git':{'head':self.base, 'dirty':False, 'subtree':publisher.PROJECT}}
+        manifest = {**self.manifest,'git':{'head':self.base, 'dirty':False, 'subtree':TARGET.project}}
         snapshot = self.repo/'.local/repositories/snapshots/snapshot'
         snapshot.mkdir(parents=True)
         (snapshot/'manifest.json').write_text(json.dumps(manifest))
         ticket = {'title':'Retry','body':'Repair'}
         job = {**request, 'base':self.base,'binding':binding,'issue':ticket,'commit':'c'*40}
-        (self.repo/'issue-6.json').write_text(json.dumps(job))
+        (self.state/'issue-6.json').write_text(json.dumps(job))
         detail = {'session':{'visibility':'private','surface':'web','owner_id':'actor','active_turn':turn},
                   'messages':[{'role':'user','is_self':True,'turn_id':turn,'content':ISSUES+'6'}],
                   'turns':[{'id':turn,'status':'running','actor_id':'actor'}]}
@@ -391,7 +453,7 @@ class IssuePublishingTests(unittest.TestCase):
 
     def test_intake_pins_only_original_operator_message_and_allows_same_chat_recovery(self):
         session_id, turn = str(uuid.uuid4()), str(uuid.uuid4())
-        request = dict(action='open', number=6, session=session_id, turn=turn)
+        request = dict(action='open', number=6, session=session_id, turn=turn, target=TARGET.identity)
         detail = {'session':{'visibility':'private', 'surface':'web', 'owner_id':'actor', 'active_turn':turn},
                   'turns':[{'id':turn, 'status':'running', 'actor_id':'actor'}],
                   'messages':[{'role':'user', 'content':ISSUES+'6', 'turn_id':turn, 'is_self':True}]}

@@ -11,6 +11,9 @@ from unittest.mock import Mock, patch
 SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
 import github_app as app
+import github_issue
+
+TARGET = github_issue.GitHubTarget("fixture-owner/fixture-repo", "")
 
 spec = importlib.util.spec_from_file_location('register_github_app', SCRIPTS/'register-github-app.py')
 setup = importlib.util.module_from_spec(spec)
@@ -19,10 +22,11 @@ spec.loader.exec_module(setup)
 
 class GitHubAppTests(unittest.TestCase):
     def setUp(self):
+        self.enterContext(patch.object(github_issue, 'TARGET', TARGET))
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         self.directory = Path(temp.name)/'app'
-        registration = {'id':12,'slug':'moyai-test','owner':{'login':app.REPO.split('/')[0]},
+        registration = {'id':12,'slug':'moyai-test','owner':{'login':TARGET.repository.split('/')[0]},
                         'pem':'simulated-key','client_secret':'unused-secret', 'webhook_secret':'unused-webhook'}
         setup.save_registration(registration, self.directory)
         self.installation = app.Installation(self.directory)
@@ -31,7 +35,7 @@ class GitHubAppTests(unittest.TestCase):
         manifest = setup.manifest('http://127.0.0.1:1234')
         self.assertIs(manifest['public'], False)
         self.assertIs(manifest['hook_attributes']['active'], False)
-        self.assertEqual(manifest['hook_attributes']['url'], 'https://github.com/'+app.REPO)
+        self.assertEqual(manifest['hook_attributes']['url'], 'https://github.com/'+TARGET.repository)
         self.assertEqual(manifest['default_permissions'], app.PERMISSIONS)
         self.assertEqual(manifest['redirect_url'],'http://127.0.0.1:1234/callback')
         self.assertEqual(set(p.name for p in self.directory.iterdir()), {'app.json','private-key.pem'})
@@ -59,9 +63,9 @@ class GitHubAppTests(unittest.TestCase):
 
     def test_scoped_exchange_cached_and_refreshed_with_no_cli_transport(self):
         installation = {'id':20,'app_id':12,'app_slug':'moyai-test','repository_selection':'selected',
-                        'account':{'login':app.REPO.split('/')[0]}}
+                        'account':{'login':TARGET.repository.split('/')[0]}}
         responses = [installation,{'token':'test-metadata'},
-                     {'total_count':1,'repositories':[{'full_name':app.REPO,'id':77}]},
+                     {'total_count':1,'repositories':[{'full_name':TARGET.repository,'id':77}]},
                      {'permissions':app.PERMISSIONS,'expires_at':'2026-11-18T08:00:00Z','token':'test-installation'}]
         transport = Mock(side_effect=responses+[{'state':'open'},{'sha':'a'}]+responses+[{'state':'open'}])
         with patch.object(app,'request',transport), patch.object(app,'make_jwt',return_value='test-jwt'), \
@@ -76,7 +80,7 @@ class GitHubAppTests(unittest.TestCase):
 
     def test_multiple_repositories_refused_before_write_token(self):
         responses = [{'id':20,'app_id':12,'app_slug':'moyai-test','repository_selection':'selected',
-                      'account':{'login':app.REPO.split('/')[0]}}, {'token':'metadata'},
+                      'account':{'login':TARGET.repository.split('/')[0]}}, {'token':'metadata'},
                      {'total_count':2, 'repositories':[]}]
         with patch.object(app,'request',side_effect=responses) as req, patch.object(app,'make_jwt',return_value='jwt'):
             with self.assertRaisesRegex(app.AppError, 'only'):

@@ -12,7 +12,8 @@ from pydantic_ai.messages import ModelResponse, RetryPromptPart, TextPart, ToolC
 from pydantic_ai.toolsets import FunctionToolset
 from temporalio import workflow
 
-from github_issue import ISSUES, PULLS, exchange, issue_number, issue_scope, private_issue_root, user_issue
+with workflow.unsafe.imports_passed_through():
+    from github_issue import exchange, issue_number, issue_scope, matches_target, private_issue_root, requested_issue_url, selected_target
 from repository_backend import RETRY_POLICY_PATH, NativeFiles, RepositoryBackend, coverage_path, fingerprint, scoped_tree, workspace_path
 from repository_ledger import ARTIFACT_PATHS, RepositoryError, approved_review, baseline_established, commands_stopped, has_change_citation, missing_change_evidence
 
@@ -28,6 +29,8 @@ FINISH = 'finish_repository_task'
 REVIEW = 'review_repository_documentation'
 SEARCH = 'search_repository'
 REPOSITORY = DISCOVERY | {STATUS, CHECK, BEGIN, FINISH, SEARCH, REVIEW}
+# Used only to replay workflow history recorded before external targets existed.
+LEGACY_ISSUES = 'https://github.com/taras-kolodchyn/local-ai-platform/issues/'
 
 
 def allowed(phase):
@@ -88,11 +91,11 @@ class RepositoryWorkflow(AbstractCapability):
                 task['policy_evidence'] = policy['results']
             return task
 
-        async def open_github_issue(ctx: RunContext, issue_url: str) -> dict:
-            """Open the exact GitHub issue URL submitted by the user and attach its pinned Rust example."""
+        async def open_github_issue(ctx: RunContext, issue_url: str, expected_target: str = '') -> dict:
+            """Open an issue URL from the configured GitHub repository and attach its pinned source."""
             number = issue_number(issue_url)
-            if not number:
-                raise ToolFailed('Expected a local-ai-platform issue URL.')
+            if not number or not matches_target({'target':expected_target}):
+                raise ToolFailed('Expected an issue URL from the configured GitHub repository.')
             scope = scope_of(ctx)
             try:
                 reply = await exchange('open', number, scope[0], ctx.deps.turn_id)
@@ -182,12 +185,24 @@ class RepositoryWorkflow(AbstractCapability):
     async def continued_issue(self, session: str, authority: str, actor: str, turn: str) -> int | None:
         task = self.backend.ledger.status(session, authority)
         ticket = (task or {}).get('github_issue') or {}
-        if task and task.get('attached_actor_id') == actor and ticket.get('turn') == turn:
+        if matches_target(ticket) and task.get('attached_actor_id') == actor and ticket.get('turn') == turn:
             return ticket['number']
         return None
 
+    @durable_operation('configured_issue_target')
+    async def configured_issue_target(self, url: str) -> str | None:
+        return selected_target().identity if issue_number(url) else None
+
+    async def issue_target_for_url(self, url):
+        if not url:
+            return None
+        if workflow.in_workflow() and not workflow.patched('local-github-external-target-v1'):
+            return 'legacy' if url.startswith(LEGACY_ISSUES) else None
+        return await self.configured_issue_target(url)
+
     async def issue_for_request(self, ctx):
-        number = user_issue(ctx)
+        url = requested_issue_url(ctx)
+        number = int(url.rsplit('/', 1)[1]) if await self.issue_target_for_url(url) else None
         segment = getattr(ctx.deps, 'history_segment', 0)
         if number or type(segment) is not int or segment < 1 or not private_issue_root(ctx):
             return number
@@ -204,7 +219,8 @@ class RepositoryWorkflow(AbstractCapability):
         task = self.backend.ledger.status(session, authority)
         if not task:
             return 'open'
-        if (task.get('github_issue') or {}).get('number') != number:
+        ticket = task.get('github_issue')
+        if not matches_target(ticket) or ticket['number'] != number:
             return 'other'
         if task['phase'] == 'verified' and (not task.get('receipts') or not commands_stopped(task['receipts'][-1])):
             return 'recheck'
@@ -225,7 +241,10 @@ class RepositoryWorkflow(AbstractCapability):
     async def retry_issue_analysis(self, session: str, authority: str, number: int, turn: str) -> str | None:
         scope = (session, authority)
         task = self.backend.ledger.status(*scope)
-        if (task['phase'] == 'failed' and (task.get('github_issue') or {}).get('number') == number
+        ticket = (task or {}).get('github_issue')
+        if not matches_target(ticket) or ticket['number'] != number:
+            return 'This task belongs to a different GitHub issue target.'
+        if (task['phase'] == 'failed'
                 and task.get('attempts') and task.get('receipts') and task['receipts'][-1]['state'] == 'failed'):
             failed = [f"{c['kind']} (exit {c['exit_code']})" for c in task['receipts'][-1]['commands']
                       if c.get('exit_code')]
@@ -322,14 +341,21 @@ class RepositoryWorkflow(AbstractCapability):
             part = TextPart('GitHub issue intake did not complete. Inspect the open_github_issue result, '
                             'check that the host publisher is running and resend the issue URL here.')
         else:
-            part = ToolCallPart(ISSUE, {'issue_url':ISSUES + str(number)}, tool_call_id=call_id)
+            url = requested_issue_url(ctx)
+            if workflow.in_workflow() and not workflow.patched('local-github-external-target-v1'):
+                part = ToolCallPart(ISSUE, {'issue_url':LEGACY_ISSUES + str(number)}, tool_call_id=call_id)
+            elif url and (grant := await self.configured_issue_target(url)):
+                part = ToolCallPart(ISSUE, {'issue_url':url, 'expected_target':grant}, tool_call_id=call_id)
+            else:
+                part = TextPart('Resend the configured GitHub issue URL to confirm intake.')
         return ModelResponse(parts=[part], finish_reason='tool_call' if isinstance(part, ToolCallPart) else 'stop',
                              provider_name='local-controller')
 
     @durable_operation('github_completed')
     async def github_completed(self, session: str, authority: str, number: int) -> str | None:
         task = self.backend.ledger.status(session, authority)
-        if task and (task.get('github_issue') or {}).get('number') == number:
+        ticket = (task or {}).get('github_issue')
+        if matches_target(ticket) and ticket['number'] == number:
             return self.files_message(task, task.get('completion_turn'))
         return None
 
@@ -337,19 +363,21 @@ class RepositoryWorkflow(AbstractCapability):
     async def github_publish(self, session: str, authority: str, turn: str) -> str:
         task = self.backend.ledger.status(session, authority)
         ticket = (task or {}).get('github_issue')
-        if not ticket or not self.files_message(task, task.get('completion_turn')):
+        if not matches_target(ticket) or not self.files_message(task, task.get('completion_turn')):
             return ''
         try:
             result = await exchange('publish', ticket['number'], session, turn)
             pr = result['number']
             if type(pr) is not int or pr < 1:
                 raise ValueError('Invalid GitHub publication receipt.')
-            message = f'\n\n[Draft PR #{pr}]({PULLS}{pr})'
+            url = selected_target().url(f'pull/{pr}')
+            message = f'\n\n[Draft PR #{pr}]({url})'
             if result.get('auto_merge') is True:
                 message += ' · The GitHub App will merge this verified commit once its CI passes.'
             return message
         except (ValueError, OSError) as error:
-            return f'\n\nGitHub publication is unconfirmed. {error} Resend {ISSUES}{ticket["number"]} in this chat to retry.'
+            url = selected_target().url('issues/' + str(ticket['number']))
+            return f'\n\nGitHub publication is unconfirmed. {error} Resend {url} in this chat to retry.'
 
     async def wrap_model_request(self, ctx, *, request_context, handler):
         if (active_version() and ctx.run_id==ctx.deps.root_run_id
@@ -448,7 +476,7 @@ class RepositoryWorkflow(AbstractCapability):
             return [t for t in tool_defs if t.name not in REPOSITORY or (root and t.name in DISCOVERY - {ISSUE})]
         names = allowed(phase) if root else {STATUS}
         if not ticket:
-            names = names - {REVIEW}
+            names = names - {REVIEW, ISSUE}
         return [replace(t, sequential=True) for t in tool_defs if t.name in names]
 
     @durable_operation('admit')
@@ -490,9 +518,14 @@ class RepositoryWorkflow(AbstractCapability):
 
     async def before_tool_execute(self, ctx, *, call, tool_def, args):
         if call.tool_name == ISSUE:
-            number = user_issue(ctx)
-            if not number or issue_number(args.get('issue_url')) != number:
+            url = requested_issue_url(ctx)
+            grant = await self.issue_target_for_url(url)
+            candidate = args.get('issue_url')
+            if (not grant or not isinstance(candidate, str) or candidate.strip().removesuffix('/') != url
+                    or (grant != 'legacy' and args.get('expected_target', grant) != grant)):
                 raise ToolFailed('Only a standalone issue URL from the owner of the current web turn can open a GitHub task.')
+            if grant != 'legacy':
+                args = {**args, 'expected_target':grant}
         if not active_version():
             if call.tool_name in REPOSITORY:
                 raise ToolFailed('Repository tools are unavailable for this older execution.')

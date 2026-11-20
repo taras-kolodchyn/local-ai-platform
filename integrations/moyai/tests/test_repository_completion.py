@@ -13,11 +13,59 @@ from repository_ledger import ARTIFACT_PATHS
 from repository_workflow import RepositoryWorkflow
 
 
+import github_issue
+
+TARGET = github_issue.GitHubTarget('fixture-owner/fixture-repo', '')
+ISSUES = TARGET.url('issues/')
+
+
 class RepositoryCompletionTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.enterContext(patch.object(github_issue, 'TARGET', TARGET))
+
+    async def test_changing_target_fences_persisted_issue_routing_and_publication(self):
+        task = {'phase':'verified', 'github_issue':{'number':6, 'turn':'turn', 'target':TARGET.identity},
+                'attached_actor_id':'actor'}
+        cap, ctx = self.setup_capability(task)
+        for new_target in (None, github_issue.GitHubTarget(TARGET.repository, 'different-crate'),
+                           github_issue.GitHubTarget('other-owner/other-repo', '')):
+            with self.subTest(new_target=new_target), patch.object(github_issue, 'TARGET', new_target), \
+                    patch('repository_workflow.exchange', new_callable=AsyncMock) as exchange:
+                self.assertIsNone(await cap.continued_issue('s', 'a', 'actor', 'turn'))
+                self.assertEqual(await cap.github_route('s', 'a', 6), 'other')
+                self.assertEqual(await cap.github_publish('s', 'a', 'turn'), '')
+                exchange.assert_not_awaited()
+
+    async def test_recorded_routing_survives_target_change_but_live_intake_rejects_the_old_grant(self):
+        from pydantic_ai.exceptions import ToolFailed
+        cap, ctx = self.setup_capability(None)
+        ctx.prompt = TARGET.url('issues/6')
+        ctx.deps.surface, ctx.deps.visibility = 'web', 'private'
+        cap.configured_issue_target = AsyncMock(return_value=TARGET.identity)
+        with patch.object(github_issue, 'TARGET', None):
+            self.assertEqual(await cap.issue_for_request(ctx), 6)
+            routed = await cap.route_issue(ctx, SimpleNamespace(messages=[]), 6)
+            call = routed.parts[0]
+            self.assertEqual(call.args, {'issue_url':ctx.prompt, 'expected_target':TARGET.identity})
+            with patch('repository_workflow.exchange', new_callable=AsyncMock) as exchange, self.assertRaises(ToolFailed):
+                await cap.get_toolset().tools['open_github_issue'].function(ctx, **call.args)
+            exchange.assert_not_awaited()
+
+    async def test_older_history_routes_only_the_original_url_without_a_new_activity(self):
+        from repository_workflow import LEGACY_ISSUES
+        cap, ctx = self.setup_capability(None)
+        ctx.deps.surface, ctx.deps.visibility = 'web', 'private'
+        cap.configured_issue_target = AsyncMock(side_effect=AssertionError('Unexpected new activity'))
+        with patch('repository_workflow.workflow.in_workflow',return_value=True), \
+                patch('repository_workflow.workflow.patched',return_value=False):
+            ctx.prompt = LEGACY_ISSUES + '4'
+            self.assertEqual(await cap.issue_for_request(ctx), 4)
+            ctx.prompt = ISSUES + '4'
+            self.assertIsNone(await cap.issue_for_request(ctx))
+
     async def test_verified_issue_rechecks_legacy_receipt_before_delivery(self):
-        from github_issue import ISSUES
         command = {'process_group_stopped': True, 'pipe_drained': True}
-        task = {'phase':'verified', 'github_issue':{'number':6},
+        task = {'phase':'verified', 'github_issue':{'target':TARGET.identity,'number':6},
                 'receipts':[{'processes_stopped':True, 'commands':[command]}]}
         cap, ctx = self.setup_capability(task)
         ctx.prompt = ISSUES + '6'
@@ -36,7 +84,7 @@ class RepositoryCompletionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.parts[0].tool_name, 'finish_repository_task')
 
     async def test_checkpoint_prompt_routes_review_only_for_the_original_private_owner_turn(self):
-        task = {'phase':'verified','github_issue':{'number':29,'turn':'turn'}, 'attached_actor_id':'actor',
+        task = {'phase':'verified','github_issue':{'target':TARGET.identity,'number':29,'turn':'turn'}, 'attached_actor_id':'actor',
                 'verified_tree':'tree','binding':{'snapshot_id':'snap'},
                 'receipts':[{'operation_id':'checked','tree_hash':'tree','processes_stopped':True,
                     'commands':[{'pipe_drained':True,'process_group_stopped':True,'descendants_stopped':True}]}]}
@@ -54,11 +102,10 @@ class RepositoryCompletionTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIsNone(await cap.issue_for_request(ctx))
 
     async def test_implementing_issue_retries_premature_final_answer_with_native_limit(self):
-        from github_issue import ISSUES
         from pydantic_ai.exceptions import UnexpectedModelBehavior
         from pydantic_ai.messages import RetryPromptPart
 
-        cap, ctx = self.setup_capability({'phase':'implementing','github_issue':{'number':6}})
+        cap, ctx = self.setup_capability({'phase':'implementing','github_issue':{'target':TARGET.identity,'number':6}})
         ctx.deps.surface, ctx.deps.visibility = 'web', 'private'
         cap.backend.ledger.charge = lambda *args: None
         attempts = []
@@ -74,12 +121,11 @@ class RepositoryCompletionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('run_repository_checks', str(attempts[1][-1].content))
 
     async def test_new_issue_searches_for_change_evidence_before_baseline_or_planning(self):
-        from github_issue import ISSUES
         from pydantic_ai.messages import ToolCallPart
         for citations in ([], [{'path':'Cargo.lock'}]):
             with self.subTest(citations=citations):
                 task = {'phase':'analyzing', 'binding':{'verification_profile':'rust-retry'},
-                        'citations':citations, 'github_issue':{'number':6,'turn':'turn'}}
+                        'citations':citations, 'github_issue':{'target':TARGET.identity,'number':6,'turn':'turn'}}
                 cap, ctx = self.setup_capability(task)
                 ctx.prompt = ISSUES + '6'
                 ctx.deps.surface, ctx.deps.visibility = 'web', 'private'
@@ -92,9 +138,8 @@ class RepositoryCompletionTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(call.args_as_dict()['exact_path'], 'src/lib.rs')
 
     async def test_issue_analysis_cannot_end_with_a_model_claim_of_success(self):
-        from github_issue import ISSUES
         from pydantic_ai.exceptions import ModelRetry
-        task = {'phase':'analyzing', 'github_issue':{'number':47}}
+        task = {'phase':'analyzing', 'github_issue':{'target':TARGET.identity,'number':47}}
         cap, ctx = self.setup_capability(task)
         ctx.deps.surface, ctx.deps.visibility = 'web', 'private'
         ctx.prompt = ISSUES + '47'
@@ -107,8 +152,7 @@ class RepositoryCompletionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('delivery was not confirmed', stopped.text)
 
     async def test_retry_uses_status_from_failed_phase_toolset_until_tools_refresh(self):
-        from github_issue import ISSUES
-        cap, ctx = self.setup_capability({'phase':'failed','github_issue':{'number':6,'turn':'old'}})
+        cap, ctx = self.setup_capability({'phase':'failed','github_issue':{'target':TARGET.identity,'number':6,'turn':'old'}})
         ctx.prompt = ISSUES + '6'
         ctx.deps.surface, ctx.deps.visibility = 'web', 'private'
         cap.retry_issue_analysis = AsyncMock(return_value=None)
@@ -117,8 +161,7 @@ class RepositoryCompletionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.parts[0].tool_name,'repository_task_status')
 
     async def test_failed_candidate_reports_cargo_outcome_in_the_original_turn(self):
-        from github_issue import ISSUES
-        task = {'phase':'failed', 'github_issue':{'number':50,'turn':'turn'}, 'attempts':4,
+        task = {'phase':'failed', 'github_issue':{'target':TARGET.identity,'number':50,'turn':'turn'}, 'attempts':4,
                 'receipts':[{'state':'failed','commands':[{'kind':'project_build','exit_code':101}]}]}
         cap, ctx = self.setup_capability(task)
         ctx.prompt = ISSUES + '50'
@@ -129,11 +172,10 @@ class RepositoryCompletionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('No verified patch', response.text)
 
     async def test_issue_dispatches_plan_then_enters_changes_on_persisted_evidence(self):
-        from github_issue import ISSUES
         from pydantic_ai.messages import ToolCallPart
         task = {'phase':'analyzing','binding':{'verification_profile':'rust-retry'},
                 'citations':[{'path':'src/lib.rs'}],'baseline_failed':True,
-                'github_issue':{'number':6,'turn':'turn'}}
+                'github_issue':{'target':TARGET.identity,'number':6,'turn':'turn'}}
         cap, ctx = self.setup_capability(task)
         ctx.prompt = ISSUES + '6'
         ctx.deps.surface, ctx.deps.visibility = 'web', 'private'
@@ -152,7 +194,6 @@ class RepositoryCompletionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.parts[0].tool_name,'begin_repository_changes')
 
     async def test_issue_url_dispatches_exact_tool_once_and_obeys_authority(self):
-        from github_issue import ISSUES
         from pydantic_ai.messages import ModelRequest, ToolReturnPart
         cap, ctx = self.setup_capability(None)
         ctx.prompt = ISSUES + '6'
@@ -161,7 +202,8 @@ class RepositoryCompletionTests(unittest.IsolatedAsyncioTestCase):
         handler = AsyncMock()
         response = await cap.wrap_model_request(ctx, request_context=request, handler=handler)
         call = response.parts[0]
-        self.assertEqual((call.tool_name, call.args), ('open_github_issue', {'issue_url':ctx.prompt}))
+        self.assertEqual((call.tool_name, call.args),
+                         ('open_github_issue', {'issue_url':ctx.prompt, 'expected_target':TARGET.identity}))
         request.messages = [ModelRequest(parts=[ToolReturnPart(call.tool_name, 'unavailable', tool_call_id=call.tool_call_id)])]
         response = await cap.wrap_model_request(ctx, request_context=request, handler=handler)
         self.assertIn('intake did not complete', response.parts[0].content)
@@ -173,7 +215,7 @@ class RepositoryCompletionTests(unittest.IsolatedAsyncioTestCase):
     async def test_restart_retries_timed_out_begin_once_after_reading_the_persisted_phase(self):
         from pydantic_ai.messages import ModelRequest, ToolReturnPart
         from repository_workflow import BEGIN
-        task = {'phase':'analyzing','github_issue':{'number':71}}
+        task = {'phase':'analyzing','github_issue':{'target':TARGET.identity,'number':71}}
         cap,ctx = self.setup_capability(task)
         cap.issue_analysis_step = AsyncMock(return_value=BEGIN)
         request = SimpleNamespace(messages=[])

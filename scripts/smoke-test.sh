@@ -50,12 +50,12 @@ ok "All host listeners are loopback-only"
 info "Checking fresh LiteLLM and Grafana dashboard logins using .env credentials..."
 python3 scripts/check-dashboard-login.py
 
-embedding_payload=$(jq -cn '{model:"local-embeddings",input:["bounded exponential backoff in Rust"],encoding_format:"float",cache:{"no-cache":true,"no-store":true}}')
+embedding_payload=$(jq -cn '{model:"local-embeddings",input:["loopback listeners in the offline profile"],encoding_format:"float",cache:{"no-cache":true,"no-store":true}}')
 api_post /v1/embeddings "$embedding_payload" "$smoke/embedding.json"
 jq -e '.data[0].embedding | length == 1024' "$smoke/embedding.json" >/dev/null
 ok "Embedding route returned 1024 dimensions"
 
-rank_payload=$(jq -cn '{model:"local-reranker",query:"maximum retry delay",documents:["stylesheet background color","cap the retry delay at 30 seconds"]}')
+rank_payload=$(jq -cn '{model:"local-reranker",query:"local service bind address",documents:["stylesheet background color","bind local services to the loopback address"]}')
 api_post /v1/rerank "$rank_payload" "$smoke/rerank.json"
 jq -e '[.results[].index] == [1,0]' "$smoke/rerank.json" >/dev/null
 ok "Local reranker prioritized the matching source through LiteLLM"
@@ -116,28 +116,16 @@ grep -Eiq '^x-litellm-cache-key:[[:space:]]*[^[:space:]]+' "$smoke/cache-second.
   || die "Second explicit-cache response did not contain LiteLLM's documented cache-hit key header"
 ok "Explicit Redis cache miss/hit path verified"
 
-info "Indexing the bundled Rust fixture through LiteLLM embeddings..."
-INDEX_REPO_PATH="$ROOT_DIR/examples/rust-service" docker compose --profile tools run --rm ingestion index /workspace --repository rust-service \
-  > "$smoke/ingestion.json"
-jq -e '.files_indexed >= 2 and (.chunks_embedded + .chunks_reused) >= 2' "$smoke/ingestion.json" >/dev/null
-
-search_payload=$(jq -cn '{query:"What is the required maximum retry delay?",repository:"rust-service",limit:3}')
+info "Indexing the two platform policy documents through LiteLLM embeddings..."
+python3 scripts/retrieval_probe.py index > "$smoke/ingestion.json"
+search_payload=$(python3 scripts/retrieval_probe.py query)
 curl --fail --silent --show-error --max-time 300 \
   --header 'Content-Type: application/json' --data "$search_payload" \
   http://127.0.0.1:8000/search > "$smoke/search.json"
-# A regression test can rank ahead of prose and still cite the correct policy.
-retry_policy_evidence='def cites_retry_ceiling:
-  .repository == "rust-service" and (.path | length) > 0 and
-  .start_line >= 1 and .end_line >= .start_line and
-  (.content | test("retry|backoff"; "i")) and
-  (.content | test("\\b(30[,_]?000|30 seconds)\\b"; "i"));'
-jq -e "$retry_policy_evidence"' .count >= 1 and any(.results[]; cites_retry_ceiling)' "$smoke/search.json" >/dev/null \
-  || die "Search returned no cited evidence of the Rust retry ceiling"
-ok "Incremental pgvector ingestion and retrieval passed"
+jq -ec '.results' "$smoke/search.json" | python3 scripts/retrieval_probe.py check >/dev/null
+ok "Hybrid pgvector search cited the platform loopback policy"
 
-# Knowledge registration remains available without starting legacy agent runtimes.
-python3 scripts/provision-workspace.py vectors
-python3 scripts/vector-smoke.py
+python3 scripts/vector-smoke.py --indexed
 
 mcp_request=$(jq -cn '{jsonrpc:"2.0",id:1,method:"tools/list",params:{}}')
 curl --fail --silent --show-error --max-time 60 \
@@ -149,18 +137,17 @@ awk '/^data: / {sub(/^data: /, ""); print; exit}' "$smoke/mcp-tools.sse" > "$smo
 jq -e '[.result.tools[].name] | index("local_retrieval-search_code") != null and index("local_retrieval-get_chunk") != null' "$smoke/mcp-tools.json" >/dev/null
 ok "Retrieval tools are discoverable through the LiteLLM MCP Gateway"
 
-mcp_retrieval_call=$(jq -cn '{jsonrpc:"2.0",id:2,method:"tools/call",params:{name:"local_retrieval-search_code",arguments:{query:"required maximum retry delay",repository:"rust-service",path_prefix:"docs/",limit:2}}}')
+mcp_retrieval_call=$(jq -cn --argjson search "$search_payload" '{jsonrpc:"2.0",id:2,method:"tools/call",params:{name:"local_retrieval-search_code",arguments:($search + {path_prefix:"docs/"})}}')
 curl --fail --silent --show-error --max-time 300 \
   --header "Authorization: Bearer $key" \
   --header 'Content-Type: application/json' \
   --header 'Accept: application/json, text/event-stream' \
   --data "$mcp_retrieval_call" "$base/local_retrieval/mcp" > "$smoke/mcp-retrieval-call.sse"
 awk '/^data: / {sub(/^data: /, ""); print; exit}' "$smoke/mcp-retrieval-call.sse" > "$smoke/mcp-retrieval-call.json"
-jq -e "$retry_policy_evidence"' .result.isError == false and
-  (.result.structuredContent.result | fromjson |
-    any(.[]; .path == "docs/architecture-rules.md" and cites_retry_ceiling))' "$smoke/mcp-retrieval-call.json" >/dev/null \
-  || die "The documentation-scoped MCP search did not cite the documented retry ceiling"
-ok "Retrieval MCP tool call returned indexed policy context"
+jq -ec 'select(.result.isError == false) | .result.structuredContent.result | fromjson |
+  select(all(.[]; .path | startswith("docs/")))' "$smoke/mcp-retrieval-call.json" \
+  | python3 scripts/retrieval_probe.py check >/dev/null
+ok "Path-scoped MCP search cited the platform loopback policy"
 
 curl --fail --silent --show-error --max-time 60 \
   --header "Authorization: Bearer $key" \
@@ -183,7 +170,8 @@ ok "Read-only PostgreSQL MCP tool call returned bounded metadata"
 
 bash scripts/check-observability.sh
 
-if rg -n 'CACHE-SMOKE-|bounded exponential backoff in Rust|What is the required maximum retry delay' .local/logs; then
+if rg -q -F -e 'CACHE-SMOKE-' -e 'loopback listeners in the offline profile' \
+  -e "$(jq -r '.query' <<< "$search_payload")" .local/logs; then
   die "A synthetic prompt sentinel leaked into metadata-only logs"
 fi
 ok "Synthetic prompt sentinels are absent from collected logs"

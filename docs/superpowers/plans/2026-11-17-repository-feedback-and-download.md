@@ -27,7 +27,7 @@
 - [x] Submit an ordinary Rust task through Moyai in one new conversation, with no integration-file hint or follow-up. Independently validate its delivered patch and source preservation.
 - [x] Retest the actual download button with per-operation and total deadlines, verify bytes against the controller hash, and record timing and the bounded procedure.
 
-Final evidence: [reliability results](../../results/repository-reliability-2026-11-17.md).
+Final evidence: [reliability results](https://github.com/taras-kolodchyn/local-ai-platform/blob/5029427f3b0d228b3eafe52f41f3d6337575e4a2/docs/results/repository-reliability-2026-11-17.md).
 One native turn completed in 202.713 s; UI patch download completed in 275 ms
 with matching controller and Files hashes. Completion fixes also cover native
 authorization/checkpoint hooks, durable model-scope separation and Temporal's

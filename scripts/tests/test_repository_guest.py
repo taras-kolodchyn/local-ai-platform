@@ -45,12 +45,12 @@ class GuestTests(unittest.TestCase):
     def payload(self):
         files = []
         manifest = []
-        for path in sorted((ROOT / 'examples/rust-service').rglob('*')):
-            if path.is_file() and 'target' not in path.parts:
-                name = path.relative_to(ROOT / 'examples/rust-service').as_posix()
-                data = path.read_bytes()
-                files.append({'path': name, 'content_base64': base64.b64encode(data).decode()})
-                manifest.append({'path': name, 'sha256': hashlib.sha256(data).hexdigest(), 'size': len(data)})
+        source = {name: (self.runner.oracles / name).read_bytes() for name in ('Cargo.toml', 'Cargo.lock')}
+        source.update({'src/lib.rs': b'pub fn original() {}\n', 'src/main.rs': b'fn main() {}\n',
+                       'tests/original.rs': b'#[test] fn baseline() {}\n'})
+        for name, data in sorted(source.items()):
+            files.append({'path': name, 'content_base64': base64.b64encode(data).decode()})
+            manifest.append({'path': name, 'sha256': hashlib.sha256(data).hexdigest(), 'size': len(data)})
         metadata = {'schema_version': 1, 'repository_id': 'rust', 'verification_profile': 'rust-retry', 'files': manifest}
         metadata['snapshot_id'] = self.guest.digest(metadata)
         return {'manifest': metadata, 'files': files}

@@ -32,7 +32,8 @@ def git(root, *arguments, input_bytes=None):
     try:
         return subprocess.run(['git', '--no-optional-locks', '-c', 'core.fsmonitor=false',
             '-c', 'core.hooksPath=/dev/null', '-C', str(root), *arguments],
-            capture_output=True, check=True, timeout=15, input=input_bytes).stdout
+            capture_output=True, check=True, timeout=15, input=input_bytes,
+            env={**os.environ, 'GIT_NO_LAZY_FETCH': '1', 'GIT_NO_REPLACE_OBJECTS': '1'}).stdout
     except (OSError, subprocess.SubprocessError) as exc:
         raise ValueError('Git source inspection failed; plain directories require --unversioned') from exc
 
@@ -231,7 +232,7 @@ def stage_sources(root, stage, paths):
 
 
 def prepare_snapshot(repo: Path, catalog: Path, verification_profile: str,
-                     *, unversioned=False, repository_id=None):
+                     *, unversioned=False, repository_id=None, require_clean=False):
     root = Path(repo).resolve(strict=True)
     if not root.is_dir() or verification_profile not in ('rust-retry', 'rust-retry-tests'):
         raise ValueError('Expected a source directory and supported verification profile')
@@ -270,6 +271,8 @@ def prepare_snapshot(repo: Path, catalog: Path, verification_profile: str,
                   'sha256': hashlib.sha256(p.read_bytes()).hexdigest(), 'size': p.stat().st_size}
                  for p in [source / name for name in sorted(walk_source_paths(source))]]
         metadata['dirty'] = clean_hashes != {row['path']: row['sha256'] for row in files}
+        if require_clean and metadata['dirty']:
+            raise ValueError('Snapshot preparation requires a clean Git checkout for this operation')
         manifest = {'schema_version': 1, 'repository_id': repo_id, 'name': root.name,
             'git': metadata, 'files': files, 'scanner_version': SCANNER_VERSION,
             'verification_profile': verification_profile}

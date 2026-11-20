@@ -18,7 +18,7 @@ import traceback
 ROOT = Path(__file__).resolve().parents[1]
 PROJECTS = ('local-ai-platform', 'local-ai-moyai')
 PHASES = (('lint', []), ('test', []), ('up', []), ('status', ['FORMAT=json']), ('smoke-test', []),
-          ('moyai-smoke', ['RESTART=1']), ('repository-smoke', ['RESTART=1']))
+          ('moyai-smoke', ['RESTART=1']))
 HUB_PREFIXES = ('docker.io/', 'index.docker.io/', 'registry-1.docker.io/')
 
 
@@ -194,7 +194,11 @@ python3 -c 'import json, os; print(json.dumps({"models": [{"reference": os.envir
         announce(f'verify: private logs: {self.directory}')
         inventory: dict = {'passed': False, 'errors': ['Final inventory did not complete']}
         try:
-            for name, arguments in PHASES:
+            phases = list(PHASES)
+            source = self.environment.get('MOYAI_SOURCE_REPO')
+            if source:
+                phases.append(('repository-smoke', ['RESTART=1', 'REPO=' + source]))
+            for name, arguments in phases:
                 if self.signal is not None:
                     break
                 result = self.phase(name, arguments)

@@ -1,9 +1,9 @@
 # Local AI Platform
 
-Run Moyai on an Apple Silicon Mac to write and test code in a local sandbox. Qwen
-handles inference through LiteLLM, PostgreSQL and pgvector supply cited repository
-context, and Moyai returns files for download. The default profile runs locally
-after the initial downloads using local credentials.
+Run a local AI coding platform on an Apple Silicon Mac. Moyai edits and tests code
+in an isolated workspace, Qwen serves requests through LiteLLM, and pgvector
+searches the repositories you choose to index. After the initial downloads, the
+default profile runs locally with local credentials.
 
 ## Quick start
 
@@ -13,14 +13,13 @@ of free disk space for a fresh setup. The host check requires 32 GiB of unified
 memory. For the default 65,536-token context, use 48 GiB or more. With 32–47 GiB,
 run `make bootstrap` after cloning and set `QWEN_CONTEXT_SIZE=32768` in the
 generated `.env` before starting. The project recorded Docker Desktop 4.99.0 on
-2026-11-16 and Model Runner 1.2.9 on 2026-11-17. [Docker Model Runner](https://docs.docker.com/ai/model-runner/) ·
-[Desktop environment](docs/dependency-update-2026-11-16.md) ·
-[Model Runner environment](docs/results/repository-workflow-2026-11-17.md#runtime-identity)
+2026-11-16. [Docker Model Runner](https://docs.docker.com/ai/model-runner/) ·
+[Desktop environment](docs/dependency-update-2026-11-16.md)
 
-Install Git, Make, curl, jq, OpenSSL, Python and Cargo. The test suite supports
-Python 3.11–3.14. Check that `cargo --version` works. The first setup needs
+Install Git, Make, curl, jq, OpenSSL and Python. The test suite supports
+Python 3.11–3.14. The first setup needs
 internet access for images, model artifacts and build dependencies.
-[Rust installation](https://rust-lang.org/tools/install/) · [Offline preparation](docs/offline.md)
+[Offline preparation](docs/offline.md)
 
 ```sh
 git clone https://github.com/taras-kolodchyn/local-ai-platform.git
@@ -121,7 +120,6 @@ next turn and survive another `make up`. The marketplace entry
 
 ### Repository search and verified changes
 
-For a searchable local repository, use `make index REPO=/absolute/path/to/repository`.
 Indexing reuses compatible embeddings for unchanged chunks. Hybrid search fuses
 vector and full-text ranks and applies repository and path filters. The vector
 store's `score_threshold` uses normalized hybrid relevance. Raw cosine similarity
@@ -129,17 +127,17 @@ is available separately. [Retrieval and scoring](docs/platform-operations.md) ·
 [PostgreSQL full-text search](https://www.postgresql.org/docs/17/textsearch-controls.html) ·
 [pgvector hybrid search](https://github.com/pgvector/pgvector#hybrid-search)
 
-To try a complete repair with the running stack, use `make repository-smoke`.
-It stages the bundled Rust example from the pinned commit before its retry
-policy was repaired. Moyai retrieves cited context, records a plan, edits a copy
-and runs protected checks. The observer downloads `changes.patch`,
-`test-report.json` and `result.json` and checks the patch against the verified
-tree. A full clone includes the demonstration commit. For controlled execution
-on an operator-selected snapshot, `make repository-add REPO=/absolute/path`
-registers a source tree matching the supported `rust-retry` profile.
-[Repository workflow and shallow-clone instructions](docs/repository-workflow.md) ·
-[Rust demo](examples/rust-service/README.md) ·
-[Recorded repair and download](docs/results/repository-reliability-2026-11-17.md)
+To use your own project, point the indexer at its separate checkout. The ingestion
+container mounts that path read-only.
+
+```sh
+make index REPO=/absolute/path/to/your-project
+```
+
+For projects matching the protected `rust-retry` profile,
+`make repository-add REPO=/absolute/path/to/crate` also enables verified edits in a private copy.
+Moyai delivers a patch, test report and result receipt through **Files**.
+[Supported inputs and verification](docs/repository-workflow.md)
 
 ### Prompt compression and caching
 
@@ -152,13 +150,8 @@ for a one-request comparison. [LiteLLM integration](https://docs.litellm.ai/docs
 
 On 2026-11-20, LiteLLM 1.110.2 and Headroom 0.44.0 reduced a synthetic 240-line
 log from 6,558 to 280 reported input tokens on both Chat Completions and Responses.
-Both routes returned the exact error code. In a separate 2026-11-19 comparison
-with LiteLLM 1.109.1, an unstructured text sample showed no reduction. In two
-independently accepted Rust repairs that day, the baseline used 239,112 input tokens over
-20 calls in 213.8 seconds. The compressed run used 267,634 over 22 calls in
-241.2 seconds and Headroom reported removing 611 tokens. The runs took different
-tool steps. `python3 scripts/compression-smoke.py` repeats the synthetic log
-comparison on the running stack.
+Both routes returned the exact error code. Run
+`python3 scripts/compression-smoke.py` to repeat the check on your stack.
 
 Redis stores exact responses only for eligible chat requests that explicitly
 opt in with `"cache": {"use-cache": true}`. The default TTL is 300 seconds.
@@ -171,8 +164,7 @@ PostgreSQL/pgvector stores source chunks and reusable embeddings for retrieval.
 | To do this | Enable this workflow |
 | --- | --- |
 | Read GitHub from an MCP client | Configure `.env.connected` and run `make connected-up`. The official GitHub MCP server exposes nine allowlisted read-only tools through LiteLLM. `make connected-down` stops it. [Connected mode](docs/connected.md) |
-| Publish a verified Rust repair or coverage change | Start a foreground publisher on the Mac, then submit the issue URL in a private Moyai chat. The host verifies the delivered patch and opens a draft PR. The GitHub App can also merge after verified CI if explicitly granted `AUTO_MERGE=1` for one issue. GitHub credentials stay on the host. [Issue publisher and supported profiles](docs/moyai-github-issues.md) |
-| Request documentation for the bundled Rust example | When the Moyai Developer and Verifier schedules are configured, the Developer picks up an owner-filed issue labeled `moyai:ready` and opens a linked PR. The Verifier reviews the proposed commit. GitHub Actions checks the verdict, the single-file scope and PR CI, then merges and posts the `main` CI result on the issue. [Issue form](.github/ISSUE_TEMPLATE/moyai-docs.yml) · [Progress workflow](.github/workflows/moyai-progress.yml) · [Merge workflow](.github/workflows/moyai-merge.yml) |
+| Publish a verified change from a supported external project | Set the target repository in the local configuration, start the host publisher, and submit its issue URL in a private Moyai chat. The host verifies the patch before opening a draft PR. [Prerequisites and publication](docs/moyai-github-issues.md) |
 
 Ordinary `make up` starts Moyai with local tools and no external publisher. The
 offline MCP servers allow scoped retrieval and read-only filesystem, Git and
@@ -187,9 +179,9 @@ make smoke-test
 ```
 
 `make lint` checks shell, Python, Compose and configuration. `make test` requires
-a working Docker engine, Python 3.11–3.14 and Cargo. It runs Python and contract
-tests, real database checks using a disposable PostgreSQL 17 / pgvector 0.8.7
-container on loopback, and the Rust example with `cargo test --locked`. The
+a working Docker engine and Python 3.11–3.14. It runs platform unit and contract
+tests and checks database isolation using a disposable PostgreSQL 17 / pgvector
+0.8.7 container on loopback. The
 database fixture uses tmpfs and cleans up after the run. A provisioned disposable
 database can be supplied through `MEMORY_TEST_DSN`. Models and a running platform
 stack are unnecessary for this suite.
@@ -197,10 +189,11 @@ stack are unnecessary for this suite.
 `make smoke-test` requires the running stack and checks the local model routes,
 tool calls, compression, cache, retrieval, MCP, dashboard logins and metrics. For
 end-to-end acceptance, `make verify` runs the suite, starts the platform, exercises
-real Moyai sandbox and repository tasks with service restarts, and attempts full
+a real Moyai sandbox task with a service restart, and attempts full
 shutdown even on failure. It checks that the stack's containers and resident
 models are gone. Its private logs and result receipt are in `.local/verification/`.
-[Verification phases](scripts/verify.py) · [Recorded acceptance and limits](docs/results/repository-workflow-2026-11-17.md)
+Supply `REPO=/absolute/path/to/crate` to include the optional, profile-specific
+repository task. [Verification phases](scripts/verify.py)
 
 To exercise skill selection separately, run `python3 scripts/moyai-skills-smoke.py`
 for the Rust planning case, or add `--case latency` or `--case arithmetic`. Each
@@ -245,8 +238,8 @@ Grafana 13.3.1. [LiteLLM UI credentials](https://docs.litellm.ai/docs/proxy/ui) 
 
 - [Architecture](docs/architecture.md), [macOS inference decision](docs/adr/0001-inference-runtime.md) and [platform operations](docs/platform-operations.md)
 - [Local Moyai](docs/moyai-local.md), [repository tasks](docs/repository-workflow.md) and [UI verification](docs/moyai-ui-verification.md)
-- [Troubleshooting](docs/troubleshooting.md), [benchmark method](docs/benchmarking.md), [historical capability matrix](docs/capability-matrix.md) and [July agent validation](docs/results/agent-validation-2026-07-19.md)
-- [Implementation plan](docs/implementation-plan.md), [November 16 dependency report](docs/dependency-update-2026-11-16.md) and [retired workspace profiles](docs/workspace-memory.md)
+- [Troubleshooting](docs/troubleshooting.md), [benchmark method](docs/benchmarking.md) and [historical capability matrix](docs/capability-matrix.md)
+- [November 16 dependency report](docs/dependency-update-2026-11-16.md) and [retired workspace profiles](docs/workspace-memory.md)
 - [Security design](docs/security.md), [risk register](docs/risks.md) and [vulnerability reporting](SECURITY.md)
 
 ![Provisioned Local AI Platform dashboard](output/playwright/grafana-local-ai-platform.png)

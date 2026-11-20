@@ -7,14 +7,21 @@ from pathlib import Path
 import re
 import stat
 import subprocess
+import sys
 import time
 from urllib.error import HTTPError
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
-REPO = 'taras-kolodchyn/local-ai-platform'
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / 'integrations/moyai'))
+from github_issue import selected_target
+
 API_VERSION = '2026-03-10'
 PERMISSIONS = {'contents':'write', 'issues':'read', 'pull_requests':'write'}
-APP_DIR = Path(__file__).resolve().parents[1] / '.local/github-issues/app'
+
+
+def credentials_directory():
+    return ROOT / '.local/github-issues/targets' / selected_target().repository
 
 
 class AppError(ValueError):
@@ -62,7 +69,10 @@ def make_jwt(issuer, key):
 
 
 class Installation:
-    def __init__(self, directory=APP_DIR):
+    def __init__(self, directory=None):
+        self.repository = selected_target().repository
+        if directory is None:
+            directory = credentials_directory() / 'app'
         try:
             config = json.loads((directory/'app.json').read_text())
         except FileNotFoundError as exc:
@@ -78,24 +88,24 @@ class Installation:
 
     def refresh(self):
         jwt = make_jwt(str(self.app_id), self.key)
-        repo_path = '/repos/' + REPO
+        repo_path = '/repos/' + self.repository
         try:
             install = request(repo_path + '/installation', jwt)
         except HTTPError as error:
             error.close()
             if error.code == 404:
-                raise AppError('Install the registered GitHub App on ' + REPO + ' first.') from None
+                raise AppError('Install the registered GitHub App on ' + self.repository + ' first.') from None
             raise AppError(f'GitHub installation lookup returned HTTP {error.code}.') from None
         if (install['app_id'] != self.app_id or install['app_slug'] != self.slug or install.get('suspended_at')
-                or install['account']['login'] != REPO.split('/')[0] or install['repository_selection'] != 'selected'):
-            raise AppError('Install this app using Only select repositories and select local-ai-platform.')
+                or install['account']['login'] != self.repository.split('/')[0] or install['repository_selection'] != 'selected'):
+            raise AppError('Install this app using Only select repositories and select ' + self.repository + '.')
         mint = '/app/installations/' + str(int(install['id'])) + '/access_tokens'
         # Inspect the actual installation selection using a metadata-only token.
         # A token already downscoped to this repo cannot establish that selection.
         metadata = request(mint, jwt, {'permissions':{'metadata':'read'}})
         selection = request('/installation/repositories?per_page=2', metadata['token'])
-        if selection['total_count'] != 1 or [r['full_name'] for r in selection['repositories']] != [REPO]:
-            raise AppError('The app installation must select only ' + REPO + '.')
+        if selection['total_count'] != 1 or [r['full_name'] for r in selection['repositories']] != [self.repository]:
+            raise AppError('The app installation must select only ' + self.repository + '.')
         repo_id = selection['repositories'][0]['id']
         grant = request(mint, jwt, {'repository_ids':[repo_id], 'permissions':PERMISSIONS})
         if any(grant['permissions'].get(k) != v for k, v in PERMISSIONS.items()):
@@ -104,7 +114,7 @@ class Installation:
         self.token = grant['token']
 
     def api(self, endpoint, body=None):
-        return request('/repos/' + REPO + '/' + endpoint, self.access_token(), body)
+        return request('/repos/' + self.repository + '/' + endpoint, self.access_token(), body)
 
     def access_token(self):
         if self.token is None or self.expires < time.time() + 90:

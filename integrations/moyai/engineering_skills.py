@@ -8,7 +8,8 @@ from pydantic_ai import RunContext
 from temporalio import activity, workflow
 
 from gateway_skills import GatewaySkill, turn_skills
-from github_issue import issue_number, user_issue
+with workflow.unsafe.imports_passed_through():
+    from github_issue import requested_issue_url
 
 SELECT_SKILLS = 'select_engineering_skills'
 LOAD = 'load_capability'
@@ -37,7 +38,7 @@ def selected_ids(messages, run_id):
 
 
 def issue_brief(ctx, messages):
-    if (not issue_number(getattr(ctx, 'prompt', None)) or not user_issue(ctx)
+    if (not requested_issue_url(ctx)
             or (workflow.in_workflow() and not workflow.patched('local-issue-skill-selection-v1'))):
         return None
     for message in reversed(messages):

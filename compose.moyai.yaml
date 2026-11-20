@@ -16,6 +16,8 @@ services:
       AGENT_MODEL: local-qwen
       MOYAI_MODELS: local-qwen,local-qwen-analysis
       MOYAI_PUBLIC_URL: http://127.0.0.1:8787
+      MOYAI_GITHUB_REPOSITORY: ${MOYAI_GITHUB_REPOSITORY:-}
+      MOYAI_GITHUB_PROJECT_PATH: ${MOYAI_GITHUB_PROJECT_PATH:-}
       MOYAI_MODEL_TIMEOUT: "180"
       TEMPORAL_ADDRESS: moyai-temporal:7233
     volumes:

@@ -13,18 +13,20 @@ import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlsplit
 
-from github_app import APP_DIR, PERMISSIONS, REPO, request
+from github_app import PERMISSIONS, credentials_directory, request
+from github_issue import selected_target
 
 
 def manifest(origin):
-    return {'name':'moyai-local-' + secrets.token_hex(4), 'url':'https://github.com/' + REPO,
+    url = 'https://github.com/' + selected_target().repository
+    return {'name':'moyai-local-' + secrets.token_hex(4), 'url':url,
             'description':'Local Moyai publisher for verified Rust issue fixes.',
-            'public':False, 'request_oauth_on_install':False, 'hook_attributes':{'active':False, 'url':'https://github.com/'+REPO},
+            'public':False, 'request_oauth_on_install':False, 'hook_attributes':{'active':False, 'url':url},
             'default_events':[], 'default_permissions':PERMISSIONS, 'redirect_url':origin+'/callback'}
 
 
 def save_registration(row, destination):
-    if (row['owner']['login'] != REPO.split('/')[0] or type(row['id']) is not int
+    if (row['owner']['login'] != selected_target().repository.split('/')[0] or type(row['id']) is not int
             or not re.fullmatch('[a-z0-9-]+',row['slug']) or not row.get('pem')):
         raise ValueError('Unexpected GitHub App owner or identity.')
     if destination.exists():
@@ -43,10 +45,17 @@ def install_url(slug):
 
 
 def main(*, port=0, state=None, config=None):
-    if APP_DIR.exists():
-        print('Install the registered app: ' + install_url(json.loads((APP_DIR/'app.json').read_text())['slug']))
+    target = selected_target()
+    owner = target.repository.split('/')[0]
+    destination = credentials_directory() / 'app'
+    if destination.exists():
+        print('Install the registered app: ' + install_url(json.loads((destination/'app.json').read_text())['slug']))
         return
-    APP_DIR.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    account = request('/users/' + owner)
+    if account.get('login') != owner or account.get('type') not in ('User', 'Organization'):
+        raise ValueError('Check the canonical GitHub repository owner in MOYAI_GITHUB_REPOSITORY.')
+    settings = f'/organizations/{owner}/settings' if account['type'] == 'Organization' else '/settings'
     state = state or secrets.token_urlsafe(32)
 
     class Registration(BaseHTTPRequestHandler):
@@ -71,10 +80,11 @@ def main(*, port=0, state=None, config=None):
             url = urlsplit(self.path)
             if url.path == '/' and not url.query:
                 value = escape(json.dumps(config), quote=True)
-                return self.page(200, '<h1>Приватна GitHub App для Moyai</h1><p>Увійдіть у GitHub як '
-                    'taras-kolodchyn. Після реєстрації виберіть <b>Only select repositories → local-ai-platform</b>.</p>'
+                return self.page(200, '<h1>Приватна GitHub App для Moyai</h1><p>Увійдіть в обліковий запис '
+                    f'з правом реєстрації GitHub App для {owner}. Після реєстрації виберіть '
+                    f'<b>Only select repositories → {target.repository}</b>.</p>'
                     '<p>Issues — читання. Contents і Pull requests — читання та запис. Ключ збережеться на цьому Mac.</p>'
-                    f'<form action="https://github.com/settings/apps/new?state={state}" method="post">'
+                    f'<form action="https://github.com{settings}/apps/new?state={state}" method="post">'
                     f'<input type="hidden" name="manifest" value="{value}"><button>Перейти до реєстрації в GitHub</button></form>')
             if url.path != '/callback':
                 return self.page(404, 'Unknown path.')
@@ -84,18 +94,18 @@ def main(*, port=0, state=None, config=None):
                 return self.page(400, 'Invalid registration callback.')
             try:
                 row = request('/app-manifests/'+query['code'][0]+'/conversions', body={})
-                save_registration(row, APP_DIR)
+                save_registration(row, destination)
             except (ValueError, KeyError, OSError, HTTPError, URLError):
                 return self.page(400, 'Registration did not complete. Check the GitHub account and local app directory.')
             self.server.complete = True
-            self.page(200, '<h1>App зареєстрована</h1><p>Встановіть її лише для local-ai-platform.</p>'
+            self.page(200, f'<h1>App зареєстрована</h1><p>Встановіть її лише для {target.repository}.</p>'
                            f'<a href="{install_url(row["slug"])}">Встановити GitHub App</a>')
 
     with HTTPServer(('127.0.0.1', port), Registration) as server:
         authority = '127.0.0.1:'+str(server.server_port)
         origin = 'http://'+authority
         config = config or manifest(origin)
-        print('Open ' + origin + '/ in the browser signed in as ' + REPO.split('/')[0], flush=True)
+        print(f'Open {origin}/ to register the GitHub App for {owner}.', flush=True)
         server.complete = False
         server.timeout = 1
         deadline = time.monotonic()+3600
@@ -106,4 +116,7 @@ def main(*, port=0, state=None, config=None):
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except ValueError as error:
+        raise SystemExit(str(error)) from None

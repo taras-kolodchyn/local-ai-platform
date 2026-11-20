@@ -1,17 +1,7 @@
 # Capability and version matrix
 
-Current dependency pins and verification: [2026-11-16 update](dependency-update-2026-11-16.md).
-
-Current repository workflow: [2026-11-17 results](results/repository-workflow-2026-11-17.md).
-Native Moyai completed three fresh local-model Rust retry repairs with scoped
-context, independent checks and verified patch delivery. The expanded lifecycle
-suite and restart persistence passed. This covers the trusted single-user
-`rust-retry` profile; the historical complex-agent failures below remain historical.
-
-The results below are the historical baseline, not verification of the updated stack.
-Research and live-verification date: 2026-07-20. Sources are upstream project
-documentation or release metadata. Results below distinguish platform transport
-checks from autonomous agent quality.
+The [platform README](../README.md) documents the current models and gateway.
+The tables below record the configuration and results observed on 2026-07-20.
 
 ## Historical versions (2026-07-20)
 
@@ -58,7 +48,7 @@ the requested retrieval tool, so tool availability and agent behavior remain
 separate results. External GitHub MCP is opt-in connected-mode work and was not
 live-tested without a dedicated token.
 
-Full observations: [agent validation](results/agent-validation-2026-07-19.md)
+Full observations: [agent validation](https://github.com/taras-kolodchyn/local-ai-platform/blob/5029427f3b0d228b3eafe52f41f3d6337575e4a2/docs/results/agent-validation-2026-07-19.md)
 and [benchmark JSON](results/benchmark-2026-07-19.json).
 
 ### A2A

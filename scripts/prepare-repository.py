@@ -15,8 +15,6 @@ import tempfile
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 ROOT = Path(__file__).resolve().parents[1]
-# First parent of the merge that repaired the demo in PR #14.
-SMOKE_FIXTURE_COMMIT = '553a11afb886c01cd6d0d07cce6963a10534b8b3'
 
 
 def sibling(name):
@@ -26,24 +24,8 @@ def sibling(name):
     return module
 
 
-def prepare_smoke_fixture(catalog):
-    subtree = 'examples/rust-service'
-    env = {'PATH': os.environ['PATH'], 'GIT_ALLOW_PROTOCOL': 'file',
-           'GIT_CONFIG_GLOBAL': os.devnull, 'GIT_CONFIG_NOSYSTEM': '1',
-           'GIT_NO_REPLACE_OBJECTS': '1', 'GIT_NO_LAZY_FETCH': '1'}
-    with tempfile.TemporaryDirectory(prefix='rust-demo-') as tmp:
-        checkout = Path(tmp)
-        git = ['git', '-C', str(checkout), '-c', 'core.hooksPath=/dev/null']
-        subprocess.run([*git, 'init', '--quiet', '--template='], env=env, check=True, timeout=60)
-        subprocess.run([*git, 'fetch', '--quiet', '--no-tags', '--depth=1', str(ROOT), SMOKE_FIXTURE_COMMIT],
-                       env=env, check=True, timeout=60)
-        subprocess.run([*git, 'checkout', '--quiet', '--detach', SMOKE_FIXTURE_COMMIT],
-                       env=env, check=True, timeout=60)
-        manifest = sibling('repository-snapshot').prepare_snapshot(
-            checkout / subtree, catalog, 'rust-retry', repository_id='repo_smoke_rust_retry')
-    if manifest['git'] != {'head': SMOKE_FIXTURE_COMMIT, 'branch': 'detached', 'subtree': subtree, 'dirty': False}:
-        raise ValueError('Rust smoke snapshot does not match the pinned clean subtree')
-    return manifest
+def prepare_smoke_source(repo, catalog):
+    return sibling('repository-snapshot').prepare_snapshot(repo, catalog, 'rust-retry', require_clean=True)
 
 
 class NoRedirects(HTTPRedirectHandler):
@@ -121,27 +103,21 @@ def _index_prepared_locked(catalog, manifest, artifact):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    source = parser.add_mutually_exclusive_group(required=True)
-    source.add_argument('--repo', type=Path)
-    source.add_argument('--smoke-fixture', action='store_true', help='Use the pinned local Rust demo commit')
+    parser.add_argument('--repo', type=Path, required=True,
+                        help='Local source directory for the selected verification profile')
     parser.add_argument('--profile', default='rust-retry', choices=('rust-retry', 'rust-retry-tests'))
     parser.add_argument('--catalog', default=ROOT / '.local/repositories', type=Path,
         help='Custom catalogs are supported only with --no-index')
     parser.add_argument('--unversioned', action='store_true')
     parser.add_argument('--no-index', action='store_true', help='Prepare bytes only, without publishing a catalog selection')
     args = parser.parse_args(argv)
-    if args.smoke_fixture and args.unversioned:
-        parser.error('--smoke-fixture requires Git provenance')
     try:
         catalog = args.catalog.resolve()
         if not args.no_index and catalog != (ROOT / '.local/repositories').resolve():
             print('Live registration requires the default catalog mounted by the platform; custom catalogs require --no-index', file=sys.stderr)
             return 1
-        if args.smoke_fixture:
-            manifest = prepare_smoke_fixture(catalog)
-        else:
-            manifest = sibling('repository-snapshot').prepare_snapshot(args.repo, catalog,
-                args.profile, unversioned=args.unversioned)
+        manifest = sibling('repository-snapshot').prepare_snapshot(args.repo, catalog,
+            args.profile, unversioned=args.unversioned)
         row = manifest if args.no_index else index_prepared(catalog, manifest)
         print(json.dumps(row, sort_keys=True))
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
