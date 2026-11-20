@@ -145,7 +145,6 @@ def provision(client, bootstrap):
         if error.code != 404:
             raise
         write_password(client, token, 0)
-    save(AUTH / 'ca.pem', (TLS / 'ca.pem').read_text())
 
 
 def write_password(client, token, version):
@@ -199,6 +198,10 @@ def start():
         PENDING.unlink()
     elif not (AUTH / 'secret-id').is_file() or not (OPERATOR / 'secret-id').is_file():
         raise RuntimeError('Local AppRole files are missing. Restore the protected operator backup.')
+    ca = (TLS / 'ca.pem').read_text()
+    gateway_ca = AUTH / 'ca.pem'
+    if not gateway_ca.exists() or gateway_ca.read_text() != ca:
+        save(gateway_ca, ca)
     print('Local OpenBao is initialized and unsealed.')
 
 

@@ -38,7 +38,11 @@ python3 scripts/moyai-prepare.py --ui check
 python3 scripts/reconcile-agents.py --check
 ok "Local Moyai is healthy and legacy workspace agent registrations are absent"
 
-for port in 3000 4000 8000 8001 9090 12434; do
+ports=(3000 4000 8000 8001 9090 12434)
+if [[ ${LITELLM_UI_PASSWORD_SOURCE:-env} == openbao-local ]]; then
+  ports+=(8200)
+fi
+for port in "${ports[@]}"; do
   listeners=$(lsof -nP -iTCP:"$port" -sTCP:LISTEN 2>/dev/null || true)
   [[ -n "$listeners" ]] || die "Expected listener is missing on port $port"
   if grep -Eq '(\*:|0\.0\.0\.0:|\[::\]:)' <<< "$listeners"; then
