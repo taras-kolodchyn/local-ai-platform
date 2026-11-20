@@ -24,9 +24,14 @@ Set `QWEN_MODEL`, `EMBEDDING_MODEL` and `QWEN_CONTEXT_SIZE` in the ignored
 `.env`. Missing fields take their defaults from `.env.example`. On startup,
 bootstrap renders the English descriptions and DMR bindings into
 `.local/litellm/config.yaml` and the model preparation script records the
-embedding artifact identity for retrieval. LiteLLM is recreated to load the
-rendered configuration. Run `make smoke-test` after changing a model to exercise
-its actual route and check what the dashboard API returns.
+embedding artifact identity for retrieval. A service-specific environment file
+records the SHA-256 of the rendered YAML. Compose picks up changes to model
+descriptions and other gateway settings in the same step that starts LiteLLM.
+Repeated `make up` keeps healthy LiteLLM and retrieval containers running when
+their inputs match. Retrieval reads its client key per request. Startup checks
+its mounted keys after provisioning and rebinds them if their contents differ.
+Every `make up` still runs the route and dashboard smoke checks.
+[Compose startup behavior](https://docs.docker.com/reference/cli/docker/compose/up/) ·
 [Model resolver](../scripts/model-config.py) · [Version and alias matrix](capability-matrix.md)
 
 In status output, requested context comes from platform configuration, artifact

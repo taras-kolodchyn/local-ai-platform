@@ -23,8 +23,8 @@ CORPUS = tuple('scripts/' + name + '.sh' for name in (
 # Each answer must be supported by a cited source line actually shown to the model.
 CASES = {
     'local-service': (
-        'Which service does scripts/up.sh explicitly force-recreate? Return the service name.',
-        ['litellm'], [('scripts/up.sh', '--force-recreate')]),
+        'Which service can scripts/up.sh force-recreate when its mounted key files differ? Return the service name.',
+        ['retrieval'], [('scripts/up.sh', '--force-recreate')]),
     'local-poll': (
         'In scripts/ensure-docker.sh, how many attempts are made after opening Docker Desktop, and how many '
         'seconds separate attempts? Return both integers in order and cite both settings.',

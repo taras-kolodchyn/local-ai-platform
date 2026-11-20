@@ -1,4 +1,5 @@
 """Exercise model rendering and read-only status against controlled Docker replies."""
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -95,6 +96,33 @@ class ModelConfigurationTests(unittest.TestCase):
         self.assertIn('model: "openai/fixture/new-coder:Q8"', text)
         self.assertIn('model: "openai/fixture/new-embed:F16"', text)
         self.assertIn('max_input_tokens: 32768', text)
+
+    def test_compose_recreates_only_services_with_changed_inputs(self):
+        self.configure()
+        shutil.copy(ROOT / 'compose.yaml', self.root / 'compose.yaml')
+        shutil.copy(ROOT / 'scripts/compose.sh', self.root / 'scripts/compose.sh')
+        def hashes():
+            result = self.run_config('render')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            generated = self.root / '.local'
+            identity = (generated / 'litellm-config.env').read_text().strip()
+            expected = hashlib.sha256((generated / 'litellm/config.yaml').read_bytes()).hexdigest()
+            self.assertEqual(identity, f'LOCAL_AI_CONFIG_SHA256={expected}')
+            output = subprocess.check_output(['bash', 'scripts/compose.sh', 'config', '--hash', '*'],
+                                             cwd=self.root, text=True)
+            return dict(line.split() for line in output.splitlines())
+
+        initial = hashes()
+        self.assertEqual(hashes(), initial)
+        template = self.root / 'litellm/config.yaml'
+        template.write_text(template.read_text().replace('Local CPU cross-encoder', 'Updated CPU cross-encoder'))
+        edited = hashes()
+        self.assertEqual({k for k in initial if initial[k] != edited[k]}, {'litellm'})
+        self.configure('RETRIEVAL_MAX_LIMIT=8\n')
+        env_changed = hashes()
+        self.assertNotEqual(env_changed['retrieval'], edited['retrieval'])
+        self.assertEqual(env_changed['litellm'], edited['litellm'])
+        self.assertEqual(hashes(), env_changed)
 
     def test_unquoted_hash_is_not_silently_truncated_into_a_different_reference(self):
         self.configure('QWEN_MODEL=fixture/coder:tag#not-a-shell-comment\n')
