@@ -137,6 +137,10 @@ services:
     entrypoint: ["/bin/sh", "-ec"]
     command:
       - litellm --config /etc/local-ai/litellm/config.yaml --port 4000 --num_workers 1 2>&1 | tee -a /var/log/local-ai/litellm.log
+    # Include the rendered YAML's content in Compose's service configuration.
+    env_file:
+      - path: ./.local/litellm-config.env
+        required: false
     environment:
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?run make bootstrap}
       LITELLM_SALT_KEY: ${LITELLM_SALT_KEY:-${LITELLM_MASTER_KEY}}

@@ -42,6 +42,9 @@ elif component == 'docker' and args[0] == 'compose':
                 state['workspace'] = state['connected'] = False
             if '--volumes' in args:
                 state['volumes'] = []
+    elif 'exec' in args and 'cmp' in args:
+        if os.getenv('STALE_MOUNT') in args:
+            error = 1
     elif 'up' in args:
         state['core'] = True
         state['gateway_models'] = [os.getenv('QWEN_MODEL'), os.getenv('EMBEDDING_MODEL')]
@@ -69,6 +72,9 @@ class PlatformLifecycleTests(unittest.TestCase):
         self.root = Path(self.temporary.name)
         self.scripts = self.root / 'scripts'
         self.scripts.mkdir()
+        (self.root / '.local').mkdir()
+        for name in ('litellm-api-key', 'vector-backend-key'):
+            (self.root / '.local' / name).write_text('fixture-key')
         shutil.copy(ROOT / 'Makefile', self.root / 'Makefile')
         for name in ('lib.sh', 'up.sh', 'down.sh', 'compose.sh'):
             if (ROOT / 'scripts' / name).exists():
@@ -126,14 +132,28 @@ class PlatformLifecycleTests(unittest.TestCase):
     def test_up_fails_when_the_required_moyai_start_fails(self):
         self.assertNotEqual(self.run_make('up', FAIL_MOYAI='1').returncode, 0)
 
-    def test_up_refreshes_gateway_configuration_even_when_its_model_environment_is_unchanged(self):
-        result = self.run_make('up')
-        self.assertEqual(result.returncode, 0, result.stderr)
-        reloads = [call for call in self.calls() if call[:3] == ['docker', 'compose', 'up']
-                   and 'litellm' in call and '--force-recreate' in call and '--no-deps' in call]
-        self.assertEqual(len(reloads), 1)
-        self.assertLess(self.calls().index(reloads[0]),
-                        self.calls().index(['dependency', 'provision-client-key.sh']))
+    def test_repeat_up_only_reconciles_core_once_and_runs_smoke(self):
+        for _ in range(2):
+            self.events.write_text('')
+            result = self.run_make('up')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            up = [c for c in self.calls() if c[:3] == ['docker', 'compose', 'up']]
+            self.assertEqual(up, [['docker', 'compose', 'up', '--detach', '--build', '--wait', '--wait-timeout', '420']])
+            self.assertNotIn(['docker', 'compose', 'restart', 'retrieval'], self.calls())
+            self.assertIn(['dependency', 'smoke-test.sh'], self.calls())
+
+    def test_up_rebinds_stale_retrieval_key_after_provisioning(self):
+        for mount in ('litellm_client_key', 'vector_backend_key'):
+            with self.subTest(mount=mount):
+                self.events.write_text('')
+                result = self.run_make('up', STALE_MOUNT='/run/secrets/' + mount)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                calls = self.calls()
+                refresh, = [c for c in calls if '--force-recreate' in c]
+                self.assertEqual(refresh[-1], 'retrieval')
+                self.assertIn('--no-deps', refresh)
+                self.assertLess(calls.index(['dependency', 'provision-client-key.sh']), calls.index(refresh))
+                self.assertLess(calls.index(refresh), calls.index(['dependency', 'smoke-test.sh']))
 
     def test_restart_uses_the_same_ordered_shutdown_and_complete_startup(self):
         result = self.run_make('restart')

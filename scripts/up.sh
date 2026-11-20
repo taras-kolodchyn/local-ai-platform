@@ -12,17 +12,15 @@ info "Building and starting pinned Compose services..."
 docker compose up --detach --build --wait --wait-timeout 420
 ok "Container health checks passed"
 
-# Rendered file changes do not change Compose's service hash. Recreate the
-# gateway so context/description-only edits and replaced bind files are loaded.
-docker compose up --detach --force-recreate --no-deps --wait --wait-timeout 120 litellm
-
 bash scripts/provision-client-key.sh
 python3 scripts/provision-metrics-key.py
 
-# Retrieval reads the key file for each embedding request, but restarting makes
-# the credential transition explicit and keeps future implementations honest.
-docker compose restart retrieval >/dev/null
-docker compose up --detach --wait --wait-timeout 120 retrieval >/dev/null
+# Retrieval reads keys on demand. An atomically replaced host file can leave a
+# single-file bind mount on the old inode until the container is recreated.
+if ! docker compose exec -T retrieval cmp -s /run/secrets/litellm_client_key - < .local/litellm-api-key ||
+   ! docker compose exec -T retrieval cmp -s /run/secrets/vector_backend_key - < .local/vector-backend-key; then
+  docker compose up --detach --no-deps --force-recreate --wait --wait-timeout 120 retrieval
+fi
 
 # Stop old profile containers and retire their routes. Data removal is a separate
 # explicit migration; ordinary startup keeps Moyai as the single default agent.

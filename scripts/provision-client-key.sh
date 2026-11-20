@@ -10,7 +10,10 @@ admin_key=$(read_admin_key)
 write_client_env() {
   local key=$1
   umask 077
-  printf '%s' "$key" > .local/litellm-api-key
+  # Leave a valid live mount readable throughout repeated startup.
+  if ! printf '%s' "$key" | cmp -s .local/litellm-api-key -; then
+    printf '%s' "$key" > .local/litellm-api-key
+  fi
   printf 'export LITELLM_API_KEY=%q\n' "$key" > .local/client.env
   chmod 600 .local/litellm-api-key .local/client.env
 }

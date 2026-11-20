@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Resolve public model settings and render LiteLLM YAML without dependencies."""
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -98,6 +99,20 @@ def resolve(root=ROOT):
     return {'configuration_source': source, 'models': models}
 
 
+def write_if_changed(destination, content):
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if destination.is_file() and not destination.is_symlink() and destination.read_bytes() == content:
+        destination.chmod(0o600)
+        return
+    descriptor, temporary = tempfile.mkstemp(prefix='.config-', dir=destination.parent)
+    try:
+        with os.fdopen(descriptor, 'wb') as stream:
+            stream.write(content)
+        os.replace(temporary, destination)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+
+
 def render(root=ROOT, output=None):
     configuration = resolve(root)
     chat, embedding = configuration['models']
@@ -116,18 +131,11 @@ def render(root=ROOT, output=None):
             raise ValueError(f'LiteLLM template must contain exactly one {marker} marker')
         template = template.replace(marker, value)
     destination = output or root / '.local/litellm/config.yaml'
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    if destination.is_file() and not destination.is_symlink() and destination.read_text(encoding='utf-8') == template:
-        destination.chmod(0o600)
-        return destination
-    descriptor, temporary = tempfile.mkstemp(prefix='.config-', dir=destination.parent)
-    try:
-        with os.fdopen(descriptor, 'w', encoding='utf-8') as stream:
-            stream.write(template)
-        os.replace(temporary, destination)
-    finally:
-        if os.path.exists(temporary):
-            os.unlink(temporary)
+    content = template.encode('utf-8')
+    write_if_changed(destination, content)
+    if output is None:
+        digest = hashlib.sha256(content).hexdigest()
+        write_if_changed(root / '.local/litellm-config.env', f'LOCAL_AI_CONFIG_SHA256={digest}\n'.encode())
     return destination
 
 
@@ -144,18 +152,7 @@ def write_runtime_identity(root=ROOT, *, inspect=None):
     if not isinstance(artifact, str) or not re.fullmatch(r'sha256:[a-f0-9]{64}', artifact):
         raise ValueError('Embedding artifact identity is unavailable')
     path = root / '.local/model-runtime.env'
-    path.parent.mkdir(parents=True, exist_ok=True)
-    value = 'EMBEDDING_ARTIFACT_ID=' + artifact + '\n'
-    if not path.is_file() or path.read_text() != value:
-        descriptor, temporary = tempfile.mkstemp(prefix='.runtime-', dir=path.parent)
-        try:
-            with os.fdopen(descriptor, 'w') as stream:
-                stream.write(value)
-            os.replace(temporary, path)
-        finally:
-            if os.path.exists(temporary):
-                os.unlink(temporary)
-    path.chmod(0o600)
+    write_if_changed(path, f'EMBEDDING_ARTIFACT_ID={artifact}\n'.encode())
     return path
 
 
