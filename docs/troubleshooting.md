@@ -1,196 +1,142 @@
 # Troubleshooting
 
-Start with:
+Run these from the checkout used for `make up`. The two Compose projects have
+separate container and log inventories.
 
 ```sh
 make doctor
 make status
-docker compose ps
-docker compose logs --tail=200 SERVICE
+docker compose ps -a
+make moyai-status
 ```
 
-Generated keys are never printed by these commands.
+## Docker Desktop or Model Runner is unavailable
 
-## Docker Desktop UI is open but the daemon is unavailable
-
-Symptom: `Cannot connect to the Docker daemon` while Docker Desktop processes exist.
-
-Use the supported lifecycle commands first:
+Check the daemon and the runner separately. `docker model version` can print a
+client version even when its server is unreachable.
 
 ```sh
 docker desktop status
-docker desktop restart --timeout 240
-```
-
-If the restart cannot stop stale processes and `docker info` already fails, a forced application stop followed by a normal start does not delete images or volumes:
-
-```sh
-docker desktop stop --force --timeout 60
-docker desktop start --timeout 240
 docker info
-```
-
-Do not use Docker Desktop's factory reset for this symptom.
-
-## Model Runner is unavailable
-
-```sh
 docker model version
-docker desktop enable model-runner --tcp=12434
 docker model status
-docker model list
 ```
 
-On macOS, the DMR engine is a host-sandboxed process, not a Linux container. An ordinary Compose service cannot gain Metal access by adding a device mapping.
+Start Docker Desktop if needed. If the daemon is unresponsive, Docker Desktop's
+restart affects every Docker workload on the Mac. Once the daemon is reachable,
+`make pull-model` enables host TCP on port 12434, pulls the configured DMR
+models, verifies the MiniLM files and applies the model configuration. Re-run it
+after an interrupted pull, then start the platform with `make up`.
+[DMR setup](https://docs.docker.com/ai/model-runner/get-started/) ·
+[Model preparation](../scripts/pull-model.sh)
 
 ## Containers stopped but models still occupy memory
 
-Use `make down` for the complete lifecycle. Calling `docker compose down`
-directly affects only the selected Compose project and does not unload
-host-side models. The supported command stops Moyai and all platform clients
-before invoking `docker model unload` for the two configured models.
+`docker compose down` stops only the selected project. Use `make down` to
+stop both projects and unload the two configured DMR models. Check
+`docker model ps` for residency. `docker model list` includes model artifacts on
+disk. If shutdown reports a failure, fix the reported service or runner error
+and retry `make down`. [Shutdown implementation](../scripts/down.sh) ·
+[Docker model unload](https://docs.docker.com/reference/cli/docker/model/unload/)
 
-Check `docker model ps` for resident models; `docker model list` shows downloaded
-artifacts on disk, which are deliberately preserved. Unrelated loaded models are
-left alone. If shutdown reports an error, resolve it and retry `make down`; its
-nonzero exit means complete cleanup was not confirmed. macOS file cache and
-Docker Desktop's VM can remain allocated independently of the inference runners.
-
-## A model pull is interrupted
-
-Run `make pull-model` again. DMR resumes or verifies content-addressed layers. Avoid deleting Docker data while diagnosing a partial pull.
-
-## LiteLLM is unhealthy
+## The gateway is unhealthy or an alias fails
 
 ```sh
-docker compose logs --tail=200 litellm
 docker compose config --quiet
+docker compose ps -a litellm postgres redis reranker
+docker compose logs --tail=100 litellm reranker
 curl -fsS http://127.0.0.1:4000/health/liveliness
 ```
 
-Common causes are an invalid LiteLLM config, unavailable PostgreSQL/Redis, an unready DMR endpoint, or a model alias/artifact mismatch. Client names are `local-qwen` and `local-embeddings`; DMR artifact names should not leak into client config.
+LiteLLM waits for healthy PostgreSQL, Redis and reranker services. If MiniLM
+fails to load its model or tokenizer, repeat `make pull-model` to restore the
+pinned files. If gateway liveness succeeds but chat or embeddings fail, check
+the DMR server and resolved references with `make status FORMAT=json`. Run
+`make up` after changing `.env` to render and load the active routing config,
+then use `make smoke-test` to check model bindings, output and dashboard access.
+[Capability and version matrix](capability-matrix.md)
 
-## Responses API chat works but tools do not
+The analysis choice in Moyai's model picker is an agent profile.
+OpenAI-compatible clients send `local-qwen` for generation,
+`local-embeddings` for embeddings or `local-reranker` for ranking.
+[Moyai model profiles](moyai-local.md)
 
-Confirm `use_chat_completions_api: true` remains on `local-qwen`, then run `make smoke-test`. A plain text completion is not proof of Responses tool compatibility. The smoke test forces a function call and sends the tool result back through the bridge.
+## Chat works but a Responses tool result fails
 
-For the second request, send only the `function_call_output` and the first
-response's `previous_response_id`. Replaying the initial `function_call` caused
-the Qwen llama.cpp template to fail while the previous-response sequence passed.
+The gateway template sets `use_chat_completions_api: true` on `local-qwen`.
+For the follow-up request, set `previous_response_id` to the first response's
+`id` and send the `function_call_output` item with its original `call_id`. The smoke suite
+checks the whole round trip and separately checks a streamed Responses call.
+[Working request shapes](../scripts/smoke-test.sh) ·
+[LiteLLM Responses bridge](https://docs.litellm.ai/docs/response_api)
 
-## A loopback port is configured but nothing is listening
+## A dashboard rejects the configured login
 
-Docker Desktop cannot publish a host port from a container attached only to
-Compose networks marked `internal: true`. Keep the service's isolated network,
-but also attach the narrow `mcp-host` or `observability-host` bridge used in this
-repository. Confirm the effective bind rather than trusting Compose YAML:
+LiteLLM uses `UI_USERNAME` (default `admin`) and `UI_PASSWORD` (defaults to
+the master key). Grafana's initial admin password is persisted in its volume.
+Changing `GRAFANA_ADMIN_PASSWORD` on an existing installation can leave the
+stored password out of sync. Follow the password-update command and re-run
+`make smoke-test` to verify fresh sessions.
+[Dashboard login procedure](../README.md#shared-dashboard-login-optional)
 
-```sh
-docker compose port grafana 3000
-lsof -nP -iTCP:3000 -sTCP:LISTEN
-```
+## A loopback port is unreachable or MCP returns 421
 
-## MCP returns 421 from a Docker service name
+Compare the effective host binding and listener. For example, run
+`docker compose port grafana 3000` and `lsof -nP -iTCP:3000 -sTCP:LISTEN`.
+The core configuration attaches Grafana and Prometheus to the
+`observability-host` bridge and offline MCP to `mcp-host`. The Moyai UI
+uses its own bridge on port 8787. [Network layout](architecture.md#deployment-and-observability)
 
-The Python MCP SDK enables DNS-rebinding protection. The offline servers retain
-that protection and explicitly allow their Compose hostnames (`retrieval:*` and
-`mcp-tools:*`). Do not disable the guard globally. If you rename a service,
-update the narrow allowed-host list and rerun `make smoke-test`.
+HTTP 421 from an MCP service can indicate a host outside its DNS-rebinding
+allowlist. Check the service URL in LiteLLM and the allowed hosts on the
+destination. Use the tool names returned by `tools/list` through LiteLLM,
+for example `local_retrieval-search_code`. [Gateway MCP configuration](../litellm/config.yaml)
 
-LiteLLM's MCP route streams SSE and prefixes the remote tool name with the
-registered server name. Clients should use names such as
-`local_retrieval-search_code`, not assume the bare `search_code` name.
+## Retrieval returns stale or incompatible results
 
-## Re-running `make up` reports a duplicate key alias
-
-Provisioning is idempotent: it validates and reuses the existing local client
-key. Do not create a second key with the same alias. If the local key files and
-LiteLLM database were intentionally reset out of sync, use the guarded reset
-workflow and bootstrap again instead of editing secrets by hand.
-
-## Embeddings fail or pgvector rejects a row
-
-The selected Qwen embedding model must return 1024 finite values. Check the configured model, `EMBEDDING_DIMENSIONS`, and the database schema together; changing only one of them is not a migration.
-
-## Retrieval returns stale content
-
-Run the incremental command again:
-
-```sh
-make index REPO=/absolute/path
-```
-
-Use `make reindex REPO=/absolute/path` only when deliberately rebuilding that repository/branch snapshot. It does not remove other repositories.
-
-## Grafana has no logs
-
-Check `.local/logs`, Alloy, and Loki in that order. Alloy reads explicit metadata-only files and is intentionally not given the Docker socket:
-
-```sh
-ls -l .local/logs
-docker compose logs --tail=100 alloy loki
-```
+`make index REPO=/absolute/path` incrementally refreshes the repository/branch
+index. A Moyai repository chat stays on its attached snapshot and indexed
+generation. To work on new source, register the updated checkout and attach the
+new version to a new task. A changed embedding artifact can also require fresh
+registration or reindexing. The default schema uses vectors of 1,024 dimensions.
+[Search and scoring](platform-operations.md#hybrid-retrieval) ·
+[Repository tasks](repository-workflow.md)
 
 ## Startup reaches MCP checks but monitoring is not ready
 
-After retrieval restarts, Prometheus can retain its previous failed scrape until
-the next collection (configured every 15 seconds). Container health and scrape
-health are separate checks. The smoke test waits up to 60 seconds for monitoring,
-requires a nonempty healthy target list, and reports the failing endpoint or
-target's last scrape error if that deadline expires.
+Run `bash scripts/check-observability.sh`. The default deadline is 60 seconds
+and Prometheus scrapes every 15 seconds. The check names the failing endpoint
+or reports the last scrape error. If `repository-context:8000` is missing, run
+`make moyai-status` and inspect the context service with
+`docker compose -f compose.moyai.yaml logs --tail=100 repository-context`.
+The context service must join the core observability network. `make up`
+checks that service again after provisioning the Moyai UI.
+[Scrape configuration](../observability/prometheus/prometheus.yml) ·
+[Readiness probe](../scripts/check-observability.sh)
 
-If Prometheus reports `repository-context:8000` with `no such host`, check the
-Moyai project's container with `make moyai-status` and look for a matching stop
-event in Docker. A local reranker experiment stopped that container and gave its
-replacement the same DNS alias only on Moyai's private network. Prometheus
-uses the observability network. For concurrent experiments, use a separate
-Compose project and network so the normal service stays reachable.
+For missing Grafana logs, check that `.local/logs/` contains service log
+files, then inspect `docker compose logs --tail=100 alloy loki`. Alloy tails
+the mounted log directory. [Alloy configuration](../observability/alloy/config.alloy)
 
-At the end of Moyai provisioning, `make up` starts the context service if needed
-and waits for its health check before reporting readiness. A healthy container
-keeps its ID. This was verified on 2026-11-19 with Docker Engine 29.9.3 and
-Compose 5.7.0. [Docker Compose up options](https://docs.docker.com/reference/cli/docker/compose/up/)
+## GitHub MCP is unavailable
 
-Repeat only the monitoring check with:
+Start the local platform, then follow the token and client-header steps in
+the connected-mode guide. `make connected-smoke` checks the nine advertised
+tools and log redaction. [Connected-mode runbook](connected.md)
 
-```sh
-bash scripts/check-observability.sh
-```
+## A host Python upgrade breaks the tests
 
-If the error persists, inspect the named target rather than resetting data.
-
-## Connected GitHub MCP is unavailable
-
-Connected mode is intentionally absent from `make up`. Verify that `.env.connected` contains a dedicated fine-grained read-only token, then run:
-
-```sh
-make connected-up
-docker compose --profile connected ps github-mcp
-make connected-smoke
-```
-
-Do not copy the token into an issue or logs. The smoke artifact contains tool names only and is written under ignored `.local/` storage.
+`make test` uses Python 3.11–3.14 and prefers 3.14. To select an installed
+supported interpreter, run `PYTHON=/opt/homebrew/bin/python3.14 make test`.
+The script recreates `.local/test-venv` if it contains an unsupported Python.
+[Test interpreter selection](../scripts/test-python.sh)
 
 ## Resetting local data
 
-`make clean` removes generated logs and Python bytecode but preserves keys, database volumes, and models. To stop both service groups and delete the core database, cache and monitoring volumes, run:
-
-```sh
-make reset CONFIRM_RESET=yes
-```
-
-Moyai conversation volumes and downloaded DMR models are preserved. Rebuild the knowledge index after resetting the core database.
-
-## Tests fail after a host Python upgrade
-
-The application supports Python 3.11–3.14. `make test` prefers `python3.14`,
-then tries the other supported minor versions and `python3`. Install a supported
-interpreter (for example, `brew install python@3.14`) or select one explicitly:
-
-```sh
-PYTHON=/opt/homebrew/bin/python3.14 make test
-```
-
-An explicit unsupported interpreter fails before package installation. An old
-`.local/test-venv` created with unsupported Python is rebuilt automatically;
-this directory contains generated test dependencies only.
+`make clean` truncates the core service log files and clears generated Python
+bytecode and coverage files under `retrieval/`. It preserves the volumes, keys
+and model artifacts. `make reset CONFIRM_RESET=yes` stops both projects and
+**deletes the core data volumes**, including the gateway database, knowledge
+index, Redis and monitoring data. Moyai's own volumes and the downloaded models
+are retained. Rebuild the index and registrations after a core reset.
+[Lifecycle targets](../Makefile)

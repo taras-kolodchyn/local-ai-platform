@@ -84,9 +84,16 @@ class RepositorySnapshotTests(unittest.TestCase):
 
     def test_guards_and_explicit_plain_mode(self):
         (self.root / 'linked.rs').symlink_to(self.root / 'src/lib.rs')
-        (self.root / 'secret.py').write_text('api_key="' + 'sk-' + 'x' * 30 + '"')
+        (self.root / 'secret.py').write_text('private = True')
+        (self.root / 'settings.py').write_text('api_key="' + 'sk-' + 'x' * 30 + '"')
         (self.root / '.env').write_text('secret')
-        self.assertEqual([f['path'] for f in self.prepare()['files']], ['Cargo.lock', 'src/lib.rs'])
+        (self.root / '.local').mkdir()
+        (self.root / '.local/key.json').write_text('private')
+        original = self.prepare()
+        self.assertEqual([f['path'] for f in original['files']], ['Cargo.lock', 'src/lib.rs'])
+        (self.root / 'src/lib.rs').unlink()
+        self.assertEqual([f['path'] for f in self.prepare()['files']], ['Cargo.lock'])
+        self.assertTrue((self.catalog / 'snapshots' / original['snapshot_id'] / 'source/src/lib.rs').is_file())
         plain = Path(self.temp.name) / 'plain'; plain.mkdir()
         (plain / 'app.py').write_text('print(1)')
         with self.assertRaises(ValueError):

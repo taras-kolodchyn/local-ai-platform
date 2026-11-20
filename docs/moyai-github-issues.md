@@ -1,57 +1,62 @@
-# Publish a verified change to an external repository
+# Publish a verified external change from a GitHub issue
 
-For ordinary access to GitHub, [connected mode](connected.md) exposes a read-only
-MCP connector. The separate foreground publisher on the Mac can open a draft PR
-for a supported external project. It checks the downloaded patch against the
-verified tree and scopes GitHub writes to one configured repository.
+The optional foreground publisher runs on the Mac. It can turn one open issue
+in a supported external repository into a draft PR using a checked Moyai patch.
+A fresh installation has no publication target. Start the publisher separately
+when you need it.
+For read-only GitHub access through MCP, use [connected mode](connected.md).
 
-## Select the project
+## Select the external project
 
-In the local, Git-ignored `.env`, set `MOYAI_GITHUB_REPOSITORY` to the exact
-`owner/name` on GitHub. Set `MOYAI_GITHUB_PROJECT_PATH` to the relative crate
-directory if the crate lives below the repository root. Run `make up` to apply the
-configuration to the controller. A fresh installation has no publication target.
+1. Run `make bootstrap` on a fresh installation. In the Git-ignored `.env`, set
+   `MOYAI_GITHUB_REPOSITORY` to the canonical `owner/name`. Set
+   `MOYAI_GITHUB_PROJECT_PATH` to the crate's relative directory, or leave it
+   empty for the repository root.
+2. Check that `main` is publicly cloneable over HTTPS. The publisher clones it
+   anonymously and pins the commit, even when the App is authenticated. The
+   crate must match one of the two protected Rust profiles. A private local
+   checkout can still be used for local search and registered tasks.
+   [Repository profiles and local registration](repository-workflow.md)
+3. Run `make up` to apply the target to the controller.
 
-The foreground publisher reads `main` through an anonymous HTTPS Git clone, so
-the source repository must be publicly cloneable. A private local checkout can
-still be indexed and registered through the local repository commands.
-The selected project must match the
-[protected verification profile](repository-workflow.md). It reads the issue,
-pins the base commit, verifies the source snapshot and reproduces the patch in a
-temporary Git index. Credentials stay on the Mac. For repository search alone,
-index a local checkout with `make index REPO=/absolute/path/to/project`.
+## Publish one draft PR
 
-## Open a draft PR
+1. Run `make github-app-setup` and open the loopback URL it prints. Register the
+   private App under the repository owner. Install it using **Only select
+   repositories** and select exactly the target repository. The App requests
+   read access to issues and write access to contents and pull requests. The Mac
+   holds its private key and verifies the installation before obtaining a token.
+   [Registration](../scripts/register-github-app.py) · [GitHub installation tokens](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-an-installation-access-token-for-a-github-app)
+2. Start `make github-app-issues ISSUE=N`, substituting the issue number.
+   The default profile repairs the retry policy. Add `PROFILE=rust-retry-tests`
+   to add coverage for an already-correct implementation.
+3. In a fresh **private** Moyai web conversation with the coding profile, submit
+   only the full GitHub issue URL. Keep the host command running. It downloads
+   the patch and receipts, checks the independent documentation review, and
+   reproduces the verified tree in a temporary Git index before it opens a
+   linked draft PR. Press Ctrl-C in the terminal to stop the publisher.
 
-1. Run `make github-app-setup` and open its loopback URL. Install the private App
-   on the selected repository using **Only select repositories**. The publisher
-   checks the installation's owner, permissions and repository before using it.
-2. Run `make github-app-issues ISSUE=N`, replacing `N` with the target issue
-   number. For the tests-only profile, add `PROFILE=rust-retry-tests`.
-3. Paste the full GitHub issue URL into a new private Moyai chat. The Mac host
-   checks the downloaded evidence, publishes the verified commit and returns
-   the linked draft PR. Stop the foreground publisher to end the session.
+To use the operator's signed-in GitHub CLI account for one issue, use
+`make github-issues ISSUE=N` in step 2. The publisher checks the authorized
+issue, pinned base and selected repository. The execution sandbox receives
+neither GitHub credential. The App client uses GitHub REST API version
+`2026-03-10` in the configuration checked on 2026-11-20.
+[Publisher implementation](../scripts/github-issues.py) · [App client](../scripts/github_app.py)
 
-To publish a single draft using the signed-in operator's GitHub CLI account,
-use `make github-issues ISSUE=N`. The App additionally supports
-`AUTO_MERGE=1` for a single issue when the destination supplies the expected
-CI workflow and permits the merge. The merge gate checks the PR head, its base
-and the completed CI run. [Publisher implementation](../scripts/github-issues.py)
+## Optional merge after CI
 
-## Developer and Verifier automations
+Grant `AUTO_MERGE=1` on the original single-issue App command only if the
+destination's CI and branch rules support the publisher's merge checks.
+Its `.github/workflows/ci.yml` must report a successful `pull_request` run with
+the display title `CI PR <number> head <head-sha> base <base-sha>` and a
+successful job named `test` on the verified head. The publisher rechecks the
+issue, PR, base and tree, marks the draft ready, and requests a merge commit.
+If interrupted after publication, restart with the same issue, profile and
+merge grant to reconcile the saved job. [CI and merge checks](../scripts/github-issues.py)
 
-For a scheduled issue-to-PR workflow, configure the two Moyai roles for the
-destination repository. Install the GitHub App there, choose the permitted paths
-and skills, and configure that repository's CI and merge rules before enabling
-its queue label. The platform's own CI tests the platform. Its installation does
-not enroll a project in the automation.
+## Native schedules
 
-The retired docs-only pilot records the handoffs from issue intake to
-independent review, merge and post-merge CI. Its Actions workflows and issue
-form are preserved at the last platform revision that ran them. They identify
-the original App and permitted path. [Completed pilot issue](https://github.com/taras-kolodchyn/local-ai-platform/issues/94) ·
-[Versioned workflow configuration](https://github.com/taras-kolodchyn/local-ai-platform/tree/5029427f3b0d228b3eafe52f41f3d6337575e4a2/.github)
-
-GitHub App authentication uses an installation token scoped to the selected
-repository. [Manifest registration](https://docs.github.com/en/apps/sharing-github-apps/registering-a-github-app-from-a-manifest) ·
-[Installation access tokens](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-an-installation-access-token-for-a-github-app)
+The retired pilot used two native Moyai schedules, Developer and Verifier,
+which were paused. This repository ships the foreground publisher and its own
+platform CI. An external project needs its own schedule configuration, GitHub
+permissions, CI and merge rules to run scheduled work. [Platform CI](../.github/workflows/ci.yml)

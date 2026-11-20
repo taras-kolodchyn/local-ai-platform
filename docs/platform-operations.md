@@ -1,119 +1,99 @@
-# Model configuration, verification and the single-agent stack
+# Platform operations
 
-Implemented and verified against the pinned stack on 2026-11-17: LiteLLM 1.109.1,
-Docker Model Runner 1.2.9, PostgreSQL 17 / pgvector 0.8.7. Per-run local receipts
-under `.local/verification/` record actual completion and failure status.
+## Start, inspect and stop
 
-## One active agent
+| Command | Effect |
+| --- | --- |
+| `make bootstrap` | Create or update ignored local configuration and secrets, and render the LiteLLM template. Use this before the first startup if you need to adjust the model context. |
+| `make up` | Prepare model artifacts, check the host, build and start core services, provision keys and Moyai skills, start Moyai and run the endpoint smoke checks. |
+| `make status FORMAT=json` | Read both projects' container state, configured DMR references, artifact metadata, residency and observable host memory. This works before bootstrap and reports unavailable inventories explicitly. |
+| `make logs` / `make moyai-status` | Follow core service logs or show the Moyai project's containers. |
+| `make down` | Stop Moyai, stop core services across profiles and unload the two configured DMR models. Persistent volumes and downloaded models survive. |
+| `make restart` | Run the complete stop/start cycle. |
 
-`make up` starts the core platform and local Moyai. It stops/removes previously
-running legacy workspace containers and retires their platform-owned LiteLLM A2A
-registrations. Existing independent gateway records are not deleted based on a
-matching display name alone. Knowledge registration and scoped retrieval remain
-available without the old Hermes-based development/review/research runtimes.
-
-Moyai is currently connected through its local UI link and the `local-qwen`
-inference alias. It does not pretend to expose an A2A endpoint. Additional agent
-management through LiteLLM is future work.
-
-Ordinary startup does not delete data. An explicit one-time cleanup is available:
-
-```sh
-make up
-python3 scripts/reconcile-agents.py --purge-data
-make down
-```
-
-The cleanup revokes only verified legacy profile/console keys, removes precisely
-`workspace_development_state`, `workspace_review_state`, and
-`workspace_research_state`, drops `workspace_memory` and its three private roles,
-and removes those profiles' local state, memory passwords and execution locks.
-Moyai conversations/files, the knowledge index and the provisioning key needed
-for knowledge registration remain intact. Key ownership or path mismatches fail
-the migration instead of guessing. This command permanently deletes legacy data.
+Run lifecycle commands from the checkout that owns the deployment. The default
+project names (`local-ai-platform` and `local-ai-moyai`) and host ports are shared
+across worktrees on the same Mac. The bind-mounted generated configuration and
+secrets belong to the checkout that started the services.
+[Core Compose project](../compose.yaml) · [Moyai project](../compose.moyai.yaml) ·
+[Lifecycle targets](../Makefile)
 
 ## Resolved models and status
 
-`.env` provides the selected runtime references and context. Missing model fields
-use `.env.example` defaults, consistently in the shell lifecycle and Python
-resolver; ambient variables cannot redirect one half of model management.
-`scripts/model-config.py` renders the tracked LiteLLM template into the ignored
-effective configuration. Client aliases remain stable across model changes.
-Descriptions and metadata follow the resolved reference; unknown models receive
-honest generic metadata rather than the previous model's name or parameter size.
+Set `QWEN_MODEL`, `EMBEDDING_MODEL` and `QWEN_CONTEXT_SIZE` in the ignored
+`.env`. Missing fields take their defaults from `.env.example`. On startup,
+bootstrap renders the English descriptions and DMR bindings into
+`.local/litellm/config.yaml` and the model preparation script records the
+embedding artifact identity for retrieval. LiteLLM is recreated to load the
+rendered configuration. Run `make smoke-test` after changing a model to exercise
+its actual route and check what the dashboard API returns.
+[Model resolver](../scripts/model-config.py) · [Version and alias matrix](capability-matrix.md)
 
-`make status FORMAT=json` is read-only and does not bootstrap secrets, start
-containers or load weights. A stopped stack is a normal status. Model inspection
-is restricted to safe metadata; tokenizer templates and credential values are
-excluded. Artifact disk size, requested context, artifact context metadata, host
-capacity and observed process RSS are distinct values. Runtime context and Metal
-allocations are explicitly unavailable when the runtime does not expose them.
-
-Docker documents that model inspection does not establish the effective
-[runtime context](https://docs.docker.com/ai/model-runner/configuration/).
-English descriptions are [LiteLLM deployment metadata](https://docs.litellm.ai/docs/proxy/ui_store_model_db_setting).
-
-## Complete verification
-
-```sh
-make verify
-```
-
-The ordered phases are lint, platform unit and database tests, startup, JSON
-status, live endpoint checks, and native Moyai sandbox acceptance with a service
-restart. Supply `REPO=/absolute/path/to/compatible-crate` to add verification
-against a clean external checkout. [Repository registration and supported profile](repository-workflow.md)
-
-The finalizer always attempts shutdown and independently checks owned project
-containers and configured resident models. Failures, cleanup failures and
-unavailable inventories are unsuccessful results. Unrelated Docker projects or
-models are preserved. Private logs and JSON phase results are kept under
-`.local/verification/`; do not commit this directory.
+In status output, requested context comes from platform configuration, artifact
+context comes from inspectable model metadata and process RSS comes from macOS.
+Effective runtime context and per-model Metal allocation are reported as
+unavailable. Use `docker model ps` to inspect resident models and
+`docker model list` for downloaded artifacts. [DMR configuration](https://docs.docker.com/ai/model-runner/configuration/) ·
+[Status implementation](../scripts/model-status.py)
 
 ## Hybrid retrieval
 
-The shared query takes bounded semantic candidates from pgvector and keyword
-candidates from PostgreSQL full-text search with the `simple` configuration.
-The lexical index includes paths, symbols and content and is updated by the
-database when chunks change. Both candidate lists apply identical repository,
-branch, exact-path and path-prefix restrictions before ranking.
+`make index REPO=/absolute/path` updates the searchable repository/branch
+index, reusing compatible embeddings for unchanged chunks. `make reindex`
+with the same argument rebuilds that index. Use `make repository-add` for a
+supported checkout when a Moyai task needs an immutable source snapshot and a
+pinned indexed generation. [Repository registration and supported inputs](repository-workflow.md)
 
-Results are deduplicated and fused with reciprocal rank fusion (RRF, constant
-60), with stable tie-breaking. The existing context-character and result-count
-limits still apply. Raw `similarity` remains cosine similarity; `relevance` is
-the raw RRF score. Vector-store API scores normalize RRF by `61 / 2`, capped to
-`[0,1]`; a first-ranked hit from one channel scores 0.5. `score_threshold` applies
-to that normalized hybrid ranking signal. Diagnostic attributes distinguish
-`score_kind`, `rrf_relevance` and `cosine_similarity`.
+The query combines bounded cosine candidates from pgvector with full-text
+matches on paths, symbols and content. Both channels apply the same scope
+restrictions before reciprocal rank fusion (RRF). A rank `r` contributes
+`1/(60+r)` in each channel where the chunk appears. The vector-store
+`score_threshold` applies to the fused score multiplied by `61/2` and clamped
+to `[0,1]`. A first-place match in just one channel scores 0.5. Results also
+carry the raw RRF and cosine similarity as separate attributes.
+[Hybrid query](../retrieval/src/local_ai_retrieval/db.py) ·
+[PostgreSQL 17 text search](https://www.postgresql.org/docs/17/textsearch-controls.html) ·
+[pgvector hybrid search](https://github.com/pgvector/pgvector#hybrid-search)
 
-Tests use deterministic vectors and real disposable PostgreSQL to verify exact
-symbols/paths/errors beyond the semantic candidate pool, scope isolation,
-semantic-only hits, bounded citations, stable ranking and migration idempotence.
-They do not require model weights and are not skipped in CI.
+Moyai's context bridge requests automatic ranking within the attached
+generation. The backend considers up to 48 hybrid results, optionally reranks
+implementation excerpts with MiniLM, then packs the selected chunks into the
+configured source budget (at most 24,000 characters). The returned score still
+describes the hybrid rank. The context bridge checks the scope and source
+coordinates before returning excerpts to the task.
+[Candidate selection](../retrieval/src/local_ai_retrieval/moyai_search.py) ·
+[Context bridge](../integrations/moyai/context_bridge.py)
 
-Upstream: [PostgreSQL 17 text search](https://www.postgresql.org/docs/17/textsearch-controls.html),
-[pgvector hybrid retrieval](https://github.com/pgvector/pgvector#hybrid-search).
+## Verification
 
-## Repository workflow verification — 2026-11-17
+```sh
+make lint
+make test
+make smoke-test
+```
 
-The expanded `make verify` passed all eight phases, including 325 Python/DB
-checks, two Rust tests, actual native Moyai acceptance, and two fresh repository
-tasks with restart persistence. Together with the first accepted development
-run, three final-implementation local-model cycles returned independently
-verified patches. Shutdown inventory was empty for owned containers and configured
-resident models. See the [versioned results and limits](https://github.com/taras-kolodchyn/local-ai-platform/blob/5029427f3b0d228b3eafe52f41f3d6337575e4a2/docs/results/repository-workflow-2026-11-17.md).
+The live smoke suite requires the running stack. `make vector-smoke` repeats
+the scoped vector-store citation and access checks. `make moyai-smoke RESTART=1`
+exercises native workspace actions, tests, artifact delivery and restart
+persistence. [Endpoint checks](../scripts/smoke-test.sh) · [Moyai runbook](moyai-local.md)
 
-## Earlier unified-lifecycle verification — 2026-11-17
+`make verify` runs lint, tests, startup, JSON status, endpoint smoke and Moyai
+acceptance with a restart. Supply `REPO=/absolute/path/to/compatible-crate` to
+add the repository-specific acceptance phase. The finalizer attempts shutdown
+even after a failure and independently checks for remaining containers from
+either project and for configured models still resident in DMR. Each run writes
+private phase logs and a `result.json` in its own directory under
+`.local/verification/`. [Verification runner](../scripts/verify.py)
 
-The complete `make verify` run passed lint, 159 Python/DB checks and 2 Rust
-tests, startup, live model-binding checks, JSON status, endpoint smoke and real
-Moyai file/shell/pytest/artifact acceptance with restart persistence and separate
-conversation directories. All seven phase exit codes were zero. Final independent
-status showed no owned containers, no resident models and no inference-process
-RSS entries.
+## Upgrading installations with retired workspace agents
 
-The explicit cleanup removed the three legacy state volumes, `workspace_memory`
-and its three roles, the three local profile directories and four dedicated keys.
-Live queries confirmed zero legacy A2A registrations and retained scoped
-knowledge access. No new model was downloaded or selected. Repository changes
-remain local until separately committed/published.
+Moyai is the only agent started by `make up`. The `execution/` tree contains the
+earlier workspace runtime and its database-isolation tests, which still run in CI.
+
+During startup, reconciliation stops old development, review and research
+containers and removes their platform-owned LiteLLM agent registrations. Moyai
+uses its local UI integration. If an old installation still needs permanent
+removal of those profiles' data, the explicit `--purge-data` migration revokes
+their verified keys and removes the old state volumes, profile files and
+`workspace_memory` database and roles. Review its scope before invoking it
+against a running platform. [Migration implementation](../scripts/reconcile-agents.py)

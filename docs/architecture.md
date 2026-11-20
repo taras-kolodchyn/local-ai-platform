@@ -1,186 +1,95 @@
 # Architecture
 
-Status: accepted for MVP
-Last verified: 2026-07-20
-
-## Goals and boundaries
-
-The platform gives local coding agents a stable OpenAI-compatible endpoint while keeping the inference runtime, caching, retrieval, tool access, and observability replaceable. The MVP targets Apple Silicon and defaults to no internet-dependent tools after model artifacts and container images have been pulled.
-
-The platform does not grant a Linux container direct Metal access. Docker Model Runner executes llama.cpp through Docker Desktop's macOS host integration and exposes it to the Compose network.
-
-Current operational changes (2026-11-17): Moyai is the single default active
-agent. The former workspace A2A profiles
-are retired. Model routing is generated from resolved `.env` settings and
-retrieval combines vector and full-text search. See [platform operations](platform-operations.md).
-Registered [repository tasks](repository-workflow.md) add immutable source and
-embedding generations, scoped context MCP and a controller-owned verification
-ledger to the same native Moyai runtime.
-
-## Component view
-
-```mermaid
-flowchart TB
-    subgraph Host["Apple Silicon macOS host"]
-        Other["Other OpenAI-compatible clients"]
-        DMR["Docker Model Runner\nllama.cpp + Metal"]
-        Qwen["Qwen3-Coder 30B-A3B\nQwen3-Embedding 0.6B"]
-        DMR --> Qwen
-    end
-
-    subgraph Compose["Docker Compose - isolated Linux networks"]
-        LiteLLM["LiteLLM AI Gateway\n127.0.0.1:4000"]
-        Moyai["Local Moyai\ndefault agent + SSH sandbox + Temporal"]
-        RepositoryContext["Read-only repository context MCP\npinned snapshot + generation"]
-        Redis["Redis response cache"]
-        Postgres["PostgreSQL + pgvector"]
-        Ingestion["Ingestion CLI/worker"]
-        Retrieval["Retrieval API + MCP server"]
-        OfflineTools["Read-only filesystem/Git/Postgres MCP"]
-        GitHubMCP["GitHub MCP\nconnected profile only"]
-        Prometheus["Prometheus"]
-        Loki["Loki"]
-        Alloy["Grafana Alloy"]
-        Grafana["Grafana"]
-
-        LiteLLM --> Redis
-        Moyai --> LiteLLM
-        Moyai --> RepositoryContext
-        RepositoryContext -->|"separate scoped search key"| LiteLLM
-        LiteLLM --> Postgres
-        Ingestion --> LiteLLM
-        Ingestion --> Postgres
-        Retrieval --> LiteLLM
-        Retrieval --> Postgres
-        LiteLLM --> Retrieval
-        LiteLLM --> OfflineTools
-        LiteLLM -.-> GitHubMCP
-        Prometheus --> LiteLLM
-        Prometheus --> Retrieval
-        Alloy --> Loki
-        Grafana --> Prometheus
-        Grafana --> Loki
-    end
-
-    Other --> LiteLLM
-    LiteLLM -->|"host.docker.internal:12434"| DMR
-    GitHubMCP -. "explicit opt-in" .-> GitHub["GitHub API"]
-```
-
-## Request path
-
-```mermaid
-sequenceDiagram
-    participant A as Coding agent
-    participant L as LiteLLM
-    participant C as Redis cache
-    participant M as MCP Gateway
-    participant R as Retrieval service
-    participant P as pgvector
-    participant Q as Qwen via DMR
-
-    A->>L: POST /v1/responses model=local-qwen
-    L->>C: Lookup response cache key
-    alt safe exact cache hit
-        C-->>L: Cached response
-    else miss or cache disabled
-        opt agent requests retrieval tool
-            L->>M: MCP tool call under allowlist
-            M->>R: search_code(query, filters, limits)
-            R->>L: POST /v1/embeddings model=local-embeddings
-            L->>Q: OpenAI-compatible embeddings request
-            Q-->>L: 1024-dimensional vector
-            L-->>R: vector
-            R->>P: Bounded vector + full-text search with scope filters and rank fusion
-            P-->>R: bounded chunks
-            R-->>M: paths, metadata, excerpts
-            M-->>L: tool result
-        end
-        L->>Q: bridged chat-completions request
-        Q-->>L: streamed tokens / tool calls
-        L-->>A: Responses API stream
-    end
-```
-
-## Retrieval pipeline
+The platform runs on one Apple Silicon Mac. LiteLLM is the client-facing gateway.
+Docker Model Runner (DMR) serves generation and embeddings with llama.cpp on the
+macOS host, where it can use Metal. MiniLM reranks source excerpts on a container
+CPU. See the [runtime decision](adr/0001-inference-runtime.md) and the
+[component versions](capability-matrix.md).
 
 ```mermaid
 flowchart LR
-    Repo["Git repository or docs"] --> Scan["Scanner\n.gitignore + allowlist"]
-    Scan --> Guard["Secret/generated-file exclusions"]
-    Guard --> Chunk["Deterministic chunker"]
-    Chunk --> Hash["Content + metadata hash"]
-    Hash --> Embed["local-embeddings alias"]
-    Embed --> Store["pgvector + metadata"]
-    Store --> Search["HNSW + full-text candidates\nreciprocal rank fusion"]
-    Search --> Limit["Top-k + total-character budget"]
-    Limit --> MCP["read-only retrieval MCP tool"]
+    Client["OpenAI-compatible client"] --> G["LiteLLM"]
+    Browser["Browser on the Mac"] --> B["Moyai bridge"]
+    B --> A["Moyai"]
+    A -->|"via bridge"| G
+    A -->|"SSH"| S["Linux workspace"]
+    A --> T["Temporal"]
+    A --> C["Repository context MCP"]
+    C -->|"scoped vector-store search"| G
+    G -->|"chat and embeddings"| D["DMR on macOS"]
+    G -->|"eligible history"| H["Headroom"]
+    G -->|"rerank"| M["MiniLM"]
+    G -->|"opt-in response cache"| R["Redis"]
+    G -->|"vector-store adapter or retrieval MCP"| V["Retrieval"]
+    V -->|"embedding and reranking requests"| G
+    V --> P["PostgreSQL + pgvector"]
+    G --> O["Read-only local tools MCP"]
+    G -.->|"connected profile"| GH["Read-only GitHub MCP"]
 ```
 
-Each chunk records repository, relative path, branch, commit, language, optional
-symbol, content hash, chunk ordinal, and ingestion timestamp. Registered snapshots
-add exact source and indexed-generation identities plus Git dirty/subtree
-provenance. A new registration retains historical generations used by attached
-tasks. Both search candidate channels enforce that same generation and embedding
-fingerprint. Legacy indexing updates its active repository/branch selection.
+## Inference requests
 
-## Trust boundaries
+Clients send a scoped virtual key to `http://127.0.0.1:4000/v1`. The gateway maps
+`local-qwen` and `local-embeddings` to the configured DMR artifacts at
+`host.docker.internal:12434/engines/v1`. The `local-reranker` alias routes to
+`reranker:8080`. Moyai's inference key only grants access to `local-qwen`.
+Its analysis profile selects the same gateway model with read-only workspace
+tools. [Model template](../litellm/config.yaml) · [Moyai profiles](moyai-local.md)
 
-```mermaid
-flowchart LR
-    User["Human approval boundary"] --> Agent["Moyai SSH sandbox"]
-    Agent --> Gateway["Authenticated LiteLLM boundary"]
-    Gateway --> Tools["MCP allowlist boundary"]
-    Tools --> Data["Untrusted repository content"]
-    Gateway --> Model["Untrusted model output"]
-    Model --> Agent
-    Data --> Model
-```
+For Responses clients, `local-qwen` enables the Chat Completions bridge. The
+live smoke test requests a function call, then submits its output using the
+returned `call_id` and `previous_response_id`. It also checks streaming on a
+separate request. [LiteLLM Responses API](https://docs.litellm.ai/docs/response_api) ·
+[Endpoint checks](../scripts/smoke-test.sh)
 
-Repository text and retrieved chunks are data, even when they contain phrases that look like instructions. Shell and write actions remain subject to the client sandbox and approval policy. The gateway does not make model-generated commands safe.
+Headroom runs as a default pre-call guardrail for eligible history. LiteLLM
+continues with the original request if the compressor is unreachable. A
+caller can send `x-headroom-bypass: true` to compare token usage on the same
+input. [LiteLLM Headroom integration](https://docs.litellm.ai/docs/proxy/headroom)
 
-## Network layout
+## Source and tool access
 
-- `gateway`: LiteLLM, Redis, retrieval, ingestion, exporters, and the optional connected GitHub MCP service.
-- `data`: PostgreSQL, LiteLLM, retrieval, ingestion, and PostgreSQL exporter; this network is internal.
-- `observability`: LiteLLM, retrieval, Prometheus, Loki, Alloy, and Grafana.
-- `mcp-host`: a non-internal bridge used only by the offline MCP service so
-  Docker Desktop can publish its loopback host port; data access still crosses
-  the isolated `data` network.
-- `observability-host`: a non-internal bridge for Prometheus and Grafana
-  loopback publication. Docker Desktop does not publish ports from containers
-  attached only to `internal: true` networks.
-- Host ports bind to `127.0.0.1` only.
-- No service mounts `/var/run/docker.sock`.
-- The connected profile is separate and is not enabled by `make up`.
+- Incremental ingestion mounts the chosen directory read-only, excludes ineligible
+  files, chunks the text and embeds it through the gateway. Search combines
+  pgvector cosine ranks with PostgreSQL full-text ranks over paths, symbols and
+  content. [Search and scoring](platform-operations.md#hybrid-retrieval)
+- Registering a supported checkout creates an immutable source snapshot and an
+  indexed generation. Moyai's context MCP uses a separate gateway credential,
+  binds search to the attached generation and returns bounded, line-referenced
+  source. The controller independently verifies repository edits before releasing
+  artifacts. [Repository workflow](repository-workflow.md)
+- The offline tools server mounts its workspace read-only, exposes allowlisted
+  filesystem and Git operations, and connects to PostgreSQL as `mcp_reader`.
+  The opt-in GitHub MCP server takes a caller-supplied credential.
+  [Connected mode](connected.md)
+- Retrieved text and command output are untrusted input to the model. Moyai
+  executes commands over SSH in its sandbox's private workspace. The host
+  publisher is a separate opt-in command. [Security design](security.md) ·
+  [Issue publication](moyai-github-issues.md)
+
+## Deployment and observability
+
+The core Compose project publishes LiteLLM (4000), retrieval (8000), offline
+MCP (8001), Grafana (3000) and Prometheus (9090) on IPv4 loopback. PostgreSQL,
+Redis, Loki, Alloy, the exporters, Headroom and MiniLM have no published ports.
+Prometheus scrapes configured targets and Alloy tails the local service log files
+for Loki. The data, observability, compression and ranking networks are internal.
+The gateway network reaches DMR on the host. [Core Compose services](../compose.yaml)
+
+The Moyai Compose project publishes its bridge on loopback port 8787. The
+sandbox joins only its internal network. The context service joins the core
+gateway and observability networks. Named volumes hold conversations, workspace
+files and Temporal state. [Moyai Compose services](../compose.moyai.yaml)
 
 ## Cache taxonomy
 
-| Mechanism | Owner | What it stores | MVP status |
-| --- | --- | --- | --- |
-| Response cache | LiteLLM + Redis | Exact full LLM responses | Implemented with short TTL and per-request bypass |
-| Semantic response cache | Optional LiteLLM backend | Similar prompt responses | Deferred; risky for stateful agent turns |
-| KV/prompt cache | Inference runtime | Attention state for model prefixes | Runtime concern; not Redis |
-| Embedding reuse | Ingestion/pgvector | Reuse stored vectors when the path/chunk content hash is unchanged | Implemented; not a separate Redis cache |
-| Knowledge base | PostgreSQL + pgvector | Versioned source chunks and metadata | MVP |
+| Mechanism | Owner and behavior |
+| --- | --- |
+| Exact response cache | LiteLLM stores eligible Chat Completions in Redis when the request opts in with `"cache":{"use-cache":true}`. The default TTL is 300 seconds. |
+| Semantic response cache | Disabled. The gateway has no backend configured for reusing answers to similar prompts. |
+| Inference KV cache | DMR's inference engine manages attention state in runtime memory. Requested context affects the memory budget. |
+| Embedding reuse | Ingestion reuses compatible indexed vectors for unchanged chunks or an existing immutable generation. |
+| Knowledge base | PostgreSQL/pgvector persists source text, embeddings, identifiers and citation coordinates for search. |
 
-## Responses tool-result detail
-
-The verified Responses API round trip sends the first tool result to
-LiteLLM with `previous_response_id` and a `function_call_output` item only.
-Replaying the original `function_call` alongside its output made the local
-Qwen/llama.cpp message template reject the request. The smoke test locks in the
-working sequence.
-
-## Extensibility
-
-Clients only know `local-qwen`, `local-embeddings`, and LiteLLM. A future Ollama
-or MLX-LM backend can replace DMR by changing the gateway configuration. Legacy
-A2A workspace registrations have been retired; future management of Moyai
-through LiteLLM requires a separately verified integration.
-
-## Registered knowledge search
-
-The retrieval service exposes an authenticated vector search adapter. Each opaque
-store ID binds to one repository and branch. Gateway backend credentials are
-separate from ordinary client keys; source citations survive the HTTP adapter.
+[LiteLLM caching](https://docs.litellm.ai/docs/proxy/caching) ·
+[Ingestion implementation](../retrieval/src/local_ai_retrieval/ingestion.py)
