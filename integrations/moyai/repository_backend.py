@@ -520,7 +520,7 @@ class RepositoryBackend:
 
     async def check_result(self, task, receipt):
         result = self.check_summary(receipt, task.get('github_issue'))
-        if task['binding'].get('verification_profile') != 'rust-retry-tests' or receipt['state'] != 'failed':
+        if receipt['state'] != 'failed':
             return result
         evidence = await asyncio.to_thread(self.integration_import, task['binding'])
         if evidence:
@@ -531,6 +531,8 @@ class RepositoryBackend:
 
     def integration_import(self, binding):
         import tomllib
+        if binding.get('verification_profile', 'rust-retry') not in ('rust-retry', 'rust-retry-tests'):
+            return None
         manifest, directory = self.snapshot(binding)
         entry = next((r for r in manifest['files'] if r['path'] == 'Cargo.toml'), None)
         if entry is None:

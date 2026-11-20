@@ -123,10 +123,9 @@ class RepositoryWorkflow(AbstractCapability):
             except RepositoryError as error:
                 raise ToolFailed(str(error)) from error
             result = await backend.status(scope)
-            if result['binding'].get('verification_profile') == 'rust-retry-tests':
-                evidence = await asyncio.to_thread(backend.integration_import, result['binding'])
-                if evidence:
-                    result['integration_test_import'] = evidence
+            evidence = await asyncio.to_thread(backend.integration_import, result['binding'])
+            if evidence:
+                result['integration_test_import'] = evidence
             return result
 
         async def run_repository_checks(ctx: RunContext) -> dict:
