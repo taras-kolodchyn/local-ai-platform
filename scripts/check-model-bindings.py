@@ -52,16 +52,21 @@ def main():
         master_key = (provision['LOCAL'] / 'litellm-master-key').read_text().strip()
         request = provision['gateway'](master_key)
         verify_bindings(CONFIG['resolve'](), request('GET', '/model/info'))
+        # The dashboard rereads the configuration file on this route.
+        for alias in (*ALIASES, 'local-reranker'):
+            page = request('GET', f'/v2/model/info?model={alias}')
+            if not any(row.get('model_name') == alias for row in page['data']):
+                raise ValueError(f'{alias}: missing from the LiteLLM dashboard model list')
     except (OSError, KeyError, RuntimeError, ValueError, TypeError) as error:
         # Verification errors deliberately carry aliases and field names only.
         # Transport/credential failures are represented by type, never payloads.
-        if isinstance(error, ValueError) and str(error).startswith((*ALIASES, 'LiteLLM model info', 'Resolved model configuration')):
+        if isinstance(error, ValueError) and str(error).startswith((*ALIASES, 'local-reranker:', 'LiteLLM model info', 'Resolved model configuration')):
             detail = str(error)
         else:
             detail = type(error).__name__
         print('Model binding check failed: ' + detail, file=sys.stderr)
         return 1
-    print('Model bindings verified: local-qwen, local-embeddings')
+    print('Model bindings and dashboard model list verified')
     return 0
 
 

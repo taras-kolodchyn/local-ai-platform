@@ -136,7 +136,7 @@ services:
     image: ghcr.io/berriai/litellm:v1.109.1
     entrypoint: ["/bin/sh", "-ec"]
     command:
-      - litellm --config /app/config.yaml --port 4000 --num_workers 1 2>&1 | tee -a /var/log/local-ai/litellm.log
+      - litellm --config /etc/local-ai/litellm/config.yaml --port 4000 --num_workers 1 2>&1 | tee -a /var/log/local-ai/litellm.log
     environment:
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?run make bootstrap}
       HEADROOM_API_KEY: ${HEADROOM_PROXY_TOKEN:?run make bootstrap}
@@ -155,7 +155,8 @@ services:
       STORE_MODEL_IN_DB: "True"
       LITELLM_TURN_OFF_MESSAGE_LOGGING: ${LITELLM_TURN_OFF_MESSAGE_LOGGING:-true}
     volumes:
-      - ./.local/litellm/config.yaml:/app/config.yaml:ro
+      # The renderer replaces config.yaml atomically. Mount its directory so UI reads see the current file.
+      - ./.local/litellm:/etc/local-ai/litellm:ro
       - ./.local/logs:/var/log/local-ai
     ports:
       - "127.0.0.1:4000:4000"
