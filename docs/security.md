@@ -19,6 +19,12 @@ The platform runs under one trusted macOS account. Source checkouts, registered 
 
 Bootstrap creates secrets in the ignored `.env` and `.local/` paths. Clients receive scoped virtual keys. The master key is used for gateway administration and provisioning. Keep these files out of Git, reports and shared logs.
 
+The optional OpenBao mode mounts one read-scoped AppRole into the gateway.
+Its Agent injects the dashboard password into LiteLLM and the smoke check reads
+the active value from private container memory. Use TLS to the OpenBao endpoint.
+The AppRole and password are accessible to administrators of that container.
+[OpenBao setup and rotation](openbao.md)
+
 Service logging defaults to operational metadata. Moyai deliberately persists conversations and files. The knowledge index contains source text, and Redis can hold responses for explicitly cached requests. Treat the corresponding volumes and backups as private. Stopping the stack with `make down` preserves them.
 
 The configuration reviewed on 2026-11-20 pins LiteLLM 1.110.2 and defaults `LITELLM_TURN_OFF_MESSAGE_LOGGING` to `true`. To deliberately record request and response content, change the setting to `false` in `.env`, apply it with `make up`, and enable **Store Prompts in Spend Logs** in the dashboard. Disabling storage affects future requests. [Gateway policy](../litellm/config.yaml) · [LiteLLM spend-log settings](https://docs.litellm.ai/docs/proxy/ui_spend_log_settings)

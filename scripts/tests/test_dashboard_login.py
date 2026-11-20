@@ -22,7 +22,7 @@ GRAFANA_ADMIN_PASSWORD='fixture-grafana-$ with spaces'
 class DashboardLoginTests(unittest.TestCase):
     def run_check(self, env_text=ENV, *, lite_password='fixture-ui-$ with spaces',
                   lite_status=303, redirect='/ui?login=success', lite_cookie=True,
-                  grafana_status=200, cookie=True, identity=None):
+                  grafana_status=200, cookie=True, identity=None, stdin_password=None):
         events = []
         identity = identity if identity is not None else {'login': 'admin', 'isGrafanaAdmin': True}
 
@@ -68,18 +68,21 @@ class DashboardLoginTests(unittest.TestCase):
                     (root / '.env').write_text(env_text)
                     base = f'http://127.0.0.1:{server.server_port}'
                     (root / 'run.py').write_text(
-                        'import importlib.util\n'
+                        'import importlib.util, sys\n'
                         f'spec=importlib.util.spec_from_file_location("login_check", {str(ROOT / "scripts/check-dashboard-login.py")!r})\n'
                         'module=importlib.util.module_from_spec(spec)\nspec.loader.exec_module(module)\n'
-                        f'raise SystemExit(module.main({base + "/litellm"!r}, {base + "/grafana"!r}))\n')
+                        f'raise SystemExit(module.main({base + "/litellm"!r}, {base + "/grafana"!r}, argv=sys.argv[1:]))\n')
+                    flags = ['--litellm-password-stdin'] if stdin_password is not None else []
                     result = subprocess.run(
-                        ['bash', '-c', 'source scripts/lib.sh; load_env; exec "$TEST_PYTHON" run.py'],
+                        ['bash', '-c', 'source scripts/lib.sh; load_env; exec "$TEST_PYTHON" run.py "$@"', 'bash', *flags],
                         cwd=root, env=os.environ | {'TEST_PYTHON': sys.executable,
                             'HTTP_PROXY': 'http://invalid.invalid:1', 'NO_PROXY': ''},
-                        capture_output=True, text=True, timeout=10)
+                        capture_output=True, input=stdin_password, timeout=10)
+                    result.stdout = result.stdout.decode()
+                    result.stderr = result.stderr.decode()
                     output = result.stdout + result.stderr
                     for secret in ('fixture-ui-$ with spaces', 'fixture-grafana-$ with spaces',
-                                   'sk-fixture-master', 'fixture-session-token'):
+                                   'sk-fixture-master', 'fixture-session-token', lite_password):
                         self.assertNotIn(secret, output)
                     return result, events
             finally:
@@ -97,6 +100,19 @@ class DashboardLoginTests(unittest.TestCase):
         result, _ = self.run_check(ENV.replace("UI_PASSWORD='fixture-ui-$ with spaces'", 'UI_PASSWORD='),
                                    lite_password='sk-fixture-master')
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_stdin_password_overrides_env_and_preserves_exact_bytes(self):
+        password = "  фікстура $'&+\r\n"
+        result, _ = self.run_check(lite_password=password, stdin_password=password.encode())
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_invalid_stdin_password_fails_before_http_without_falling_back_to_env(self):
+        for password in (b'', b'GENERATE_ME', b'bad\xff', b'bad\x00'):
+            with self.subTest(password=password):
+                result, events = self.run_check(stdin_password=password)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('stdin', result.stderr)
+                self.assertEqual(events, [])
 
     def test_grafana_rejection_fails_without_echoing_response(self):
         result, _ = self.run_check(grafana_status=401)

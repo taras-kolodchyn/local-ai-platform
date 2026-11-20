@@ -4,6 +4,11 @@ source "$(dirname "$0")/lib.sh"
 
 bash scripts/bootstrap.sh
 load_env
+if [[ ${LITELLM_UI_PASSWORD_SOURCE:-env} == openbao ]]; then
+  for file in role-id secret-id; do
+    [[ -s .local/openbao/auth/$file ]] || die "OpenBao mode requires .local/openbao/auth/$file"
+  done
+fi
 bash scripts/ensure-docker.sh
 bash scripts/pull-model.sh
 bash scripts/doctor.sh

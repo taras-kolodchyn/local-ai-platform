@@ -73,7 +73,11 @@ checks the whole round trip and separately checks a streamed Responses call.
 ## A dashboard rejects the configured login
 
 LiteLLM uses `UI_USERNAME` (default `admin`) and `UI_PASSWORD` (defaults to
-the master key). Grafana's initial admin password is persisted in its volume.
+the master key) in the default mode. With OpenBao enabled, check the Agent login,
+KV v2 path and gateway readiness after rotation. Test with a fresh browser session.
+[OpenBao setup and rotation](openbao.md)
+
+Grafana's initial admin password is persisted in its volume.
 Changing `GRAFANA_ADMIN_PASSWORD` on an existing installation can leave the
 stored password out of sync. Follow the password-update command and re-run
 `make smoke-test` to verify fresh sessions.
