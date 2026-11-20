@@ -6,10 +6,14 @@ load_env
 require_command curl
 require_command jq
 admin_key=$(read_admin_key)
-umask 077
 
 write_client_env() {
   local key=$1
+  umask 077
+  # Leave a valid live mount readable throughout repeated startup.
+  if ! printf '%s' "$key" | cmp -s .local/litellm-api-key -; then
+    printf '%s' "$key" > .local/litellm-api-key
+  fi
   printf 'export LITELLM_API_KEY=%q\n' "$key" > .local/client.env
   chmod 600 .local/litellm-api-key .local/client.env
 }
@@ -63,6 +67,5 @@ response=$(curl --fail --silent --show-error \
 client_key=$(jq -r '.key // empty' <<< "$response")
 [[ "$client_key" == sk-* ]] || die "LiteLLM did not return a virtual key"
 
-printf '%s' "$client_key" > .local/litellm-api-key
 write_client_env "$client_key"
 ok "Scoped LiteLLM virtual key generated (value not displayed)"
