@@ -38,11 +38,7 @@ python3 scripts/moyai-prepare.py --ui check
 python3 scripts/reconcile-agents.py --check
 ok "Local Moyai is healthy and legacy workspace agent registrations are absent"
 
-ports=(3000 4000 8000 8001 9090 12434)
-if [[ ${LITELLM_UI_PASSWORD_SOURCE:-env} == openbao-local ]]; then
-  ports+=(8200)
-fi
-for port in "${ports[@]}"; do
+for port in 3000 4000 8000 8001 9090 12434; do
   listeners=$(lsof -nP -iTCP:"$port" -sTCP:LISTEN 2>/dev/null || true)
   [[ -n "$listeners" ]] || die "Expected listener is missing on port $port"
   if grep -Eq '(\*:|0\.0\.0\.0:|\[::\]:)' <<< "$listeners"; then
@@ -51,13 +47,8 @@ for port in "${ports[@]}"; do
 done
 ok "All host listeners are loopback-only"
 
-info "Checking fresh LiteLLM and Grafana dashboard logins..."
-if [[ ${LITELLM_UI_PASSWORD_SOURCE:-env} == openbao* ]]; then
-  docker compose exec -T litellm cat /run/openbao-ui/ui-password |
-    python3 scripts/check-dashboard-login.py --litellm-password-stdin
-else
-  python3 scripts/check-dashboard-login.py
-fi
+info "Checking fresh LiteLLM and Grafana dashboard logins using .env credentials..."
+python3 scripts/check-dashboard-login.py
 
 embedding_payload=$(jq -cn '{model:"local-embeddings",input:["loopback listeners in the offline profile"],encoding_format:"float",cache:{"no-cache":true,"no-store":true}}')
 api_post /v1/embeddings "$embedding_payload" "$smoke/embedding.json"
