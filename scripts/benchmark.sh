@@ -6,6 +6,7 @@ load_env
 require_command curl
 require_command jq
 require_command docker
+require_command python3
 
 key=$(read_secret_file .local/litellm-api-key)
 timestamp=$(date -u +%Y%m%dT%H%M%SZ)
@@ -20,8 +21,10 @@ model_runner_version=$(docker model version 2>/dev/null \
   | awk '/Version:/ && !seen {version=$2; seen=1} END {if (seen) print version}')
 [[ -n "$model_runner_version" ]] || model_runner_version=unavailable
 
-chat_payload=$(jq -cn '{model:"local-qwen",messages:[{role:"user",content:"In one sentence, explain why bounded retries matter."}],temperature:0,max_tokens:96,cache:{"no-cache":true,"no-store":true}}')
-retrieval_payload=$(jq -cn '{query:"What is the required maximum retry delay?",repository:"rust-service",limit:3}')
+chat_payload=$(jq -cn '{model:"local-qwen",messages:[{role:"user",content:"In one sentence, explain what a loopback address is."}],temperature:0,max_tokens:96,cache:{"no-cache":true,"no-store":true}}')
+info "Preparing the platform retrieval index before timing model loads..."
+python3 scripts/retrieval_probe.py index >/dev/null
+retrieval_payload=$(python3 scripts/retrieval_probe.py query)
 
 # Unloading keeps the artifacts on disk but makes run 1 a genuine model-load
 # sample for both generation and embeddings. Runs 2-4 reuse the loaded models.
@@ -49,7 +52,7 @@ for run in 1 2 3 4; do
     --write-out '{"status":%{http_code},"seconds":%{time_total}}' \
     --header 'Content-Type: application/json' --data "$retrieval_payload" \
     http://127.0.0.1:8000/search)
-  count=$(jq -e '.count | numbers | select(. > 0)' "$work_dir/retrieval.json")
+  count=$(jq -ec '.results' "$work_dir/retrieval.json" | python3 scripts/retrieval_probe.py check)
   jq -cn --argjson run "$run" --arg phase "$phase" --argjson http "$retrieval_meta" --argjson count "$count" \
     '{kind:"retrieval",phase:$phase,run:$run,http:$http,result_count:$count}' >> "$samples"
 done

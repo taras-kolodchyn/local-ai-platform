@@ -4,7 +4,7 @@ Last updated: 2026-07-20
 
 The plan separates a reproducible MVP from compatibility claims that require real agent workloads. A milestone is complete only when its acceptance checks are captured in tests or a dated benchmark record.
 
-## Final MVP status
+## Historical platform milestones
 
 | Milestone | Status on 2026-07-19 |
 | --- | --- |
@@ -12,9 +12,7 @@ The plan separates a reproducible MVP from compatibility claims that require rea
 | M1 platform core | Complete on the reference Mac |
 | M2 retrieval/MCP | Complete for offline read-only tools |
 | M3 agent compatibility | Complete as a report: transports pass; Codex autonomous repair fails; Hermes chat-only passes |
-| M4 demo | Complete as a reproducible failed-agent case plus human-verified reference repair |
 | M5 connected/A2A | Connected profile implemented but not live-tested without a dedicated PAT; A2A deferred |
-| M6 article/release | Article and evidence complete; publication is the final repository operation |
 
 ## M0 - Architecture and evidence
 
@@ -68,17 +66,6 @@ Deliverables:
 
 Exit criteria: a versioned compatibility report distinguishes pass, fail, degraded, and not tested for Codex and Hermes.
 
-## M4 - Demonstration project
-
-Deliverables:
-
-- Intentionally imperfect Rust API with scoped security and operational defects.
-- Internal architecture rules indexed into pgvector.
-- A repeatable prompt and expected checkpoints for Codex, plus a shorter Hermes run.
-- Grafana dashboard panels covering the entire flow.
-
-Exit criteria: the demo records the initial failure, fix, tests, final diff, retrieval calls, cache behavior, latency, tokens, tool duration, and errors without logging source bodies or credentials.
-
 ## M5 - Connected mode and A2A
 
 Deliverables:
@@ -88,16 +75,3 @@ Deliverables:
 - Evaluated LiteLLM A2A gateway with protocol version 1.0 pinned.
 
 Exit criteria: offline remains the default, connected-mode credentials never enter container images/logs, and destructive tools are absent.
-
-## M6 - DOU article and release
-
-Deliverables:
-
-- Ukrainian article with first-person introduction, task -> solution -> technology -> result case structure, diagrams, screenshots, measured benchmarks, failures, limitations, and conclusion.
-- Public release tag and reproducibility record.
-
-Exit criteria: every screenshot and benchmark maps to the released commit; the article contains no placeholder compatibility claims.
-
-## Version policy
-
-Runtime and container versions are pinned in source. Renovation is a deliberate PR that reruns smoke tests and updates `docs/capability-matrix.md`. Model artifacts use explicit tags and should additionally record resolved digests in a release manifest after the first successful pull.

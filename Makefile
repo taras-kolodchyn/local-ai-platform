@@ -9,7 +9,7 @@ REPO ?=
 help: ## Show available commands
 	@awk 'BEGIN {FS = ":.*## "; printf "Local AI Platform\n\n"} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-18s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-doctor: ## Check macOS, Apple Silicon, memory, Docker, DMR, ports, and tools including Cargo
+doctor: ## Check macOS, Apple Silicon, memory, Docker, DMR, ports, and host tools
 	@bash scripts/doctor.sh
 
 bootstrap: ## Create local secrets, directories, and generated support files
@@ -37,13 +37,14 @@ status: ## Show containers, DMR models, and endpoints
 smoke-test: ## Verify live endpoints, bridge, embeddings, cache, pgvector, MCP, and metrics
 	@bash scripts/smoke-test.sh
 
-test: ## Run unit, contract, isolated PostgreSQL, and required Rust tests
+test: ## Run platform unit, contract, and isolated PostgreSQL tests
 	@bash scripts/test.sh
 
 lint: ## Validate shell, Python, YAML/Compose, and configuration invariants
 	@bash scripts/lint.sh
 
-verify: ## Run all required checks and real Moyai acceptance, then verify complete shutdown
+verify: export MOYAI_SOURCE_REPO := $(value REPO)
+verify: ## Verify platform startup, Moyai tasks, and shutdown (optional REPO=/absolute/path)
 	@python3 scripts/verify.py
 
 index reindex: export INDEX_SOURCE := $(value REPO)
@@ -55,13 +56,14 @@ index reindex:
 	  INDEX_REPO_PATH="$$source_dir" $(COMPOSE) --profile tools run --rm ingestion $@ /workspace --repository "$${source_dir##*/}"
 
 .PHONY: repository-add repository-smoke
-repository-add: export MOYAI_SOURCE_REPO := $(value REPO)
+repository-add repository-smoke: export MOYAI_SOURCE_REPO := $(value REPO)
 repository-add: ## Register an immutable REPO snapshot for local Moyai tasks
 	@test -n "$$MOYAI_SOURCE_REPO" || { echo "Usage: make repository-add REPO=/absolute/path" >&2; exit 2; }
 	@python3 scripts/prepare-repository.py --repo "$$MOYAI_SOURCE_REPO" --profile rust-retry
 
-repository-smoke: ## Verify a real repository repair through local Moyai
-	@python3 scripts/repository-smoke.py $(if $(filter 1,$(RESTART)),--restart,)
+repository-smoke: ## Verify a supported external repository with REPO=/absolute/path
+	@test -n "$$MOYAI_SOURCE_REPO" || { echo "Usage: make repository-smoke REPO=/absolute/path" >&2; exit 2; }
+	@python3 scripts/repository-smoke.py --repo "$$MOYAI_SOURCE_REPO" $(if $(filter 1,$(RESTART)),--restart,)
 
 benchmark: ## Record local chat and retrieval latency without prompt bodies
 	@bash scripts/benchmark.sh
@@ -86,8 +88,8 @@ reset: ## Stop the stack and delete core data volumes (requires CONFIRM_RESET=ye
 	@echo "Core data volumes removed. Moyai conversations and downloaded models were preserved."
 
 .PHONY: vector-smoke
-vector-smoke: ## Verify registered vector search and access boundaries
-	@python3 scripts/vector-smoke.py
+vector-smoke: ## Verify platform documentation search and access boundaries
+	@source scripts/lib.sh && load_env && exec python3 scripts/vector-smoke.py
 
 .PHONY: moyai-down moyai-status moyai-smoke
 moyai-down: ## Stop local Moyai without removing its files or history
@@ -103,13 +105,13 @@ moyai-smoke: ## Verify real Moyai file, shell, test and artifact workflows
 github-issues github-app-issues: export MOYAI_ISSUE_PROFILE := $(value PROFILE)
 github-issues: export MOYAI_OPERATOR_ISSUE := $(value ISSUE)
 github-issues: ## Run the opt-in Moyai issue publisher (ISSUE=N limits host gh authorization to one issue)
-	@python3 scripts/github-issues.py
+	@bash scripts/github-command.sh scripts/github-issues.py
 
 .PHONY: github-app-setup github-app-issues
 github-app-setup: ## Register the private Moyai GitHub App on localhost
-	@python3 scripts/register-github-app.py
+	@bash scripts/github-command.sh scripts/register-github-app.py
 
 github-app-issues: export MOYAI_OPERATOR_ISSUE := $(value ISSUE)
 github-app-issues: export MOYAI_AUTO_MERGE := $(value AUTO_MERGE)
 github-app-issues: ## Publish as the GitHub App (ISSUE=N AUTO_MERGE=1 also merges after verified CI)
-	@python3 scripts/github-issues.py --app
+	@bash scripts/github-command.sh scripts/github-issues.py --app

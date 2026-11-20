@@ -185,15 +185,8 @@ checks the actual SSH filesystem and file hashes before any followup model turn.
 metadata-only receipt is `.local/moyai/smoke-receipt.json`; application history and
 artifacts remain in dedicated local volumes. No user request bodies are committed.
 
-The full local `make lint`, `make test` and `make smoke-test` suite also passed,
-including the required PostgreSQL memory test. The local Rust demo check was
-skipped because Cargo was unavailable. Controlled replacement of a blocked Moyai
-key verified its restricted replacement scope and controller reload; repeating
-startup without changes preserved the running controller.
-
-That Cargo skip describes the 2026-11-16 run only. Cargo is now required by
-`make doctor` and `make test`; `make verify` includes the Rust tests and the
-complete Moyai acceptance/shutdown cycle. See [current operations](platform-operations.md).
+The platform suite includes PostgreSQL isolation and live gateway checks.
+`make verify` runs the Moyai acceptance and shutdown cycle. [Platform operations](platform-operations.md)
 
 Upstream references: [Moyai runtime injection](https://github.com/BerriAI/moyai/blob/c375632aea66f6695b66158b5edf6ee4983dad72/native/src/moyai/runtime.py#L124),
 [native local-workspace tests](https://github.com/BerriAI/moyai/blob/c375632aea66f6695b66158b5edf6ee4983dad72/native/tests/conftest.py#L53),

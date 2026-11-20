@@ -9,7 +9,7 @@ never the agent's writable workspace. Start the platform with `make up`.
 
 ```sh
 make up
-make repository-add REPO="$PWD/examples/rust-service"
+make repository-add REPO=/absolute/path/to/compatible-crate
 ```
 
 Registration prints the opaque repository ID. In [Moyai](http://127.0.0.1:8787),
@@ -25,11 +25,10 @@ model and returns actionable check feedback. An unchanged-tree retry reuses its
 latest settled check without spending another validation attempt. See
 [UI verification and bounded download observation](moyai-ui-verification.md).
 
-The first verification profile is `rust-retry`, anchored to the bundled fixture's
-package and lockfile. It is a concrete acceptance case, rather than a general
-Rust build service. The existing repository indexing commands remain available
-for other source trees; an execution profile must be implemented and verified
-before another project can use controlled repository execution.
+The `rust-retry` profile requires the Cargo manifest and lockfile accepted by the
+[sandbox verifier](../integrations/moyai/oracles), the expected Rust API, project
+tests and a documented retry policy. Use `make index REPO=/absolute/path` for
+repository search independent of an execution profile.
 
 The model's tools follow these gates:
 
@@ -108,18 +107,15 @@ memory does not. The authenticated owner endpoint
 without consuming execution budget or starting remote work.
 
 ```sh
-make repository-smoke
-make repository-smoke RESTART=1
-make verify
+make repository-smoke REPO=/absolute/path/to/compatible-crate
+make verify REPO=/absolute/path/to/compatible-crate
 ```
 
-Repository acceptance stages `examples/rust-service` from the local Git commit
-`553a11afb886c01cd6d0d07cce6963a10534b8b3`, the last `main` before PR #14.
-It uses a temporary detached checkout and the stable catalog ID
-`repo_smoke_rust_retry`. A full clone contains this commit. For a shallow clone,
-run `git fetch --depth=1 origin 553a11afb886c01cd6d0d07cce6963a10534b8b3`
-once while connected before running the demo offline.
-The receipt records the source commit and subtree under `fixture_git`.
+For the optional repair acceptance run, select a clean Git checkout or crate
+directory whose original implementation exhibits the failing 60,000 ms retry
+ceiling. The runner pins its commit and subtree, then compares the checkout
+again after verification. Run `make verify` without a repository to check the
+platform lifecycle and native sandbox tasks.
 
 Repository acceptance uses actual local-model turns in fresh conversations. It
 checks scoped context, native planning/edit/check tool receipts, signed baseline
@@ -146,8 +142,7 @@ mounted in the execution sandbox.
 
 This is a trusted single-user local platform. Conversations share one sandbox
 UID; separate directories, phase guards and authenticated receipts do not
-establish hostile-code or tenant isolation. The current task does not repair the
-fixture's unrelated JWT, SQL or deployment examples. Artifact delivery returns a
+establish hostile-code or tenant isolation. Artifact delivery returns a
 reviewable patch; applying it to the host checkout is an explicit operator step.
 Capacity measurements cover sequential repository tasks. Concurrent Rust checks
 share the sandbox's memory limit and have not been capacity-tested.
@@ -160,7 +155,7 @@ Compatibility sources: [Linux child subreapers](https://man7.org/linux/man-pages
 [pinned LiteLLM route checks](https://github.com/BerriAI/litellm/blob/v1.110.2/litellm/proxy/auth/route_checks.py).
 See the [approved design](superpowers/specs/2026-11-17-repository-workflow-design.md)
 for the implementation boundaries and the
-[2026-11-17 verified results](results/repository-workflow-2026-11-17.md) for
+[2026-11-17 verified results](https://github.com/taras-kolodchyn/local-ai-platform/blob/5029427f3b0d228b3eafe52f41f3d6337575e4a2/docs/results/repository-workflow-2026-11-17.md) for
 three actual local-model cycles, lifecycle checks, measurements and limits.
 
 The opt-in host publisher can run this Rust profile from an issue URL and open a draft PR. See the [Moyai GitHub issue workflow](moyai-github-issues.md).

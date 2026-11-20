@@ -38,7 +38,7 @@ the migration instead of guessing. This command permanently deletes legacy data.
 use `.env.example` defaults, consistently in the shell lifecycle and Python
 resolver; ambient variables cannot redirect one half of model management.
 `scripts/model-config.py` renders the tracked LiteLLM template into the ignored
-effective configuration. Both aliases stay stable. Current models are unchanged.
+effective configuration. Client aliases remain stable across model changes.
 Descriptions and metadata follow the resolved reference; unknown models receive
 honest generic metadata rather than the previous model's name or parameter size.
 
@@ -59,10 +59,11 @@ English descriptions are [LiteLLM deployment metadata](https://docs.litellm.ai/d
 make verify
 ```
 
-The ordered phases are lint, required unit/DB/Rust tests, supported startup,
-JSON status, endpoint smoke, plain Moyai acceptance, and repeated real-model
-repository acceptance with service restarts. See [repository tasks](repository-workflow.md)
-for source registration, the first Rust profile and private evidence.
+The ordered phases are lint, platform unit and database tests, startup, JSON
+status, live endpoint checks, and native Moyai sandbox acceptance with a service
+restart. Supply `REPO=/absolute/path/to/compatible-crate` to add verification
+against a clean external checkout. [Repository registration and supported profile](repository-workflow.md)
+
 The finalizer always attempts shutdown and independently checks owned project
 containers and configured resident models. Failures, cleanup failures and
 unavailable inventories are unsuccessful results. Unrelated Docker projects or
@@ -100,7 +101,7 @@ checks, two Rust tests, actual native Moyai acceptance, and two fresh repository
 tasks with restart persistence. Together with the first accepted development
 run, three final-implementation local-model cycles returned independently
 verified patches. Shutdown inventory was empty for owned containers and configured
-resident models. See the [versioned results and limits](results/repository-workflow-2026-11-17.md).
+resident models. See the [versioned results and limits](https://github.com/taras-kolodchyn/local-ai-platform/blob/5029427f3b0d228b3eafe52f41f3d6337575e4a2/docs/results/repository-workflow-2026-11-17.md).
 
 ## Earlier unified-lifecycle verification — 2026-11-17
 

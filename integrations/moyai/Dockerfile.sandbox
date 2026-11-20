@@ -1,19 +1,19 @@
 FROM ghcr.io/berriai/moyai@sha256:05e9b95fdd96507b39784b9d8531758efdf2db30f0bceb03c161e2bd46b43419 AS upstream
 # Prepared while connected. Runtime never fetches toolchains or dependencies.
 FROM rust:1.100.0-slim-bookworm@sha256:7c7d4eb4d05b7781187a327809466cfddf29753f6defdc3d19a0e291951b7a37 AS rust-assets
-COPY examples/rust-service/Cargo.toml examples/rust-service/Cargo.lock /prepare/source/
-COPY examples/rust-service/src /prepare/source/src
-COPY integrations/moyai/oracles/retry_policy.rs /prepare/retry_policy.rs
+COPY integrations/moyai/oracles/Cargo.toml integrations/moyai/oracles/Cargo.lock /prepare/source/
+COPY integrations/moyai/oracles/retry_policy.rs integrations/moyai/oracles/legacy_policy.rs /prepare/
 WORKDIR /prepare/source
-RUN cargo vendor --locked --versioned-dirs /opt/rust-vendor \
+# Cargo needs a library target to resolve the protected package's dependencies.
+RUN mkdir src && touch src/lib.rs \
+    && cargo vendor --locked --versioned-dirs /opt/rust-vendor \
     && mkdir -p /opt/rust-cargo /prepare/verifier \
     && printf '[source.crates-io]\nreplace-with="vendored-sources"\n[source.vendored-sources]\ndirectory="/opt/rust-vendor"\n[net]\noffline=true\n' > /opt/rust-cargo/config.toml \
     && printf '[package]\nname="repository-oracle"\nversion="0.0.0"\nedition="2024"\n[dependencies]\nlocal-ai-rust-service={path="../source"}\n[[test]]\nname="retry_policy"\npath="/prepare/retry_policy.rs"\n' > /prepare/verifier/Cargo.toml \
     && CARGO_HOME=/opt/rust-cargo cargo generate-lockfile --offline --manifest-path /prepare/verifier/Cargo.toml \
     && cp -a /prepare/verifier /prepare/probe \
     && sed -i 's/repository-oracle/repository-baseline/g;s/retry_policy/legacy_policy/g' /prepare/probe/Cargo.toml \
-    && CARGO_HOME=/opt/rust-cargo cargo generate-lockfile --offline --manifest-path /prepare/probe/Cargo.toml \
-    && cp -a "$(rustc --print sysroot)" /opt/rust
+    && CARGO_HOME=/opt/rust-cargo cargo generate-lockfile --offline --manifest-path /prepare/probe/Cargo.toml
 FROM python:3.14.10-slim-bookworm@sha256:3fe1a0b6c2d6b2ebb572906cdabeca75aeb558c0c17db5ffefbcf8094871c32b AS python-runtime
 # The immutable Rust image already contains the linker, binutils, libc and headers.
 # Hold every inherited package so online SSH tooling installation cannot upgrade
@@ -36,7 +36,9 @@ COPY --from=rust-assets /opt/rust-vendor /opt/rust-vendor
 COPY --from=rust-assets /opt/rust-cargo /opt/rust-cargo
 COPY --from=rust-assets /prepare/verifier/Cargo.lock /opt/local-repository/oracles/Verifier.lock
 COPY --from=rust-assets /prepare/probe/Cargo.lock /opt/local-repository/oracles/Baseline.lock
-COPY integrations/moyai/oracles /opt/local-repository/oracles
+COPY integrations/moyai/oracles/Cargo.toml integrations/moyai/oracles/Cargo.lock \
+     integrations/moyai/oracles/retry_policy.rs integrations/moyai/oracles/legacy_policy.rs \
+     integrations/moyai/oracles/counterexample_lib.rs /opt/local-repository/oracles/
 COPY integrations/moyai/repository_guest.py /opt/local-repository/guest.py
 COPY integrations/moyai/command_supervisor.py /opt/local-repository/command_supervisor.py
 COPY integrations/moyai/sshd_config /etc/ssh/sshd_config

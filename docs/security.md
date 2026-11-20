@@ -6,7 +6,7 @@ Last reviewed: 2026-07-20
 
 This repository assembles a single-user, local development platform for AI coding agents on Apple Silicon. Docker Model Runner (DMR) performs host-side inference; LiteLLM exposes authenticated OpenAI-compatible routes; PostgreSQL/pgvector and Redis hold retrieval and cache data; the retrieval and offline MCP services expose deliberately narrow, read-only tools; Prometheus, Loki, Alloy, and Grafana collect operational metadata. Moyai runs tasks in a dedicated SSH sandbox.
 
-The primary assets are source code and uncommitted work, Git history, locally generated API/database credentials, agent tool authority, vectorized source fragments, model gateway traffic, and host integrity. The main production-like runtime surfaces are `compose.yaml`, `litellm/config.yaml`, `retrieval/`, `mcp/offline/`, `postgres/`, the generated client configurations, and local Moyai. `examples/rust-service/` is an intentionally vulnerable teaching fixture; its SQL interpolation, missing JWT validation, excessive retry cap, and weak deployment resources are not platform controls. `scripts/`, `.github/`, documentation, and tests are developer/CI surfaces, but can still affect supply-chain safety or generate unsafe configuration.
+The primary assets are source code and uncommitted work, Git history, locally generated API/database credentials, agent tool authority, vectorized source fragments, model gateway traffic, and host integrity. The main production-like runtime surfaces are `compose.yaml`, `litellm/config.yaml`, `retrieval/`, `mcp/offline/`, `postgres/`, the generated client configurations, and local Moyai. `scripts/`, `.github/`, documentation, and tests are developer/CI surfaces, but can still affect supply-chain safety or generate unsafe configuration.
 
 The design protects a trusted local operator from accidental or prompt-induced overreach. It is not a hardened multi-user service, a confidentiality boundary between processes running as the same macOS user, or a safe environment for unattended execution of arbitrary model-generated shell commands.
 
@@ -16,7 +16,7 @@ The design protects a trusted local operator from accidental or prompt-induced o
 
 - **Attacker-controlled:** cloned repositories, dependencies, code comments, documentation, Git metadata, retrieved chunks, model output, MCP responses from connected services, and network input if a listener is exposed accidentally.
 - **Operator-controlled:** selected repository paths, `.env` values, local credentials, enabled Compose profiles, optional connected-mode configuration, retention settings, and any expansion of MCP tools or mounts.
-- **Developer-controlled:** repository code, image/package/model pins, Compose networks and mounts, SQL migrations, tool schemas, allowlists, CI workflows, and the demo fixture.
+- **Developer-controlled:** repository code, image/package/model pins, Compose networks and mounts, SQL migrations, tool schemas, allowlists, and CI workflows.
 
 Prompt injection is realistic whenever untrusted source or external content is indexed. A malicious repository author can try to make an agent reinterpret retrieved text as instructions. Remote unauthenticated attacks are out of scope only while every published port remains loopback-bound and DMR also listens on loopback. A malicious process running under the same macOS account remains able to reach localhost services and read files owned by that account; API keys reduce accidental cross-talk but do not create an OS-level isolation boundary.
 
@@ -58,7 +58,7 @@ If a host port changes from `127.0.0.1` to `0.0.0.0`, another LAN host could cal
 
 ### Supply-chain and configuration compromise
 
-Containers, Python/Rust packages, models, GitHub Actions, and optional MCP servers execute trusted code. Versions are pinned or recorded and the platform validates arm64 compatibility; release evidence should also record immutable image/model digests. Tags can change, so upgrades need review and repeated validation. A compromised developer script or CI workflow can also exfiltrate repository secrets even if the runtime is safe. The intentionally flawed demo must never be mistaken for a deployment template.
+Containers, Python/Rust packages, models, GitHub Actions, and optional MCP servers execute trusted code. Versions are pinned or recorded and the platform validates arm64 compatibility; release evidence should also record immutable image/model digests. Tags can change, so upgrades need review and repeated validation. A compromised developer script or CI workflow can also exfiltrate repository secrets even if the runtime is safe.
 
 ### Denial of service and resource pressure
 
@@ -67,7 +67,7 @@ Large repositories, adversarial queries, excessive context windows, cache growth
 ### Existing validation controls
 
 - `scripts/smoke-test.sh` checks authenticated model discovery, embeddings, chat, Responses tool round trips, streaming, explicit caching, RAG, MCP discovery, listener scope, telemetry health, and prompt-sentinel absence.
-- `mcp/offline/tests/` and `retrieval/tests/` exercise core policy and retrieval behavior; CI also runs Rust tests for the teaching fixture.
+- `mcp/offline/tests/` and `retrieval/tests/` exercise core policy and retrieval behavior. CI also checks the execution boundary and database isolation.
 - Generated keys and runtime artifacts stay under ignored `.local/`; destructive cleanup requires explicit confirmation.
 - `SECURITY.md` asks reporters to use private vulnerability reporting and avoid including real credentials or source.
 
@@ -95,7 +95,6 @@ These require a reachable attacker and a direct high-impact capability. They are
 ### Low
 
 - A loopback health or metrics endpoint reveals component versions or availability on a trusted, single-user Mac.
-- The demo service's deliberate SQL interpolation, absent JWT validation, or weak Helm resources are reported as platform vulnerabilities even though `examples/rust-service/` is explicitly non-production and not started by the default stack.
 - A denial-of-service requires the trusted operator to opt into unusually large models or intentionally remove documented limits.
 
 Severity should be lowered when exploitation requires a trusted operator to replace loopback bindings, enable a connected profile, broaden mounts/tools, and approve the harmful action. It should be raised when a default, unauthenticated path crosses the host, credential, repository, or external-service boundary without meaningful user interaction.

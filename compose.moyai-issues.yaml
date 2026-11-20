@@ -7,6 +7,9 @@ services:
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     restart: "no"
+    environment:
+      MOYAI_GITHUB_REPOSITORY: ${MOYAI_GITHUB_REPOSITORY:-}
+      MOYAI_GITHUB_PROJECT_PATH: ${MOYAI_GITHUB_PROJECT_PATH:-}
     healthcheck:
       test: [CMD, python, -c, "import socket; s=socket.socket(socket.AF_UNIX); s.connect('/run/moyai-publisher/issue.sock'); s.close()"]
       interval: 5s

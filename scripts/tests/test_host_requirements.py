@@ -1,4 +1,4 @@
-"""Missing or broken Cargo must fail host checks and the test launcher."""
+"""Exercise the supported host prerequisites and test suites through Make."""
 import json
 import os
 from pathlib import Path
@@ -11,7 +11,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 
 
-class RustRequirementsTests(unittest.TestCase):
+class HostRequirementsTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
@@ -23,7 +23,7 @@ class RustRequirementsTests(unittest.TestCase):
         shutil.copy(ROOT / '.env.example', self.root / '.env.example')
         self.binaries = self.root / 'bin'
         self.binaries.mkdir()
-        # Exclude the host PATH so installed Cargo cannot hide a missing-tool bug.
+        # Keep the host PATH out of both targets, including any installed Rust toolchain.
         for name in ('awk', 'bash', 'dirname', 'make'):
             (self.binaries / name).symlink_to(shutil.which(name))
         (self.binaries / 'python3').symlink_to(sys.executable)
@@ -44,19 +44,15 @@ class RustRequirementsTests(unittest.TestCase):
         python.parent.mkdir(parents=True)
         python.write_text(f'#!{sys.executable}\nimport json, os, sys\n'
                           'with open(os.environ["TASK_EVENTS"], "a") as stream:\n'
-                          '    stream.write(json.dumps(["python", *sys.argv[1:]]) + "\\n")\n')
+                          '    stream.write(json.dumps(["python", *sys.argv[1:]]) + "\\n")\n'
+                          'if os.getenv("FAIL_SUITE") in sys.argv[1:]:\n'
+                          '    sys.exit(9)\n')
         python.chmod(0o755)
 
     def write_executable(self, relative_path, body):
         path = self.root / relative_path
         path.write_text('#!/bin/bash\n' + body)
         path.chmod(0o755)
-
-    def install_cargo(self, version_status=0, test_status=0):
-        self.write_executable('bin/cargo',
-                              'printf \'["cargo","%s"]\\n\' "$*" >> "$TASK_EVENTS"\n'
-                              f'if [[ "$1" == --version ]]; then exit {version_status}; fi\n'
-                              f'exit {test_status}\n')
 
     def run_make(self, target):
         return subprocess.run([str(self.binaries / 'make'), target], cwd=self.root,
@@ -67,39 +63,19 @@ class RustRequirementsTests(unittest.TestCase):
             return []
         return [json.loads(line) for line in self.events.read_text().splitlines()]
 
-    def test_test_target_rejects_missing_cargo_before_python_or_database_work(self):
+    def test_platform_suites_run_without_host_cargo(self):
         result = self.run_make('test')
-        self.assertNotEqual(result.returncode, 0, result.stdout)
-        self.assertIn('cargo', result.stderr.lower())
-        self.assertEqual(self.calls(), [])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for suite in ('retrieval/tests', 'mcp/offline/tests', 'execution/tests', 'scripts/tests'):
+            self.assertTrue(any(suite in args for args in self.calls()), suite)
 
-    def test_test_target_rejects_broken_cargo_before_python_or_database_work(self):
-        self.install_cargo(version_status=7)
+    def test_required_database_suite_failure_stops_the_launcher(self):
+        self.env['FAIL_SUITE'] = 'execution/tests'
         result = self.run_make('test')
-        self.assertNotEqual(result.returncode, 0, result.stdout)
-        self.assertEqual(self.calls(), [['cargo', '--version']])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn('Unit tests passed', result.stdout)
+        self.assertFalse(any('scripts/tests' in args for args in self.calls()))
 
-    def test_test_target_runs_locked_rust_tests_and_propagates_failure(self):
-        for test_status in (0, 11):
-            with self.subTest(test_status=test_status):
-                self.events.write_text('')
-                self.install_cargo(test_status=test_status)
-                result = self.run_make('test')
-                self.assertEqual(result.returncode == 0, test_status == 0, result.stderr)
-                self.assertIn(['cargo', 'test --locked --quiet --manifest-path '
-                               'examples/rust-service/Cargo.toml'], self.calls())
-                self.assertEqual('Unit tests passed' in result.stdout, test_status == 0)
-
-    def test_doctor_rejects_missing_cargo_on_an_otherwise_healthy_host(self):
+    def test_doctor_accepts_a_healthy_host_without_cargo(self):
         result = self.run_make('doctor')
-        self.assertNotEqual(result.returncode, 0, result.stdout)
-        self.assertIn('cargo', result.stderr.lower())
-
-    def test_doctor_checks_cargo_is_usable_and_rejects_broken_toolchains(self):
-        for version_status in (0, 7):
-            with self.subTest(version_status=version_status):
-                self.events.write_text('')
-                self.install_cargo(version_status=version_status)
-                result = self.run_make('doctor')
-                self.assertEqual(result.returncode == 0, version_status == 0, result.stderr)
-                self.assertEqual(self.calls(), [['cargo', '--version']])
+        self.assertEqual(result.returncode, 0, result.stderr)

@@ -68,8 +68,16 @@ async def exercise(binding):
         # A real pre-launch failed check must be settled and allow a subsequent repair.
         resumed.ledger.begin(*scope,[{'content':'Acceptance: retry delays never exceed 30,000 ms'}])
         workspace = SSHWorkspaceBackend(DESTINATION,working_dir=workspace_directory(*scope),ssh_args=SSH_ARGS)
-        code = "from pathlib import Path; p=Path('repository/tests/early.rs'); p.write_text('use local_ai_rust_service::bounded_backoff_ms;\\n#[test] fn retry_ceiling(){assert_eq!(bounded_backoff_ms(10),30000);}\\n')"
-        changed = await workspace.run(['python3','-I','-c',code],timeout=15)
+        library = resumed.integration_import(binding)
+        assert library, 'The selected profile must expose the pinned Rust library'
+        regression = library['code'] + '\n#[test] fn retry_ceiling(){assert_eq!(bounded_backoff_ms(10),30000);}\n'
+        code = """from pathlib import Path
+import sys
+target = Path('repository/tests/early.rs')
+target.parent.mkdir(exist_ok=True)
+target.write_text(sys.argv[1])
+"""
+        changed = await workspace.run(['python3','-I','-c',code,regression],timeout=15)
         assert changed.exit_code == 0
         failed = await resumed.check(scope,'incomplete-implementation')
         state = resumed.ledger.status(*scope)

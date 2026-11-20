@@ -5,6 +5,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -28,11 +29,17 @@ class BackendTests(unittest.IsolatedAsyncioTestCase):
         spec.loader.exec_module(script)
         self.prepare_snapshot = script.prepare_snapshot
         self.catalog = self.directory/'catalog'
-        self.manifest = script.prepare_snapshot(ROOT/'examples/rust-service',self.catalog,'rust-retry')
+        source = self.directory/'input'
+        (source/'src').mkdir(parents=True)
+        oracles = ROOT/'integrations/moyai/oracles'
+        for name in ('Cargo.toml', 'Cargo.lock'):
+            shutil.copyfile(oracles/name, source/name)
+        (source/'src/lib.rs').write_text('pub fn original() {}\n')
+        self.manifest = script.prepare_snapshot(source, self.catalog, 'rust-retry', unversioned=True)
         self.id = self.manifest['repository_id']
         script.register_catalog(self.catalog, self.manifest, {'repository_id':self.id,
             'snapshot_id':self.manifest['snapshot_id'],'store_id':'vs_fixture','generation_id':'gen_fixture'})
-        self.guest = Guest(self.directory/'workspace',ROOT/'integrations/moyai/oracles')
+        self.guest = Guest(self.directory/'workspace', oracles)
         self.backend = RepositoryBackend(Ledger(self.directory/'ledger.db'),self.catalog)
         self.scope = ('conversation','authority')
         async def invoke(scope, op, **fields):

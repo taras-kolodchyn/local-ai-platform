@@ -1,87 +1,57 @@
-# From a GitHub issue to a Moyai draft PR
+# Publish a verified change to an external repository
 
-The first execution profile covers the retry policy in `examples/rust-service` in `taras-kolodchyn/local-ai-platform`. Moyai runs the model, retrieval, edits and trusted Rust checks locally. A separate foreground process on the Mac reads the issue and publishes the verified result to GitHub.
+For ordinary access to GitHub, [connected mode](connected.md) exposes a read-only
+MCP connector. The separate foreground publisher on the Mac can open a draft PR
+for a supported external project. It checks the downloaded patch against the
+verified tree and scopes GitHub writes to one configured repository.
 
-## Run as a private GitHub App
+## Select the project
 
-1. Start the platform with `make up`. On the Mac run `make github-app-setup` and open the printed loopback URL in a browser signed in as the repository owner.
-2. Confirm **Create GitHub App**, follow **Install GitHub App**, choose **Only select repositories**, and select **taras-kolodchyn/local-ai-platform**. The manifest requests Issues read, Contents write and Pull requests write. If GitHub first asks you to sign in, complete sign-in and reopen the local form if needed. The setup callback saves the signing key on the Mac under `.local/github-issues/app/` with mode 0600. The browser and Moyai receive no private key.
-3. Start `make github-app-issues ISSUE=6`. This grants the publisher one issue under the App identity. For multiple eligible issues, omit `ISSUE` and apply the `moyai:rust-retry` label to the tickets. Wait for the ready message.
-4. Paste the full issue URL into a new private Moyai chat. For the same issue, subsequent attempts use this chat. The host checks the actual installation selection, signs a short-lived RS256 JWT, exchanges it for a repository-scoped token and refreshes it near expiry. It calls GitHub REST directly. The model and sandbox receive neither GitHub credentials nor a GitHub CLI.
-5. The draft targets `main` from `codex/app-<id>/issue-<number>`. Each App has its own local claims and branch namespace. Before returning the PR, the publisher checks its head and GitHub's recorded author type and login against the registered App bot. Stopping the foreground publisher with Ctrl+C ends the grant and removes its local relay.
+In the local, Git-ignored `.env`, set `MOYAI_GITHUB_REPOSITORY` to the exact
+`owner/name` on GitHub. Set `MOYAI_GITHUB_PROJECT_PATH` to the relative crate
+directory if the crate lives below the repository root. Run `make up` to apply the
+configuration to the controller. A fresh installation has no publication target.
 
-The App transport uses GitHub REST API version `2026-03-10`. The registration and authentication flow was checked against GitHub documentation on 2026-11-18. [Manifest registration](https://docs.github.com/en/apps/sharing-github-apps/registering-a-github-app-from-a-manifest) · [App JWTs](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-json-web-token-jwt-for-a-github-app) · [Installation access tokens](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-an-installation-access-token-for-a-github-app)
+The foreground publisher reads `main` through an anonymous HTTPS Git clone, so
+the source repository must be publicly cloneable. A private local checkout can
+still be indexed and registered through the local repository commands.
+The selected project must match the
+[protected verification profile](repository-workflow.md). It reads the issue,
+pins the base commit, verifies the source snapshot and reproduces the patch in a
+temporary Git index. Credentials stay on the Mac. For repository search alone,
+index a local checkout with `make index REPO=/absolute/path/to/project`.
 
-### Add coverage to a passing Rust example
+## Open a draft PR
 
-Run `make github-app-issues ISSUE=N PROFILE=rust-retry-tests` and submit the issue URL in an empty private chat. After intake Qwen sees the issue title and body and chooses any number of distinct guides from the local LiteLLM catalog pinned to the turn, including none. Moyai loads each selected guide through a native tool call before continuing repository analysis.
+1. Run `make github-app-setup` and open its loopback URL. Install the private App
+   on the selected repository using **Only select repositories**. The publisher
+   checks the installation's owner, permissions and repository before using it.
+2. Run `make github-app-issues ISSUE=N`, replacing `N` with the target issue
+   number. For the tests-only profile, add `PROFILE=rust-retry-tests`.
+3. Paste the full GitHub issue URL into a new private Moyai chat. The Mac host
+   checks the downloaded evidence, publishes the verified commit and returns
+   the linked draft PR. Stop the foreground publisher to end the session.
 
-The coverage profile requires a passing original implementation and preserves every original file. The agent may add integration targets under `examples/rust-service/tests/`. Verification runs the project and protected tests. Each new test must pass on the candidate and complete on the compiled 60,000 ms counterexample. At least one must detect the counterexample. The App opens a draft at the pinned base. The operator reviews the assertions and CI before merging and checking issue closure and CI on `main`.
+To publish a single draft using the signed-in operator's GitHub CLI account,
+use `make github-issues ISSUE=N`. The App additionally supports
+`AUTO_MERGE=1` for a single issue when the destination supplies the expected
+CI workflow and permits the merge. The merge gate checks the PR head, its base
+and the completed CI run. [Publisher implementation](../scripts/github-issues.py)
 
-During issue intake, the controller searches the pinned generation for evidence in `src/lib.rs`. Regression tests can rank highly in a repository-wide search, so the controller applies the source path filter before ranking. The analysis phase requires that citation, baseline checks and an acceptance plan before editing. A model message claiming completion during analysis triggers a retry.
+## Developer and Verifier automations
 
-### Documentation review before publishing
+For a scheduled issue-to-PR workflow, configure the two Moyai roles for the
+destination repository. Install the GitHub App there, choose the permitted paths
+and skills, and configure that repository's CI and merge rules before enabling
+its queue label. The platform's own CI tests the platform. Its installation does
+not enroll a project in the automation.
 
-For tests-only issues that request interleaved calls and name an extreme attempt, extreme input or u32::MAX, the harness builds two additional copies of the pinned Rust implementation. Each copy introduces a dependency in one direction. After a maximum input on one entry point, a small input on the other incorrectly stays capped. Added tests must pass the actual code and fail both modified implementations. When the issue explicitly requests a separate capped attempt and small attempts 0 and 2, each fault also requires a distinct non-maximum capped input and both small values on the opposite API. The publisher verifies the corresponding receipt before creating the draft.
+The retired docs-only pilot records the handoffs from issue intake to
+independent review, merge and post-merge CI. Its Actions workflows and issue
+form are preserved at the last platform revision that ran them. They identify
+the original App and permitted path. [Completed pilot issue](https://github.com/taras-kolodchyn/local-ai-platform/issues/94) ·
+[Versioned workflow configuration](https://github.com/taras-kolodchyn/local-ai-platform/tree/5029427f3b0d228b3eafe52f41f3d6337575e4a2/.github)
 
-After Rust verification, Moyai sends the candidate diff and numbered implementation and policy lines to a separate local `local-qwen` request. The reviewer has one structured reporting tool. It records a source citation and a judgment for each changed passage in comments, Rustdoc and Markdown. The controller also checks affirmative removal promises and explicit retry-ceiling claims against the pinned policy. For the supported retry implementation it distinguishes the function that computes the delay from the deprecated forwarding wrapper. Deprecation alone only establishes the current API status. A future removal requires an explicit policy.
-
-When a coverage ticket requests a caller note on calculation, forwarding and migration, review also checks for that module documentation. The retry implementation provides a lower bound for millisecond delays. An input attempt described as an output below that bound triggers another edit and verification.
-
-For numeric retry-delay claims, the reviewer must cite a calculation line from the pinned implementation. A signature or deprecation attribute triggers one retry of the review. A second invalid citation prevents approval and publication.
-
-For the supported direct-exponent formula, the reviewer also receives computed delays for literal calls in the patch. The controller checks explicit one- and two-attempt return examples and their stated low-bit values against that formula. The auto-merge publisher repeats this check on the reproduced Git tree, including when it resumes a previously approved draft.
-
-The reviewer also traces the retry input through the legacy wrapper and the calculation. When the wrapper forwards its `u32` argument unchanged and the formula uses it directly as the exponent, Moyai flags prose that says either helper narrows it to a byte. A test may still explain what would happen *if* the input were narrowed.
-
-When the reviewer requests changes, the editing agent receives the findings in the same chat. It must change the candidate, rerun the protected checks and obtain approval for the revised tree. The test report contains the review history. The host publisher checks the approval against the pinned snapshot, final Rust receipt, verified tree and downloaded patch hash before creating a draft. The report distinguishes model findings from policy checks and includes the source lines for inspection.
-
-### Let the GitHub App merge a verified PR
-
-Start `make github-app-issues ISSUE=N PROFILE=rust-retry-tests AUTO_MERGE=1` on the Mac before pasting the new issue URL into a private chat. The grant applies to that issue at intake. Ordinary App sessions publish drafts. The default platform profile stays offline.
-
-Keep the command running after Moyai returns its Files and draft link. The host reproduces the Git tree from the delivered patch and checks the issue, PR author, branch, head and base. The repository CI workflow records the PR number and both event SHAs in its run name. The App waits for the workflow and its `test` job to succeed, marks the draft ready, then requests a GitHub merge with the verified head OID. It records the CI run and reconciles the merged commit, tree, parents and bot identity in the local issue record. After the merge passes push CI on `main`, GitHub Actions closes the single linked issue matching the App branch. The App keeps read-only issue access.
-
-Keep the host publisher running across controller restarts. Its opt-in relay has no network and exposes a Unix socket on a controller-only Docker volume. A restarted controller, including one recreated with the base Compose file, reconnects for the same issue, chat and logical turn. The host authenticates the active user turn before writes. Replaying a request under the same live grant returns the recorded response. Ending the grant removes the relay. The ordinary offline controller has only the read-only socket directory.
-
-If the publisher stops after publication, rerun the same command to resume. A changed head or base requires fresh verification. A failed CI leaves the PR open. After a CI rerun, the same grant can check the new attempt. GitHub App credentials stay on the host. This flow uses the GitHub REST API version `2026-03-10` and GitHub GraphQL. [Workflow runs](https://docs.github.com/en/rest/actions/workflow-runs#list-workflow-runs-for-a-workflow) · [Pull request mutations](https://docs.github.com/en/graphql/reference/pull-requests)
-
-### Single-message App rehearsal, 2026-11-18
-
-The operator pasted the URL of issue #10 into an empty private Moyai web chat. This was the only user message. In 2m 32s, one turn retrieved the retry policy, reproduced the 60,000 ms baseline, edited the Rust implementation and tests, delivered three Files links and returned the draft PR. GitHub identifies `moyai-local-348144ed[bot]` as the author of both the commit and the draft. [Issue #10](https://github.com/taras-kolodchyn/local-ai-platform/issues/10) · [Draft PR #11](https://github.com/taras-kolodchyn/local-ai-platform/pull/11) · [Published commit](https://github.com/taras-kolodchyn/local-ai-platform/commit/1f9cc341f2c9e967e5d63416f0b127884bd69074)
-
-The first repair validation passed seven project tests and four protected tests. Two of the five new tests also failed against the old 60,000 ms behavior. An independent local observer authenticated both check receipts and reapplied the 1,757-byte patch to the pinned source. Its result matched the verified workspace. One authenticated localhost request fetched the completed patch in 7.46 ms. Its SHA-256 was `ba3254960ebdbc9a55c2c612c5fac30b16433d7667fc070baa7164b78de543bc`. GitHub Actions passed on the published commit. [CI for PR #11](https://github.com/taras-kolodchyn/local-ai-platform/actions/runs/44290097035)
-
-### Earlier App run with a resumed chat, 2026-11-18
-
-The private installation selected one repository. Moyai received [issue #6](https://github.com/taras-kolodchyn/local-ai-platform/issues/6) in a private web chat. The first turn exhausted its budget during planning. The controller now uses the Rust profile's native plan when the saved plan lacks the required acceptance criterion or marks every step complete before editing. Resubmitting the same URL can reopen an exhausted analysis once, within the original deadline, after the host confirms the claim and the controller verifies the pristine source tree.
-
-After a controller update, the successful turn in the same chat took 3m 55s. The attached baseline recorded 60,000 ms against a 30,000 ms limit. The repaired tree passed five project tests, including three added regressions, and four protected tests on its first repair validation. Both signed check receipts and the downloaded patch were independently verified. GitHub recorded `moyai-local-348144ed[bot]` as the author of the commit and the open draft. [Draft PR #8](https://github.com/taras-kolodchyn/local-ai-platform/pull/8) · [CI on commit 20eb589](https://github.com/taras-kolodchyn/local-ai-platform/actions/runs/44278872210)
-
-## Run with the operator account
-
-1. Start the platform with `make up`.
-2. For a single approved Rust retry issue, run `make github-issues ISSUE=6`, substituting the issue number. This explicitly authorizes the signed-in host `gh` account for that issue. Wait for “GitHub issue publisher ready”. First startup indexes the example at the current GitHub `main` commit. Start the publisher before submitting the issue URL.
-3. Open a private chat at [local Moyai](http://127.0.0.1:8787). Paste the full GitHub issue URL as the entire message. The session owner must be the local operator. The initial chat message supplies the issue identity. The issue body and source files supply untrusted task data.
-4. Follow the source search, baseline failure, plan, edits and validation in the chat. On success the final message contains the three native Files links and the GitHub draft PR. The PR targets `main` from `codex/issue-N`.
-5. Press Ctrl+C in the publisher terminal when done. This stops the relay. The default profile has no running publisher, GitHub credentials or write-capable external MCP.
-
-For a dedicated GitHub App, install it on this repository with Issues read, Contents write and Pull requests write. Supply an installation token in `.local/github-issues/installation-token` on the Mac with mode 0600. Run `make github-issues` without an issue number and select the verification profile by labeling the issue `moyai:rust-retry`. The operator still initiates each task with its URL. The publisher reads the token file for each request, so an operator or token provider can replace it at expiry. The connected read-only MCP setup has separate credentials. [GitHub installation tokens](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-an-installation-access-token-for-a-github-app)
-
-## Publication and recovery
-
-The host confirms the original URL against the authenticated owner's active web turn. It pins the issue, conversation, indexed snapshot and GitHub base commit in private host state. The Linux sandbox has access only to the local workspace. The connected relay exchanges bounded requests and responses with the host using a lease-scoped mailbox.
-
-After local verification the publisher downloads the patch, result and test report through authenticated Moyai Files. It checks their hashes and the final trusted check receipt, compares the snapshot with Git blobs at the pinned base, applies the patch to a temporary Git index, and compares the resulting Rust files against the verified tree digest. GitHub must return the same full repository tree SHA as the local index. The publisher persists the commit SHA before creating the issue branch. It then reads back the draft and checks its repository, base branch, head SHA and state. [Git references API](https://docs.github.com/en/rest/git/refs#create-a-reference) · [Pull requests API](https://docs.github.com/en/rest/pulls/pulls#create-a-pull-request)
-
-Moyai keeps the issue attached to the same private owner and logical turn when a long run switches to a native history checkpoint. A replacement run is available for an earlier private turn that ended after verification and before file delivery. The operator sets MOYAI_RESTART_UNPUBLISHED_FROM to that exact session UUID, starts the App publisher for the same issue, and submits its URL in a new private chat. The publisher checks the owner, terminal turn, issue, recorded artifacts, branch and PR history before atomically replacing the claim. It records the previous attempt and verifies the new checkout independently.
-
-If publication loses its response, resend the same URL in the original chat with the publisher running. The publisher checks the active owner turn before each GitHub write and rechecks the issue and base before creating a branch or draft. Recovery reads an existing PR before creating a branch, including closed and retargeted PRs. A deleted branch belonging to such a PR requires operator review. Publication succeeds when GitHub reports an open draft at the pinned base SHA and verified head SHA. The patch and reports remain available after successful local verification. GitHub review and merge are separate steps. Other repository tasks need their own execution and verification profile.
-
-## Live verification, 2026-11-17
-
-Using host GitHub CLI 2.104.0 and REST API version `2026-03-10`, the operator submitted [issue #6](https://github.com/taras-kolodchyn/local-ai-platform/issues/6) through a private Moyai chat. During development, two intake attempts failed before attachment. The controller now dispatches a standalone URL directly to its native issue tool, and the publisher checks ownership against the nested session object in the installed Moyai API.
-
-The successful turn took 4m 54s. It reproduced the 60-second baseline, passed 7 project tests and 4 protected tests on the first repair validation, and delivered a patch with SHA-256 `01f2b8a7e57c85837ea7c3ae7d1b00cfd3611ca03b0a61f60903056916dcec3d`. Independent observation authenticated both verification receipts. GitHub recorded commit `4d4f4fe2b7c71e5c60282d6d026b9a21500d1eeb` on the issue branch. [Draft PR #7](https://github.com/taras-kolodchyn/local-ai-platform/pull/7) · [Successful CI for the published commit](https://github.com/taras-kolodchyn/local-ai-platform/actions/runs/44162713166)
-
-After restarting the publisher, submitting the URL in the same chat returned the same PR and Files in 5 seconds. The persisted task, tool counters and validation receipts were identical. This live run used the single-issue host login. The dedicated installation-token path requires separate verification with a repository installation.
+GitHub App authentication uses an installation token scoped to the selected
+repository. [Manifest registration](https://docs.github.com/en/apps/sharing-github-apps/registering-a-github-app-from-a-manifest) ·
+[Installation access tokens](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-an-installation-access-token-for-a-github-app)

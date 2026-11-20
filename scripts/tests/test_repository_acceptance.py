@@ -53,7 +53,7 @@ class RepositoryAcceptanceTests(unittest.TestCase):
                                   'output_truncated': True, 'pipe_drained': True, 'descendants_stopped': True, 'process_group_stopped': True})
         task = {'task_id':'task_fixture','phase': 'completed', 'binding': binding, 'original_tree': 'original',
                 'verified_tree': 'verified', 'pending': None, 'receipts': [baseline, final],
-                'citations': [{'path': 'docs/architecture-rules.md', 'start_line': 5, 'end_line': 10}],
+                'citations': [{'path': 'docs/architecture-rules.md', 'start_line': 20, 'end_line': 25}],
                 'plan': [{'content': 'Retry delays never exceed 30,000 ms'}], 'attempts':1}
         observer = {'tree_hash': 'verified', 'receipt_authenticity': [True, True],
                     'protected_unchanged': True, 'uid': 10001}
@@ -65,10 +65,15 @@ class RepositoryAcceptanceTests(unittest.TestCase):
         report = {'task_id':'task_fixture','verification_profile':'rust-retry','baseline_and_attempts': task['receipts']}
         tools = {'open_repository', 'search_repository', 'write_plan', 'run_repository_checks',
                  'begin_repository_changes', 'write_file', 'finish_repository_task'}
-        return task, observer, result, report, tools, binding, hashes
+        return task, observer, result, report, tools, binding, hashes, [23]
 
     def test_requires_real_baseline_and_current_authenticated_result(self):
         self.validator()(*self.evidence())
+
+    def test_citation_must_cover_the_policy_line_in_the_selected_snapshot(self):
+        *records, _ = self.evidence()
+        with self.assertRaisesRegex(ValueError, 'documented retry policy'):
+            self.validator()(*records, [26])
 
     def test_descendant_cleanup_must_be_attested_for_every_command(self):
         for index in (0, -1):
@@ -99,7 +104,6 @@ class RepositoryAcceptanceTests(unittest.TestCase):
                    lambda e: e[4].remove('search_repository'),
                    lambda e: e[0].update(citations=[]),
                    lambda e: e[0]['citations'][0].update(path='README.md'),
-                   lambda e: e[0]['citations'][0].update(start_line=8),
                    lambda e: e[0].update(plan=[]),
                    lambda e: e[3].update(baseline_and_attempts=[]),
                    lambda e: e[2].update(task_id='foreign-task'),

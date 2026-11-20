@@ -7,7 +7,7 @@ def require(condition, message):
         raise ValueError(message)
 
 
-def validate_evidence(task, observer, result, report, completed_tools, binding, downloaded_hashes):
+def validate_evidence(task, observer, result, report, completed_tools, binding, downloaded_hashes, policy_lines):
     require(task.get('phase') == 'completed' and task.get('pending') is None,
             'The controller task is not completed and settled')
     require(task.get('task_id') and task['task_id'] == result.get('task_id') == report.get('task_id')
@@ -63,15 +63,16 @@ def validate_evidence(task, observer, result, report, completed_tools, binding, 
                     and c.get('process_group_stopped') is True
                     for c in commands), 'Validation command did not complete successfully')
     require(task.get('citations') and task.get('plan'), 'Cited context or native plan is missing')
-    require(any(c.get('path') == 'docs/architecture-rules.md' and
-                type(c.get('start_line')) is int and type(c.get('end_line')) is int
-                and 1 <= c['start_line'] <= 7 <= c['end_line'] for c in task['citations']),
-            'Retrieved context does not cover the documented retry policy')
+    policy_citations = [c for c in task['citations'] if c.get('path') == 'docs/architecture-rules.md'
+                        and type(c.get('start_line')) is int and type(c.get('end_line')) is int
+                        and any(1 <= c['start_line'] <= line <= c['end_line'] for line in policy_lines)]
+    require(policy_citations, 'Retrieved context does not cover the documented retry policy')
     intake = 'open_github_issue' if task.get('github_issue') else 'open_repository'
     required = {intake, 'search_repository', 'write_plan', 'run_repository_checks',
                 'begin_repository_changes', 'finish_repository_task'}
     require(required <= completed_tools and completed_tools & {'edit_file', 'write_file'},
             'Actual model tools did not complete the repository workflow')
+    return policy_citations
 
 
 def validate_regressions(checks, commands):
