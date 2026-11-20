@@ -21,7 +21,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 12
-    networks: [openbao]
+    networks: [openbao, openbao-host]
 
   litellm:
     depends_on:
@@ -39,3 +39,5 @@ services:
 networks:
   openbao:
     internal: true
+  # Docker Desktop publishes loopback ports through a non-internal bridge.
+  openbao-host: {}
