@@ -84,6 +84,13 @@ value as `LITELLM_SALT_KEY`. Keep this salt stable across master-key rotations
 and back up the OpenBao state with the matching database.
 [LiteLLM encryption and master-key rotation](https://docs.litellm.ai/docs/enterprise/moving_from_oss)
 
+Verified on the working Mac on 2026-11-20 with LiteLLM 1.110.2 and OpenBao
+2.7.3. The second KV version passed an admin request and both previous admin
+keys returned HTTP 401. The same virtual keys handled a Moyai Responses
+request, platform embeddings and repository-context search. A fresh Moyai
+conversation completed, the dashboard login succeeded, and Prometheus
+scraped with its dedicated credential. The UI's native Vault address was empty.
+
 ## Configure an external OpenBao for the dashboard
 
 Use a KV v2 engine mounted at `secret/` and AppRole authentication mounted at
