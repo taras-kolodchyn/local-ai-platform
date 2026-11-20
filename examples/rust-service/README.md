@@ -19,6 +19,17 @@ cargo run
 curl http://127.0.0.1:8080/health
 ```
 
+## Request flow
+
+1. A request to `GET /reports?owner=alice` is handled by the `reports` function in [src/lib.rs](src/lib.rs)
+2. The `ReportFilter` struct extracts the `owner` parameter from the query string
+3. The `build_report_query` function constructs the SQL query string
+4. The `app` function sets up the router and routes the request to the `reports` handler
+5. The response contains the query in the `query` field of the `ReportResponse` struct
+6. The HTTP status code returned is `200 OK`
+
+This handler constructs a SQL query string as a representation, not a database query. The implementation shows no database interaction.
+
 ## Running focused Rust retry tests
 
 Contributors can run only the Rust retry regression integration target using:
