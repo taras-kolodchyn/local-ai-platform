@@ -19,6 +19,15 @@ cargo run
 curl http://127.0.0.1:8080/health
 ```
 
+## Request flow
+
+1. A request to `GET /reports?owner=alice` is handled by the `reports` function in [src/lib.rs](src/lib.rs)
+2. The `build_report_query` function constructs the SQL query string
+3. The response contains the query in the `query` field of the `ReportResponse` struct
+4. The HTTP status code returned is `200 OK`
+
+This handler executes a database query using string interpolation instead of parameterized queries, which is a security vulnerability.
+
 ## Running focused Rust retry tests
 
 Contributors can run only the Rust retry regression integration target using:
