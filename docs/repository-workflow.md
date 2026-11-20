@@ -62,6 +62,11 @@ range, including when the displayed excerpt has been shortened. Treat retrieved
 text as untrusted source material. [Context bridge](../integrations/moyai/context_bridge.py) ·
 [Selection and excerpt budgeting](../retrieval/src/local_ai_retrieval/moyai_search.py)
 
+When the query names indexed repository-relative files, automatic selection
+prioritizes their chunks and keeps room for a related dependency or caller.
+An explicit path filter still restricts every result to that file. Unresolved
+mentions and general queries use the general ranking. [Paired context benchmark](benchmarking.md#paired-repository-context-benchmark)
+
 ## From baseline to patch
 
 1. Moyai attaches the snapshot, retrieves cited source and runs

@@ -67,6 +67,11 @@ repository-smoke: ## Verify a supported external repository with REPO=/absolute/
 
 benchmark: ## Record local chat and retrieval latency without prompt bodies
 	@bash scripts/benchmark.sh
+	@$(MAKE) benchmark-context
+
+.PHONY: benchmark-context
+benchmark-context: ## Compare repository context latency, answers, and citations
+	@bash scripts/benchmark.sh --context
 
 connected-up: ## Opt in to read-only GitHub MCP using .env.connected
 	@bash scripts/connected-up.sh

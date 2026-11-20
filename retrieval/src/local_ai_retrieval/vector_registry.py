@@ -7,7 +7,7 @@ from psycopg.rows import dict_row
 
 from .db import compatible_scope_exists, search_chunks
 from .embeddings import embed_texts
-from .moyai_search import CANDIDATES, CONTEXT_CHARS, pack_chunks, select_chunks
+from .moyai_search import CANDIDATES, CONTEXT_CHARS, file_context, mentioned_paths, pack_chunks, select_chunks
 from .scanner import MAX_FILE_BYTES
 
 
@@ -28,7 +28,8 @@ def list_stores(settings) -> list[dict]:
             'FROM workspace_vector_stores s LEFT JOIN repository_generations g ON g.id=s.generation_id ORDER BY s.id').fetchall()]
 
 
-def scoped_search(settings, scope: dict, query: str, path: str | None, limit: int, *, auto_rank=False) -> list[dict]:
+def scoped_search(settings, scope: dict, query: str, path: str | None, limit: int, *,
+                  auto_rank=False, focus_mentions=True) -> list[dict]:
     from .ingestion import embedding_fingerprint
     if not settings.embedding_artifact_id:
         raise ValueError('Query embedding identity is unavailable')
@@ -43,13 +44,29 @@ def scoped_search(settings, scope: dict, query: str, path: str | None, limit: in
         # The public result limit and source budget apply after selection.
         candidate_settings = (replace(settings, max_limit=CANDIDATES,
             max_context_chars=CANDIDATES * MAX_FILE_BYTES) if auto_rank else settings)
-        rows = search_chunks(candidate_settings, vector, query=query, repository=scope['repository'],
-            branch=scope['branch'], snapshot_id=scope.get('snapshot_id'),
-            generation_id=scope.get('generation_id'), compatible_fingerprint=fingerprint, exact_path=path,
-            limit=CANDIDATES if auto_rank else limit)
+
+        def fetch(exact_path, count):
+            return search_chunks(candidate_settings, vector, query=query, repository=scope['repository'],
+                branch=scope['branch'], snapshot_id=scope.get('snapshot_id'),
+                generation_id=scope.get('generation_id'), compatible_fingerprint=fingerprint,
+                exact_path=exact_path, limit=count)
+
+        rows = fetch(path, CANDIDATES if auto_rank else limit)
         if not auto_rank:
             return rows
-        selected = select_chunks(settings, query, rows, min(limit, settings.max_limit))
-        return pack_chunks(selected, min(CONTEXT_CHARS, settings.max_context_chars))
+        limit = min(limit, settings.max_limit)
+        budget = min(CONTEXT_CHARS, settings.max_context_chars)
+        mentions = mentioned_paths(query) if focus_mentions and path is None else []
+        if 0 < len(mentions) <= min(4, limit):
+            groups = []
+            for name in mentions:
+                group = [row for row in rows if row['path'] == name] or fetch(name, 2)
+                if not group:
+                    break
+                groups.append(group)
+            else:
+                return pack_chunks(file_context(groups, rows, limit), budget, preserve_leader=False)
+        selected = select_chunks(settings, query, rows, limit)
+        return pack_chunks(selected, budget)
     except psycopg.errors.QueryCanceled as exc:
         raise TimeoutError('Search deadline exceeded') from exc

@@ -17,6 +17,19 @@ samples="$work_dir/samples.jsonl"
 mkdir -p "$output_dir"
 trap 'rm -rf "$work_dir"' EXIT
 
+if [[ ${1:-} == --context ]]; then
+  info "Comparing repository context selection on local and cross-file questions..."
+  result="$output_dir/${timestamp}-context-$$.json"
+  INDEX_REPO_PATH="$ROOT_DIR" docker compose --profile tools run --rm -T --no-deps \
+    --env PYTHONPATH=/workspace/retrieval/src --entrypoint python ingestion \
+    /workspace/scripts/benchmark-context.py "$(git rev-parse HEAD)" > "$work_dir/context.json"
+  mv "$work_dir/context.json" "$result"
+  ok "Paired context measurements written to $result"
+  jq -e '.pairs_per_case as $n | all(.summary[]; .focused.passed == $n)' "$result" >/dev/null \
+    || die "Focused answers or citations failed; see the paired measurements"
+  exit 0
+fi
+
 model_runner_version=$(docker model version 2>/dev/null \
   | awk '/Version:/ && !seen {version=$2; seen=1} END {if (seen) print version}')
 [[ -n "$model_runner_version" ]] || model_runner_version=unavailable
