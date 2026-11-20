@@ -5,10 +5,6 @@ repository retrieval, the Moyai sandbox and dashboards use the resources on
 the Mac. The GitHub MCP service and the host-side issue publisher require
 separate opt-in commands.
 
-The default LiteLLM dashboard login also works locally. If you select the
-[OpenBao password source](openbao.md), the gateway needs access to your OpenBao
-endpoint at startup and to receive password updates.
-
 ## Prepare while connected
 
 ```sh

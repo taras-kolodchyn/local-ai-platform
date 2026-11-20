@@ -109,14 +109,6 @@ class PlatformLifecycleTests(unittest.TestCase):
     def calls(self):
         return [json.loads(line) for line in self.events.read_text().splitlines()]
 
-    def test_openbao_mode_requires_approle_files_before_starting_services(self):
-        with (self.root / '.env').open('a') as config:
-            config.write('LITELLM_UI_PASSWORD_SOURCE=openbao\nOPENBAO_ADDR=https://bao.invalid\n')
-        result = self.run_make('up')
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn('role-id', result.stderr)
-        self.assertNotIn(['dependency', 'pull-model.sh'], self.calls())
-
     def test_up_starts_only_moyai_then_verifies_the_complete_stack(self):
         self.events.write_text('')
         self.state_file.write_text(json.dumps(self.initial | {'core': False, 'moyai': False}))

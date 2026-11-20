@@ -37,23 +37,6 @@ status: ## Show containers, DMR models, and endpoints
 smoke-test: ## Verify live endpoints, bridge, embeddings, cache, pgvector, MCP, and metrics
 	@bash scripts/smoke-test.sh
 
-.PHONY: openbao-start openbao-rotate openbao-copy-password
-openbao-start: ## Start and unlock the local OpenBao server using macOS Keychain
-	@source scripts/lib.sh && load_env && exec python3 scripts/openbao-local.py start
-
-openbao-rotate: ## Generate a new LiteLLM dashboard password in local OpenBao
-	@source scripts/lib.sh && load_env && exec python3 scripts/openbao-local.py rotate
-
-openbao-copy-password: ## Copy the current LiteLLM dashboard password to the Mac clipboard
-	@source scripts/lib.sh && load_env && exec python3 scripts/openbao-local.py copy-password
-
-.PHONY: openbao-enable-master openbao-rotate-master
-openbao-enable-master: ## Provision master key access using OPENBAO_ADMIN_TOKEN_FILE
-	@source scripts/lib.sh && load_env && exec python3 scripts/openbao-local.py enable-master
-
-openbao-rotate-master: ## Rotate the local OpenBao LiteLLM admin credential
-	@source scripts/lib.sh && load_env && exec python3 scripts/openbao-local.py rotate-master
-
 test: ## Run platform unit, contract, and isolated PostgreSQL tests
 	@bash scripts/test.sh
 

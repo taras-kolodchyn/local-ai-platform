@@ -72,12 +72,9 @@ checks the whole round trip and separately checks a streamed Responses call.
 
 ## A dashboard rejects the configured login
 
-LiteLLM uses `UI_USERNAME` (default `admin`) and `UI_PASSWORD` (defaults to
-the master key) in the default mode. With OpenBao enabled, check the Agent login,
-KV v2 path and gateway readiness after rotation. Test with a fresh browser session.
-If the local Compose server is sealed after Docker Desktop restarts, unlock
-the Mac login Keychain and run `make openbao-start`.
-[OpenBao setup and rotation](openbao.md)
+Check `UI_USERNAME` (default `admin`) and `UI_PASSWORD` in `.env`. An empty
+password uses `LITELLM_MASTER_KEY`. After editing the file, run `make up` and
+sign in to LiteLLM in a fresh browser session.
 
 Grafana's initial admin password is persisted in its volume.
 Changing `GRAFANA_ADMIN_PASSWORD` on an existing installation can leave the
