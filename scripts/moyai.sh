@@ -17,8 +17,13 @@ case "${1:-up}" in
     fi
     python3 scripts/moyai-prepare.py --ui connect
     # UI provisioning can succeed even if the context service stopped after the initial wait.
-    "${moyai_compose[@]}" up --detach --no-deps --no-recreate \
-      --wait --wait-timeout 120 repository-context
+    if context_state=$("${moyai_compose[@]}" ps --all --format '{{.State}} {{.Health}}' repository-context) && \
+       [[ "$context_state" == 'running healthy' ]]; then
+      ok "Repository context is running and healthy"
+    else
+      "${moyai_compose[@]}" up --detach --no-deps --no-recreate \
+        --wait --wait-timeout 120 repository-context
+    fi
     ok "Local Moyai is ready at http://127.0.0.1:8787 (user: admin)"
     info "Private password: $ROOT_DIR/.local/moyai/admin-password"
     ;;

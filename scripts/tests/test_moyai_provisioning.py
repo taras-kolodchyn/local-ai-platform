@@ -117,9 +117,19 @@ class MoyaiProvisioningTests(unittest.TestCase):
             module.connect_ui('fixture-admin-key')
 
     def test_startup_reloads_changed_controller_and_requires_healthy_context(self):
-        for changed, existing, healthy in [('changed', True, True), ('unchanged', True, True),
-                                           ('changed', False, True), ('unchanged', True, False)]:
-            with self.subTest(changed=changed, existing=existing, healthy=healthy), tempfile.TemporaryDirectory() as directory:
+        # Config change, existing controller, Compose ps output/status, fallback up status.
+        cases = [
+            ('changed', True, 'running healthy', 0, 0),
+            ('unchanged', True, 'running healthy', 0, 0),
+            ('changed', False, '', 0, 0),
+            ('unchanged', True, 'exited', 0, 0),
+            ('unchanged', True, 'running starting', 0, 0),
+            ('unchanged', True, 'running unhealthy', 0, 7),
+            ('unchanged', True, 'running healthy\nrunning starting', 0, 0),
+            ('unchanged', True, 'running healthy', 1, 0),
+        ]
+        for changed, existing, state, ps_status, up_status in cases:
+            with self.subTest(state=state, ps_status=ps_status, changed=changed), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 (root / 'scripts').mkdir()
                 for script in ('lib.sh', 'moyai.sh'):
@@ -143,8 +153,12 @@ with open(os.environ['COMMAND_LOG'], 'a') as stream:
     stream.write(json.dumps(sys.argv[1:]) + '\\n')
 if sys.argv[-3:] == ['ps','-q','moyai'] and os.environ['EXISTING'] == 'yes':
     print('fixture-controller')
-if sys.argv[-1] == 'repository-context' and os.environ['CONTEXT_HEALTHY'] == 'no':
-    raise SystemExit(7)
+if sys.argv[-1] == 'repository-context':
+    if 'ps' in sys.argv:
+        print(os.environ['CONTEXT_STATE'])
+        raise SystemExit(int(os.environ['PS_STATUS']))
+    if 'up' in sys.argv:
+        raise SystemExit(int(os.environ['UP_STATUS']))
 '''.replace('/usr/bin/env python3_fixture', str(Path(os.sys.executable))))
                 for binary in binaries.iterdir():
                     binary.chmod(0o755)
@@ -152,16 +166,21 @@ if sys.argv[-1] == 'repository-context' and os.environ['CONTEXT_HEALTHY'] == 'no
                 result = subprocess.run(['bash', 'scripts/moyai.sh', 'up'], cwd=root,
                     env=os.environ | {'PATH': str(binaries) + os.pathsep + os.environ['PATH'],
                         'CONFIG_CHANGE': changed, 'EXISTING': 'yes' if existing else 'no',
-                        'CONTEXT_HEALTHY': 'yes' if healthy else 'no', 'COMMAND_LOG': str(log)},
+                        'CONTEXT_STATE': state, 'PS_STATUS': str(ps_status),
+                        'UP_STATUS': str(up_status), 'COMMAND_LOG': str(log)},
                     capture_output=True, text=True)
-                self.assertEqual(result.returncode, 0 if healthy else 7, result.stderr)
-                self.assertEqual('Local Moyai is ready' in result.stdout, healthy)
+                self.assertEqual(result.returncode, up_status, result.stderr)
+                self.assertEqual('Local Moyai is ready' in result.stdout, up_status == 0)
                 calls = [json.loads(line) for line in log.read_text().splitlines()]
-                self.assertEqual(calls[-2], ['python3', 'scripts/moyai-prepare.py', '--ui', 'connect'])
-                context = calls[-1]
-                self.assertEqual(context[-1], 'repository-context')
-                for flag in ('up', '--wait', '--wait-timeout', '--no-deps', '--no-recreate'):
-                    self.assertIn(flag, context)
+                compose = ['compose', '--project-name', 'local-ai-moyai', '--file', 'compose.moyai.yaml']
+                connected = calls.index(['python3', 'scripts/moyai-prepare.py', '--ui', 'connect'])
+                self.assertIn(compose + ['up', '--detach', '--no-build', '--wait', '--wait-timeout', '300'],
+                              calls[:connected])
+                expected = [compose + ['ps', '--all', '--format', '{{.State}} {{.Health}}', 'repository-context']]
+                if (state, ps_status) != ('running healthy', 0):
+                    expected.append(compose + ['up', '--detach', '--no-deps', '--no-recreate',
+                                               '--wait', '--wait-timeout', '120', 'repository-context'])
+                self.assertEqual(calls[connected + 1:], expected)
                 for call in calls:
                     if call[0] == 'compose':
                         self.assertIn('--project-name', call)
