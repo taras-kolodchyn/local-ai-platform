@@ -132,7 +132,8 @@ with open(os.environ['COMMAND_LOG'], 'a') as stream:
     stream.write(json.dumps(['python3', *sys.argv[1:]]) + '\\n')
 if sys.argv[1:] == ['scripts/moyai-prepare.py']:
     print(os.environ['CONFIG_CHANGE'])
-elif sys.argv[1:] != ['scripts/moyai-prepare.py', '--ui', 'connect']:
+elif sys.argv[1:] not in (['scripts/moyai-prepare.py', '--ui', 'connect'],
+        ['scripts/build-images.py', '--project-name', 'local-ai-moyai', '--file', 'compose.moyai.yaml']):
     raise SystemExit(1)
 '''.replace('/usr/bin/env python3_fixture', str(Path(os.sys.executable))))
                 (binaries / 'ssh-keygen').write_text('#!/bin/sh\nexit 0\n')

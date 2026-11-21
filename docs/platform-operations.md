@@ -18,6 +18,23 @@ secrets belong to the checkout that started the services.
 [Core Compose project](../compose.yaml) · [Moyai project](../compose.moyai.yaml) ·
 [Lifecycle targets](../Makefile)
 
+### Repeated Compose builds
+
+Startup checks the local image ID and the contents, paths and permissions of
+each image’s build inputs. The Dockerfile and its effective `.dockerignore`
+are included. Only services with changed inputs or a missing or replaced image
+go through `docker compose build`. Both projects still run `compose up --wait`
+and the full smoke checks. Runtime settings in `.env` continue to take effect
+through bootstrap and Compose reconciliation.
+
+The first run populates `.local/compose-builds/` after a successful build.
+Removing these receipts forces a build on the next startup. Keep new build
+sources in the corresponding Docker context allowlist. More complex ignore
+patterns or additional build options fall back to a regular Compose build.
+Verified on Apple Silicon on 2026-11-21 with Docker Compose v5.7.1 and
+Buildx v0.38.1.
+[Docker build contexts and Dockerfile-specific ignore files](https://docs.docker.com/build/concepts/context/)
+
 ## Resolved models and status
 
 Set `QWEN_MODEL`, `EMBEDDING_MODEL` and `QWEN_CONTEXT_SIZE` in the ignored

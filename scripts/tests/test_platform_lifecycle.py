@@ -138,7 +138,8 @@ class PlatformLifecycleTests(unittest.TestCase):
             result = self.run_make('up')
             self.assertEqual(result.returncode, 0, result.stderr)
             up = [c for c in self.calls() if c[:3] == ['docker', 'compose', 'up']]
-            self.assertEqual(up, [['docker', 'compose', 'up', '--detach', '--build', '--wait', '--wait-timeout', '420']])
+            self.assertLess(self.calls().index(['dependency', 'scripts/build-images.py']), self.calls().index(up[0]))
+            self.assertEqual(up, [['docker', 'compose', 'up', '--detach', '--no-build', '--wait', '--wait-timeout', '420']])
             self.assertNotIn(['docker', 'compose', 'restart', 'retrieval'], self.calls())
             self.assertIn(['dependency', 'smoke-test.sh'], self.calls())
 

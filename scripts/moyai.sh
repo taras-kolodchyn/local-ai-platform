@@ -9,7 +9,8 @@ case "${1:-up}" in
     require_command ssh-keygen
     changed=$(python3 scripts/moyai-prepare.py)
     existing=$("${moyai_compose[@]}" ps -q moyai)
-    "${moyai_compose[@]}" up --detach --build --wait --wait-timeout 300
+    python3 scripts/build-images.py "${moyai_compose[@]:2}"
+    "${moyai_compose[@]}" up --detach --no-build --wait --wait-timeout 300
     if [[ "$changed" == changed && -n "$existing" ]]; then
       "${moyai_compose[@]}" up --detach --wait --wait-timeout 120 \
         --force-recreate --no-deps moyai

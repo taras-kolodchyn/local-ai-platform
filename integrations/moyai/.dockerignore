@@ -1,2 +1,7 @@
-__pycache__/
-*.py[cod]
+**
+!*.py
+!LICENSE.upstream
+!tests/**
+!skills/**
+**/__pycache__
+**/*.pyc

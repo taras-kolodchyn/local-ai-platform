@@ -1,7 +1,4 @@
 **
-!integrations/
-!integrations/moyai/
-!integrations/moyai/oracles/
 !integrations/moyai/oracles/Cargo.toml
 !integrations/moyai/oracles/Cargo.lock
 !integrations/moyai/oracles/retry_policy.rs
