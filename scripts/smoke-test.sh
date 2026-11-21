@@ -54,61 +54,68 @@ api_post /v1/rerank "$rank_payload" "$smoke/rerank.json"
 jq -e '[.results[].index] == [1,0]' "$smoke/rerank.json" >/dev/null
 ok "Local reranker prioritized the matching source through LiteLLM"
 
-chat_payload=$(jq -cn '{model:"local-qwen",messages:[{role:"user",content:"Reply with exactly READY."}],temperature:0,max_tokens:32}')
-api_post /v1/chat/completions "$chat_payload" "$smoke/chat.json"
-jq -e '.choices[0].message.content | type == "string" and length > 0' "$smoke/chat.json" >/dev/null
-ok "Chat Completions route returned model output"
-python3 scripts/compression-smoke.py
+check_qwen() {
+  chat_payload=$(jq -cn '{model:"local-qwen",messages:[{role:"user",content:"Reply with exactly READY."}],temperature:0,max_tokens:32}')
+  api_post /v1/chat/completions "$chat_payload" "$smoke/chat.json"
+  jq -e '.choices[0].message.content | type == "string" and length > 0' "$smoke/chat.json" >/dev/null
+  ok "Chat Completions route returned model output"
+  python3 scripts/compression-smoke.py
 
-responses_payload=$(jq -cn '{
-  model:"local-qwen",
-  input:"Call multiply with a=6 and b=7. Do not calculate it yourself.",
-  tools:[{type:"function",name:"multiply",description:"Multiply two integers",parameters:{type:"object",properties:{a:{type:"integer"},b:{type:"integer"}},required:["a","b"],additionalProperties:false}}],
-  tool_choice:{type:"function",name:"multiply"},
-  max_output_tokens:256
-}')
-api_post /v1/responses "$responses_payload" "$smoke/responses-tool-call.json"
-call_id=$(jq -r '[.output[]? | select(.type == "function_call")][0].call_id // empty' "$smoke/responses-tool-call.json")
-call_name=$(jq -r '[.output[]? | select(.type == "function_call")][0].name // empty' "$smoke/responses-tool-call.json")
-call_args=$(jq -c '[.output[]? | select(.type == "function_call")][0].arguments // empty' "$smoke/responses-tool-call.json")
-response_id=$(jq -r '.id // empty' "$smoke/responses-tool-call.json")
-[[ -n "$call_id" && "$call_name" == "multiply" && -n "$call_args" ]] || die "Responses bridge did not preserve the forced function call"
-ok "Responses bridge preserved a function call"
+  responses_payload=$(jq -cn '{
+    model:"local-qwen",
+    input:"Call multiply with a=6 and b=7. Do not calculate it yourself.",
+    tools:[{type:"function",name:"multiply",description:"Multiply two integers",parameters:{type:"object",properties:{a:{type:"integer"},b:{type:"integer"}},required:["a","b"],additionalProperties:false}}],
+    tool_choice:{type:"function",name:"multiply"},
+    max_output_tokens:256
+  }')
+  api_post /v1/responses "$responses_payload" "$smoke/responses-tool-call.json"
+  call_id=$(jq -r '[.output[]? | select(.type == "function_call")][0].call_id // empty' "$smoke/responses-tool-call.json")
+  call_name=$(jq -r '[.output[]? | select(.type == "function_call")][0].name // empty' "$smoke/responses-tool-call.json")
+  call_args=$(jq -c '[.output[]? | select(.type == "function_call")][0].arguments // empty' "$smoke/responses-tool-call.json")
+  response_id=$(jq -r '.id // empty' "$smoke/responses-tool-call.json")
+  [[ -n "$call_id" && "$call_name" == "multiply" && -n "$call_args" ]] || die "Responses bridge did not preserve the forced function call"
+  ok "Responses bridge preserved a function call"
 
-roundtrip_payload=$(jq -cn \
-  --arg call_id "$call_id" \
-  --arg previous_response_id "$response_id" \
-  '{model:"local-qwen",previous_response_id:$previous_response_id,input:[
-    {type:"function_call_output",call_id:$call_id,output:"42"}
-  ],max_output_tokens:128}')
-api_post /v1/responses "$roundtrip_payload" "$smoke/responses-tool-result.json"
-jq -e '[.output[]?.content[]?.text // empty, .output_text // empty] | join(" ") | contains("42")' "$smoke/responses-tool-result.json" >/dev/null
-ok "Responses bridge completed a tool-result round trip"
+  roundtrip_payload=$(jq -cn \
+    --arg call_id "$call_id" \
+    --arg previous_response_id "$response_id" \
+    '{model:"local-qwen",previous_response_id:$previous_response_id,input:[
+      {type:"function_call_output",call_id:$call_id,output:"42"}
+    ],max_output_tokens:128}')
+  api_post /v1/responses "$roundtrip_payload" "$smoke/responses-tool-result.json"
+  jq -e '[.output[]?.content[]?.text // empty, .output_text // empty] | join(" ") | contains("42")' "$smoke/responses-tool-result.json" >/dev/null
+  ok "Responses bridge completed a tool-result round trip"
 
-stream_payload=$(jq -cn '{model:"local-qwen",input:"Reply with exactly STREAM-READY.",stream:true,max_output_tokens:64}')
-curl --fail --silent --show-error --no-buffer --max-time 1800 \
-  --header "Authorization: Bearer $key" --header 'Content-Type: application/json' \
-  --data "$stream_payload" "$base/v1/responses" > "$smoke/responses-stream.txt"
-grep -q '^data:' "$smoke/responses-stream.txt"
-grep -Eq 'response\.completed|\[DONE\]' "$smoke/responses-stream.txt"
-ok "Responses streaming route completed"
+  stream_payload=$(jq -cn '{model:"local-qwen",input:"Reply with exactly STREAM-READY.",stream:true,max_output_tokens:64}')
+  curl --fail --silent --show-error --no-buffer --max-time 1800 \
+    --header "Authorization: Bearer $key" --header 'Content-Type: application/json' \
+    --data "$stream_payload" "$base/v1/responses" > "$smoke/responses-stream.txt"
+  grep -q '^data:' "$smoke/responses-stream.txt"
+  grep -Eq 'response\.completed|\[DONE\]' "$smoke/responses-stream.txt"
+  ok "Responses streaming route completed"
 
-cache_sentinel="CACHE-SMOKE-$(date -u +%s)-$RANDOM"
-cache_payload=$(jq -cn --arg sentinel "$cache_sentinel" '{model:"local-qwen",messages:[{role:"user",content:("Return only " + $sentinel + ".")}],temperature:0,max_tokens:32,cache:{"use-cache":true}}')
-curl --fail --silent --show-error --max-time 1800 \
-  --dump-header "$smoke/cache-first.headers" \
-  --header "Authorization: Bearer $key" --header 'Content-Type: application/json' \
-  --data "$cache_payload" "$base/v1/chat/completions" > "$smoke/cache-first.json"
-curl --fail --silent --show-error --max-time 1800 \
-  --dump-header "$smoke/cache-second.headers" \
-  --header "Authorization: Bearer $key" --header 'Content-Type: application/json' \
-  --data "$cache_payload" "$base/v1/chat/completions" > "$smoke/cache-second.json"
-first_content=$(jq -r '.choices[0].message.content' "$smoke/cache-first.json")
-second_content=$(jq -r '.choices[0].message.content' "$smoke/cache-second.json")
-[[ -n "$first_content" && "$first_content" == "$second_content" ]] || die "Explicit cache requests returned different content"
-grep -Eiq '^x-litellm-cache-key:[[:space:]]*[^[:space:]]+' "$smoke/cache-second.headers" \
-  || die "Second explicit-cache response did not contain LiteLLM's documented cache-hit key header"
-ok "Explicit Redis cache miss/hit path verified"
+  cache_sentinel="CACHE-SMOKE-$(date -u +%s)-$RANDOM"
+  cache_payload=$(jq -cn --arg sentinel "$cache_sentinel" '{model:"local-qwen",messages:[{role:"user",content:("Return only " + $sentinel + ".")}],temperature:0,max_tokens:32,cache:{"use-cache":true}}')
+  curl --fail --silent --show-error --max-time 1800 \
+    --dump-header "$smoke/cache-first.headers" \
+    --header "Authorization: Bearer $key" --header 'Content-Type: application/json' \
+    --data "$cache_payload" "$base/v1/chat/completions" > "$smoke/cache-first.json"
+  curl --fail --silent --show-error --max-time 1800 \
+    --dump-header "$smoke/cache-second.headers" \
+    --header "Authorization: Bearer $key" --header 'Content-Type: application/json' \
+    --data "$cache_payload" "$base/v1/chat/completions" > "$smoke/cache-second.json"
+  first_content=$(jq -r '.choices[0].message.content' "$smoke/cache-first.json")
+  second_content=$(jq -r '.choices[0].message.content' "$smoke/cache-second.json")
+  [[ -n "$first_content" && "$first_content" == "$second_content" ]] || die "Explicit cache requests returned different content"
+  grep -Eiq '^x-litellm-cache-key:[[:space:]]*[^[:space:]]+' "$smoke/cache-second.headers" \
+    || die "Second explicit-cache response did not contain LiteLLM's documented cache-hit key header"
+  ok "Explicit Redis cache miss/hit path verified"
+}
+
+check_qwen &
+qwen_pid=$!
+# Drain the Qwen checks even when a foreground retrieval check exits early.
+trap 'wait "$qwen_pid" || :' EXIT
 
 info "Indexing the two platform policy documents through LiteLLM embeddings..."
 python3 scripts/retrieval_probe.py index > "$smoke/ingestion.json"
@@ -161,6 +168,9 @@ curl --fail --silent --show-error --max-time 60 \
 awk '/^data: / {sub(/^data: /, ""); print; exit}' "$smoke/mcp-postgres-call.sse" > "$smoke/mcp-postgres-call.json"
 jq -e '.result.isError == false and (.result.structuredContent.result | fromjson | .[0].chunks >= 1)' "$smoke/mcp-postgres-call.json" >/dev/null
 ok "Read-only PostgreSQL MCP tool call returned bounded metadata"
+
+wait "$qwen_pid"
+trap - EXIT
 
 bash scripts/check-observability.sh
 
