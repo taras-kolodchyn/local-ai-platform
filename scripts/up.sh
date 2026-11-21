@@ -8,8 +8,9 @@ bash scripts/ensure-docker.sh
 bash scripts/pull-model.sh
 bash scripts/doctor.sh
 
-info "Building and starting pinned Compose services..."
-docker compose up --detach --build --wait --wait-timeout 420
+info "Checking Compose images and starting services..."
+python3 scripts/build-images.py
+docker compose up --detach --no-build --wait --wait-timeout 420
 ok "Container health checks passed"
 
 bash scripts/provision-client-key.sh
