@@ -1,4 +1,5 @@
 """Exercise the smoke script's join and exit statuses without live endpoints."""
+from itertools import product
 import os
 from pathlib import Path
 import shutil
@@ -46,8 +47,8 @@ python3() {
 
 class ParallelSmokeTests(unittest.TestCase):
     def test_join_before_monitoring_and_log_scan(self):
-        for group, status in [('neither', 0), ('qwen', 38), ('retrieval', 37)]:
-            with self.subTest(group=group), tempfile.TemporaryDirectory() as tmp:
+        for timings, (group, status) in product(('0', '1'), [('neither', 0), ('qwen', 38), ('retrieval', 37)]):
+            with self.subTest(timings=timings, group=group), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 (root / 'scripts').mkdir()
                 for script in ['smoke-test.sh', 'lib.sh']:
@@ -63,7 +64,7 @@ class ParallelSmokeTests(unittest.TestCase):
                 with log.open('w') as output:
                     result = subprocess.run(
                         ['bash', 'scripts/smoke-test.sh'], cwd=root, timeout=10,
-                        env=os.environ | {'BASH_ENV': str(probes), 'FAIL_GROUP': group},
+                        env=os.environ | {'BASH_ENV': str(probes), 'FAIL_GROUP': group, 'TIMINGS': timings},
                         stdout=output, stderr=subprocess.STDOUT)
                 text = log.read_text()
                 self.assertEqual(result.returncode, status, text)
@@ -73,6 +74,11 @@ class ParallelSmokeTests(unittest.TestCase):
                 self.assertEqual(retrieval in text, group != 'retrieval', text)
                 for marker in ['MONITORING', 'LOG_SCAN', 'End-to-end smoke tests passed']:
                     self.assertEqual(marker in text, status == 0, text)
+                for lane in ('Qwen', 'retrieval/MCP'):
+                    self.assertEqual(f'[timings] {lane} ' in text, timings == '1', text)
+                if status == 0 and timings == '1':
+                    for lane in ('Qwen', 'retrieval/MCP'):
+                        self.assertLess(text.index(f'[timings] {lane} '), text.index('MONITORING'))
                 if status == 0:
                     self.assertGreater(text.index('MONITORING'), max(text.index(qwen), text.index(retrieval)))
                     self.assertGreater(text.index('LOG_SCAN'), text.index('MONITORING'))

@@ -19,7 +19,11 @@ pull-model: bootstrap ## Prepare DMR and the pinned Qwen and MiniLM artifacts
 	@bash scripts/pull-model.sh
 
 up: ## Start the complete local stack and run smoke checks
+ifeq ($(TIMINGS),1)
+	@TIMEFORMAT='[timings] make up %3Rs'; time bash scripts/up.sh
+else
 	@bash scripts/up.sh
+endif
 
 down: ## Stop the complete stack and unload its models; preserve data and artifacts
 	@bash scripts/down.sh
