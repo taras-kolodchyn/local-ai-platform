@@ -31,6 +31,25 @@ or platform revisions, also record active workloads and the effective image
 pins, embedding model and checkout changes alongside the JSON. The script
 records the last commit even when the tree has local edits.
 
+## Startup timings
+
+Run `make up TIMINGS=1` to include timings in the terminal during a full
+startup. The final line reports wall time for `make up`. Qwen and retrieval/MCP
+each report their own elapsed time before monitoring begins. The two durations
+overlap. The smoke total also includes the initial checks, monitoring and log scan.
+
+Each Compose `up --wait` prints elapsed time from the start of its progress
+stream, the container name and the reported transition. A completion such as
+`Healthy` or `Exited` includes the time since the previous `Waiting` or
+`Starting` event for that container. A dependency can be checked more than
+once. Every three seconds, a `pending` line lists outstanding operations and
+their ages. If Compose has yet to report an active operation,
+the line says `awaiting Compose progress`.
+
+Verified on macOS with Docker Compose v5.7.1 on 2026-11-22.
+[Compose progress output](https://docs.docker.com/reference/cli/docker/compose/)
+and [readiness options](https://docs.docker.com/reference/cli/docker/compose/up/).
+
 ## Paired repository context benchmark
 
 `make benchmark` also runs `make benchmark-context`. Use the latter on its own

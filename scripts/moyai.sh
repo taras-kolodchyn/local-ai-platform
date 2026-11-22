@@ -10,9 +10,9 @@ case "${1:-up}" in
     changed=$(python3 scripts/moyai-prepare.py)
     existing=$("${moyai_compose[@]}" ps -q moyai)
     python3 scripts/build-images.py "${moyai_compose[@]:2}"
-    "${moyai_compose[@]}" up --detach --no-build --wait --wait-timeout 300
+    compose_wait Moyai "${moyai_compose[@]:2}" up --detach --no-build --wait --wait-timeout 300
     if [[ "$changed" == changed && -n "$existing" ]]; then
-      "${moyai_compose[@]}" up --detach --wait --wait-timeout 120 \
+      compose_wait "Moyai refresh" "${moyai_compose[@]:2}" up --detach --wait --wait-timeout 120 \
         --force-recreate --no-deps moyai
     fi
     python3 scripts/moyai-prepare.py --ui connect
@@ -21,7 +21,7 @@ case "${1:-up}" in
        [[ "$context_state" == 'running healthy' ]]; then
       ok "Repository context is running and healthy"
     else
-      "${moyai_compose[@]}" up --detach --no-deps --no-recreate \
+      compose_wait "Repository context" "${moyai_compose[@]:2}" up --detach --no-deps --no-recreate \
         --wait --wait-timeout 120 repository-context
     fi
     ok "Local Moyai is ready at http://127.0.0.1:8787 (user: admin)"

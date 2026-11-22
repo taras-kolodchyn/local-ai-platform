@@ -112,67 +112,71 @@ check_qwen() {
   ok "Explicit Redis cache miss/hit path verified"
 }
 
-check_qwen &
+check_retrieval_mcp() {
+  info "Indexing the two platform policy documents through LiteLLM embeddings..."
+  python3 scripts/retrieval_probe.py index > "$smoke/ingestion.json"
+  curl --fail --silent --show-error --max-time 300 \
+    --header 'Content-Type: application/json' --data "$search_payload" \
+    http://127.0.0.1:8000/search > "$smoke/search.json"
+  jq -ec '.results' "$smoke/search.json" | python3 scripts/retrieval_probe.py check >/dev/null
+  ok "Hybrid pgvector search cited the platform loopback policy"
+
+  python3 scripts/vector-smoke.py --indexed
+
+  mcp_request=$(jq -cn '{jsonrpc:"2.0",id:1,method:"tools/list",params:{}}')
+  curl --fail --silent --show-error --max-time 60 \
+    --header "Authorization: Bearer $key" \
+    --header 'Content-Type: application/json' \
+    --header 'Accept: application/json, text/event-stream' \
+    --data "$mcp_request" "$base/local_retrieval/mcp" > "$smoke/mcp-tools.sse"
+  awk '/^data: / {sub(/^data: /, ""); print; exit}' "$smoke/mcp-tools.sse" > "$smoke/mcp-tools.json"
+  jq -e '[.result.tools[].name] | index("local_retrieval-search_code") != null and index("local_retrieval-get_chunk") != null' "$smoke/mcp-tools.json" >/dev/null
+  ok "Retrieval tools are discoverable through the LiteLLM MCP Gateway"
+
+  mcp_retrieval_call=$(jq -cn --argjson search "$search_payload" '{jsonrpc:"2.0",id:2,method:"tools/call",params:{name:"local_retrieval-search_code",arguments:($search + {path_prefix:"docs/"})}}')
+  curl --fail --silent --show-error --max-time 300 \
+    --header "Authorization: Bearer $key" \
+    --header 'Content-Type: application/json' \
+    --header 'Accept: application/json, text/event-stream' \
+    --data "$mcp_retrieval_call" "$base/local_retrieval/mcp" > "$smoke/mcp-retrieval-call.sse"
+  awk '/^data: / {sub(/^data: /, ""); print; exit}' "$smoke/mcp-retrieval-call.sse" > "$smoke/mcp-retrieval-call.json"
+  jq -ec 'select(.result.isError == false) | .result.structuredContent.result | fromjson |
+    select(all(.[]; .path | startswith("docs/")))' "$smoke/mcp-retrieval-call.json" \
+    | python3 scripts/retrieval_probe.py check >/dev/null
+  ok "Path-scoped MCP search cited the platform loopback policy"
+
+  curl --fail --silent --show-error --max-time 60 \
+    --header "Authorization: Bearer $key" \
+    --header 'Content-Type: application/json' \
+    --header 'Accept: application/json, text/event-stream' \
+    --data "$mcp_request" "$base/local_tools/mcp" > "$smoke/mcp-offline-tools.sse"
+  awk '/^data: / {sub(/^data: /, ""); print; exit}' "$smoke/mcp-offline-tools.sse" > "$smoke/mcp-offline-tools.json"
+  jq -e '[.result.tools[].name] | index("local_tools-list_files") != null and index("local_tools-git_status") != null and index("local_tools-postgres_select") != null' "$smoke/mcp-offline-tools.json" >/dev/null
+  ok "Filesystem, Git, and read-only PostgreSQL tools are discoverable through the LiteLLM MCP Gateway"
+
+  mcp_postgres_call=$(jq -cn '{jsonrpc:"2.0",id:3,method:"tools/call",params:{name:"local_tools-postgres_select",arguments:{sql:"SELECT count(*) AS chunks FROM source_chunks",max_rows:1}}}')
+  curl --fail --silent --show-error --max-time 60 \
+    --header "Authorization: Bearer $key" \
+    --header 'Content-Type: application/json' \
+    --header 'Accept: application/json, text/event-stream' \
+    --data "$mcp_postgres_call" "$base/local_tools/mcp" > "$smoke/mcp-postgres-call.sse"
+  awk '/^data: / {sub(/^data: /, ""); print; exit}' "$smoke/mcp-postgres-call.sse" > "$smoke/mcp-postgres-call.json"
+  jq -e '.result.isError == false and (.result.structuredContent.result | fromjson | .[0].chunks >= 1)' "$smoke/mcp-postgres-call.json" >/dev/null
+  ok "Read-only PostgreSQL MCP tool call returned bounded metadata"
+}
+
+timed_step Qwen check_qwen &
 qwen_pid=$!
 # Drain the Qwen checks even when a foreground retrieval check exits early.
 trap 'wait "$qwen_pid" || :' EXIT
 
-info "Indexing the two platform policy documents through LiteLLM embeddings..."
-python3 scripts/retrieval_probe.py index > "$smoke/ingestion.json"
 search_payload=$(python3 scripts/retrieval_probe.py query)
-curl --fail --silent --show-error --max-time 300 \
-  --header 'Content-Type: application/json' --data "$search_payload" \
-  http://127.0.0.1:8000/search > "$smoke/search.json"
-jq -ec '.results' "$smoke/search.json" | python3 scripts/retrieval_probe.py check >/dev/null
-ok "Hybrid pgvector search cited the platform loopback policy"
-
-python3 scripts/vector-smoke.py --indexed
-
-mcp_request=$(jq -cn '{jsonrpc:"2.0",id:1,method:"tools/list",params:{}}')
-curl --fail --silent --show-error --max-time 60 \
-  --header "Authorization: Bearer $key" \
-  --header 'Content-Type: application/json' \
-  --header 'Accept: application/json, text/event-stream' \
-  --data "$mcp_request" "$base/local_retrieval/mcp" > "$smoke/mcp-tools.sse"
-awk '/^data: / {sub(/^data: /, ""); print; exit}' "$smoke/mcp-tools.sse" > "$smoke/mcp-tools.json"
-jq -e '[.result.tools[].name] | index("local_retrieval-search_code") != null and index("local_retrieval-get_chunk") != null' "$smoke/mcp-tools.json" >/dev/null
-ok "Retrieval tools are discoverable through the LiteLLM MCP Gateway"
-
-mcp_retrieval_call=$(jq -cn --argjson search "$search_payload" '{jsonrpc:"2.0",id:2,method:"tools/call",params:{name:"local_retrieval-search_code",arguments:($search + {path_prefix:"docs/"})}}')
-curl --fail --silent --show-error --max-time 300 \
-  --header "Authorization: Bearer $key" \
-  --header 'Content-Type: application/json' \
-  --header 'Accept: application/json, text/event-stream' \
-  --data "$mcp_retrieval_call" "$base/local_retrieval/mcp" > "$smoke/mcp-retrieval-call.sse"
-awk '/^data: / {sub(/^data: /, ""); print; exit}' "$smoke/mcp-retrieval-call.sse" > "$smoke/mcp-retrieval-call.json"
-jq -ec 'select(.result.isError == false) | .result.structuredContent.result | fromjson |
-  select(all(.[]; .path | startswith("docs/")))' "$smoke/mcp-retrieval-call.json" \
-  | python3 scripts/retrieval_probe.py check >/dev/null
-ok "Path-scoped MCP search cited the platform loopback policy"
-
-curl --fail --silent --show-error --max-time 60 \
-  --header "Authorization: Bearer $key" \
-  --header 'Content-Type: application/json' \
-  --header 'Accept: application/json, text/event-stream' \
-  --data "$mcp_request" "$base/local_tools/mcp" > "$smoke/mcp-offline-tools.sse"
-awk '/^data: / {sub(/^data: /, ""); print; exit}' "$smoke/mcp-offline-tools.sse" > "$smoke/mcp-offline-tools.json"
-jq -e '[.result.tools[].name] | index("local_tools-list_files") != null and index("local_tools-git_status") != null and index("local_tools-postgres_select") != null' "$smoke/mcp-offline-tools.json" >/dev/null
-ok "Filesystem, Git, and read-only PostgreSQL tools are discoverable through the LiteLLM MCP Gateway"
-
-mcp_postgres_call=$(jq -cn '{jsonrpc:"2.0",id:3,method:"tools/call",params:{name:"local_tools-postgres_select",arguments:{sql:"SELECT count(*) AS chunks FROM source_chunks",max_rows:1}}}')
-curl --fail --silent --show-error --max-time 60 \
-  --header "Authorization: Bearer $key" \
-  --header 'Content-Type: application/json' \
-  --header 'Accept: application/json, text/event-stream' \
-  --data "$mcp_postgres_call" "$base/local_tools/mcp" > "$smoke/mcp-postgres-call.sse"
-awk '/^data: / {sub(/^data: /, ""); print; exit}' "$smoke/mcp-postgres-call.sse" > "$smoke/mcp-postgres-call.json"
-jq -e '.result.isError == false and (.result.structuredContent.result | fromjson | .[0].chunks >= 1)' "$smoke/mcp-postgres-call.json" >/dev/null
-ok "Read-only PostgreSQL MCP tool call returned bounded metadata"
+timed_step "retrieval/MCP" check_retrieval_mcp
 
 wait "$qwen_pid"
 trap - EXIT
 
-bash scripts/check-observability.sh
+timed_step Monitoring bash scripts/check-observability.sh
 
 if rg -q -F -e 'CACHE-SMOKE-' -e 'loopback listeners in the offline profile' \
   -e "$(jq -r '.query' <<< "$search_payload")" .local/logs; then

@@ -23,6 +23,32 @@ die() {
   exit 1
 }
 
+timed_step() {
+  local label=$1
+  shift
+  if [[ ${TIMINGS:-0} == 1 ]]; then
+    (
+      # Keep errexit inside the work. The timing shell must survive a failed
+      # probe to print its duration and return the same exit status on macOS Bash.
+      set +e
+      TIMEFORMAT="[timings] $label %3Rs"
+      time { (set -e; "$@"); }
+    )
+  else
+    "$@"
+  fi
+}
+
+compose_wait() {
+  local label=$1
+  shift
+  if [[ ${TIMINGS:-0} == 1 ]]; then
+    docker compose --progress json "$@" 2>&1 | python3 scripts/compose-timings.py "$label" >&2
+  else
+    docker compose "$@"
+  fi
+}
+
 require_command() {
   command -v "$1" >/dev/null 2>&1 || die "Required command not found: $1"
 }

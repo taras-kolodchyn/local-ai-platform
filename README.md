@@ -33,6 +33,10 @@ generated password in `.local/moyai/admin-password`. For a first task, ask it to
 create a Python function and a test, run pytest and save both files. Open **Files**
 in the conversation to download the artifacts.
 
+Use `make up TIMINGS=1` to see which containers Compose is waiting for and
+how long the parallel Qwen and retrieval/MCP checks take.
+[Startup timings](docs/benchmarking.md#startup-timings)
+
 Use `make status` to see the services and resident models. `make down` stops
 Moyai, then the core services and any connected profile, and unloads the
 configured coding and embedding models. It preserves conversations, volumes and
