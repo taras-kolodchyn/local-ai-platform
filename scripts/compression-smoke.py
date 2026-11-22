@@ -10,9 +10,10 @@ ROOT = Path(__file__).resolve().parents[1]
 def payload(route):
     instruction = {"role": "user", "content": "Read the worker log and report the error code."}
     question = {"role": "user", "content": "Reply with only the exact error code from the log."}
+    # Keep the log above Headroom's 8,000-character threshold for protecting error output.
     lines = [f"2026-11-18 10:{i // 60:02}:{i % 60:02} INFO worker - completed health check successfully"
-             for i in range(240)]
-    lines[113] = "2026-11-18 10:01:53 ERROR worker - failed to acquire lock error_code=HMX731"
+             for i in range(128)]
+    lines[64] = "2026-11-18 10:01:04 ERROR worker - failed to acquire lock error_code=HMX731"
     log = "\n".join(lines)
     call = {"name": "read_log", "arguments": "{}"}
     acknowledged = {"role": "assistant", "content": "I have read the log."}
