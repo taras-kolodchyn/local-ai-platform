@@ -35,6 +35,26 @@ Verified on Apple Silicon on 2026-11-21 with Docker Compose v5.7.1 and
 Buildx v0.38.1.
 [Docker build contexts and Dockerfile-specific ignore files](https://docs.docker.com/build/concepts/context/)
 
+### MCP database role on startup
+
+After Compose reconciles PostgreSQL, `make up` opens a fresh SCRAM connection to
+`local_ai` as `mcp_reader` using `MCP_POSTGRES_PASSWORD` from `.env`. It checks
+the login's role attributes, read-only default and five-second statement timeout,
+plus its direct grants for database access, schema usage, existing public
+tables and future tables created by `localai`. When those checks pass, Compose
+skips the one-shot `mcp-provisioner` and still waits for the core services.
+
+To rotate the MCP password, update `MCP_POSTGRES_PASSWORD` in `.env` and run
+`make up`. A failed check starts the provisioner, which reconciles the role and
+managed grants in one transaction. MCP waits for the provisioner to finish, and
+startup verifies the new login and grants again. The same check runs after a
+database restore, including a logical restore that omitted grants. A restore
+that preserved the password and all managed privileges can skip provisioning.
+Verified on Apple Silicon on 2026-11-22 with PostgreSQL 17.12 and Docker
+Compose v5.7.1. [PostgreSQL connection authentication](https://www.postgresql.org/docs/17/libpq-connect.html#LIBPQ-CONNECT-REQUIRE-AUTH) ·
+[Default privileges](https://www.postgresql.org/docs/17/catalog-pg-default-acl.html) ·
+[Compose merge rules](https://docs.docker.com/reference/compose-file/merge/)
+
 ## Resolved models and status
 
 Set `QWEN_MODEL`, `EMBEDDING_MODEL` and `QWEN_CONTEXT_SIZE` in the ignored
