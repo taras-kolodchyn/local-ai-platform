@@ -122,13 +122,13 @@ class RepositoryWorkflow(AbstractCapability):
             """Inspect this task's phase, verification attempts and deliverable paths."""
             return await backend.status(scope_of(ctx), ctx.deps.turn_id)
 
-        async def search_repository(ctx: RunContext, query: str, limit: int = 6, exact_path: str | None = None) -> dict:
+        async def search_repository(ctx: RunContext, query: str, limit: int = 6, exact_path: str | None = None,
+                                    work_item: str | None = None) -> dict:
             """Search the current GitHub issue or PR source, or a pinned task. Return text, path and commit_hash. Include filenames from the question in query to find related code. Set exact_path to restrict all citations to one repository path."""
-            item = connected_item(ctx)
-            if item and not backend.ledger.status(*scope_of(ctx)):
+            if work_item and not backend.ledger.status(*scope_of(ctx)):
                 try:
                     return await backend.context_call('search_connected_branch', {'session': ctx.deps.session_id,
-                        'work_item': item, 'query': query, 'limit': limit, 'exact_path': exact_path})
+                        'work_item': work_item, 'query': query, 'limit': limit, 'exact_path': exact_path})
                 except RepositoryError as error:
                     raise ToolFailed(str(error)) from error
             return await backend.search(scope_of(ctx), query, limit, exact_path)
@@ -547,8 +547,13 @@ class RepositoryWorkflow(AbstractCapability):
             if call.tool_name in REPOSITORY:
                 raise ToolFailed('Repository tools are unavailable for this older execution.')
             return args
-        if call.tool_name == tool_def.name == SEARCH and connected_item(ctx) and await self.phase(*scope_of(ctx)) is None:
-            return args
+        if call.tool_name == tool_def.name == SEARCH:
+            # Tool activities cannot read the original prompt. Bind the URL here,
+            # replacing any value supplied by the caller before activity dispatch.
+            args = {k: v for k, v in args.items() if k != 'work_item'}
+            item = connected_item(ctx)
+            if item and await self.phase(*scope_of(ctx)) is None:
+                return {**args, 'work_item': item}
         outcome = await self.admit(*scope_of(ctx), ctx.run_id == ctx.deps.root_run_id,
                                    identity(ctx,call.tool_call_id), call.tool_name, args.get('path','.'),
                                    fingerprint([call.tool_name,call.args_as_dict()]) if call.tool_name in WRITES else '',

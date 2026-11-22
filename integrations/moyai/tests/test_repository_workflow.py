@@ -35,6 +35,20 @@ class WorkflowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([t.name for t in await self.cap.prepare_tools(self.ctx,defs)],
                          ['shell','write_file','open_repository'])
 
+    async def test_connected_search_binds_only_the_current_private_turn_url(self):
+        self.ctx.deps.surface = 'web'
+        self.ctx.deps.visibility = 'private'
+        url = 'https://github.com/example/project/pull/42'
+        self.ctx.prompt = 'Find the policy for ' + url
+        tool = ToolDefinition(name='search_repository')
+        args = {'query': 'policy', 'work_item': 'https://github.com/other/project/issues/2'}
+        call = ToolCallPart(tool.name, args, tool_call_id='search')
+        bound = await self.cap.before_tool_execute(self.ctx, call=call, tool_def=tool, args=args)
+        self.assertEqual(bound, {'query': 'policy', 'work_item': url})
+        self.ctx.deps.visibility = 'shared'
+        with self.assertRaises(ToolFailed):
+            await self.cap.before_tool_execute(self.ctx, call=call, tool_def=tool, args=args)
+
     async def test_cached_definitions_fail_at_dispatch_when_attached(self):
         self.attach()
         defs = [ToolDefinition(name=n) for n in ['write_file','delegate_task','shell','read_file','write_plan']]
