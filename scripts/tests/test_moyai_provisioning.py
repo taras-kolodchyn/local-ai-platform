@@ -167,7 +167,7 @@ if sys.argv[-1] == 'repository-context':
                     env=os.environ | {'PATH': str(binaries) + os.pathsep + os.environ['PATH'],
                         'CONFIG_CHANGE': changed, 'EXISTING': 'yes' if existing else 'no',
                         'CONTEXT_STATE': state, 'PS_STATUS': str(ps_status),
-                        'UP_STATUS': str(up_status), 'COMMAND_LOG': str(log)},
+                        'UP_STATUS': str(up_status), 'COMMAND_LOG': str(log), 'TIMINGS': '0'},
                     capture_output=True, text=True)
                 self.assertEqual(result.returncode, up_status, result.stderr)
                 self.assertEqual('Local Moyai is ready' in result.stdout, up_status == 0)

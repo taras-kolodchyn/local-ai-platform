@@ -76,7 +76,7 @@ class PlatformLifecycleTests(unittest.TestCase):
         for name in ('litellm-api-key', 'vector-backend-key'):
             (self.root / '.local' / name).write_text('fixture-key')
         shutil.copy(ROOT / 'Makefile', self.root / 'Makefile')
-        for name in ('lib.sh', 'up.sh', 'down.sh', 'compose.sh'):
+        for name in ('lib.sh', 'up.sh', 'down.sh', 'compose.sh', 'compose-timings.py'):
             if (ROOT / 'scripts' / name).exists():
                 shutil.copy(ROOT / 'scripts' / name, self.scripts / name)
         (self.root / '.env').write_text('QWEN_MODEL=fixture-coder\nEMBEDDING_MODEL=fixture-embed\n')
@@ -96,7 +96,8 @@ class PlatformLifecycleTests(unittest.TestCase):
         docker.write_text('#!/bin/sh\nexec "$TASK_PYTHON" "$TASK_DRIVER" docker "$@"\n')
         docker.chmod(0o755)
         python = binaries / 'python3'
-        python.write_text('#!/bin/sh\nexec "$TASK_PYTHON" "$TASK_DRIVER" dependency "$@"\n')
+        python.write_text('#!/bin/sh\nif [ "$1" = scripts/compose-timings.py ]; then exec "$TASK_PYTHON" "$@"; fi\n'
+                          'exec "$TASK_PYTHON" "$TASK_DRIVER" dependency "$@"\n')
         python.chmod(0o755)
         (self.scripts / 'moyai.sh').write_text('#!/bin/sh\nexec "$TASK_PYTHON" "$TASK_DRIVER" moyai "$@"\n')
         for name in ('bootstrap.sh', 'ensure-docker.sh', 'pull-model.sh', 'doctor.sh',
@@ -108,8 +109,8 @@ class PlatformLifecycleTests(unittest.TestCase):
                     'TASK_PYTHON': os.sys.executable, 'TASK_DRIVER': str(driver),
                     'TASK_STATE': str(self.state_file), 'TASK_EVENTS': str(self.events)}
 
-    def run_make(self, target, **overrides):
-        return subprocess.run(['make', target], cwd=self.root, env=self.env | overrides,
+    def run_make(self, target, timings='0', **overrides):
+        return subprocess.run(['make', target, 'TIMINGS=' + timings], cwd=self.root, env=self.env | overrides,
                               capture_output=True, text=True, timeout=15)
 
     def calls(self):
@@ -133,13 +134,15 @@ class PlatformLifecycleTests(unittest.TestCase):
         self.assertNotEqual(self.run_make('up', FAIL_MOYAI='1').returncode, 0)
 
     def test_repeat_up_only_reconciles_core_once_and_runs_smoke(self):
-        for _ in range(2):
+        for timings in ('0', '1'):
             self.events.write_text('')
-            result = self.run_make('up')
+            result = self.run_make('up', timings=timings)
             self.assertEqual(result.returncode, 0, result.stderr)
-            up = [c for c in self.calls() if c[:3] == ['docker', 'compose', 'up']]
+            progress = ['--progress', 'json'] if timings == '1' else []
+            up = [c for c in self.calls() if c[:2] == ['docker', 'compose'] and 'up' in c]
+            self.assertEqual('[timings] make up' in result.stderr, timings == '1')
             self.assertLess(self.calls().index(['dependency', 'scripts/build-images.py']), self.calls().index(up[0]))
-            self.assertEqual(up, [['docker', 'compose', 'up', '--detach', '--no-build', '--wait', '--wait-timeout', '420']])
+            self.assertEqual(up, [['docker', 'compose', *progress, 'up', '--detach', '--no-build', '--wait', '--wait-timeout', '420']])
             self.assertNotIn(['docker', 'compose', 'restart', 'retrieval'], self.calls())
             self.assertIn(['dependency', 'smoke-test.sh'], self.calls())
 
