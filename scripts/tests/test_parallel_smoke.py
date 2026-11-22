@@ -68,6 +68,11 @@ python3() {
       [[ $FAIL_GROUP != index ]] || return 37
       touch indexed
       ;;
+    'scripts/retrieval_probe.py check')
+      # The real citation checker consumes jq output. Drain it here too so a
+      # short-lived reader cannot give the upstream writer SIGPIPE.
+      cat >/dev/null
+      ;;
     'scripts/vector-smoke.py --indexed')
       [[ -f indexed ]] || return 91
       rendezvous vector mcp
