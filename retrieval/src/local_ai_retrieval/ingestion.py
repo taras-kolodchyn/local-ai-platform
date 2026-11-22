@@ -60,12 +60,17 @@ def index_repository(
     settings: Settings,
     *,
     repository: str | None = None,
+    revision: tuple[str, str] | None = None,
     force: bool = False,
 ) -> dict[str, int | str]:
     root = root.resolve()
     started = time.monotonic()
     migrate(settings)
-    repository_name, branch, commit_hash = repository_identity(root, repository)
+    if revision is None:
+        repository_name, branch, commit_hash = repository_identity(root, repository)
+    else:
+        repository_name = repository or root.name
+        branch, commit_hash = revision
     # A failed forced rebuild must retain the previous searchable snapshot.
     fingerprint = embedding_fingerprint(settings, settings.embedding_artifact_id) if settings.embedding_artifact_id else None
     hashes = {} if force else existing_hashes(settings, repository_name, branch, fingerprint)

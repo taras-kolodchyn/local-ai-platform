@@ -23,6 +23,7 @@ def parser() -> argparse.ArgumentParser:
         ingest = commands.add_parser(name, help=f"{name} a repository")
         ingest.add_argument("path", type=Path)
         ingest.add_argument("--repository")
+        ingest.add_argument("--revision", nargs=2, metavar=("BRANCH", "COMMIT"))
     snapshot = commands.add_parser("index-snapshot", help="Atomically index a prepared immutable snapshot")
     snapshot.add_argument("manifest", type=Path)
     snapshot.add_argument("--embedding-artifact-id", required=True)
@@ -52,8 +53,12 @@ def main() -> None:
         args.path,
         settings,
         repository=args.repository,
+        revision=args.revision,
         force=args.command == "reindex",
     )
+    if args.revision:
+        from .vector_registry import register_store
+        result["store_id"] = register_store(settings, result["repository"], result["branch"])["id"]
     # Contains counts and Git metadata only, never source bodies or credentials.
     print(json.dumps(result, indent=2, sort_keys=True))
 
