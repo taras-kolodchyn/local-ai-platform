@@ -35,8 +35,10 @@ records the last commit even when the tree has local edits.
 
 Run `make up TIMINGS=1` to include timings in the terminal during a full
 startup. The final line reports wall time for `make up`. Qwen and retrieval/MCP
-each report their own elapsed time before monitoring begins. The two durations
-overlap. The smoke total also includes the initial checks, monitoring and log scan.
+run concurrently. Within retrieval/MCP, both the vector search and MCP checks
+use the same completed index and run concurrently. The output includes the
+indexing time, each group's duration and the total elapsed time for retrieval/MCP.
+Monitoring starts after all groups succeed, followed by the log scan.
 
 Each Compose `up --wait` prints elapsed time from the start of its progress
 stream, the container name and the reported transition. A completion such as
