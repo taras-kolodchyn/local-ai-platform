@@ -35,8 +35,9 @@ records the last commit even when the tree has local edits.
 
 Run `make up TIMINGS=1` to include timings in the terminal during a full
 startup. The final line reports wall time for `make up`. Once the core services
-and keys are ready, `Indexing` and `Moyai setup` run concurrently. Both must
-succeed before smoke checks start. Qwen and retrieval/MCP then run concurrently.
+and keys are ready, `Gateway`, `Indexing` and `Moyai setup` start concurrently.
+Qwen follows the gateway checks. Moyai UI and retrieval/MCP checks wait for both
+Moyai setup and indexing. The `Smoke checks` timing includes this overlap.
 Within retrieval/MCP, vector search and MCP run in parallel against the same
 completed index. During `make up`, the retrieval/MCP timing covers these probes.
 Standalone `make smoke-test` runs its own index before either search.

@@ -2,8 +2,11 @@
 
 source "$(dirname "$0")/lib.sh"
 
-if (( $# )) && ! [[ $# == 2 && $1 == --index-result && -n ${2:-} ]]; then
-  die 'Usage: smoke-test.sh [--index-result JSON]'
+if [[ $# == 1 && $1 == --await-startup ]]; then
+  # Reserve startup's pipe for the join. Probes must never consume its input.
+  exec 3<&0 </dev/null
+elif (( $# )) && ! [[ $# == 2 && $1 == --index-result && -n ${2:-} ]]; then
+  die 'Usage: smoke-test.sh [--await-startup | --index-result JSON]'
 fi
 
 load_env
@@ -29,34 +32,38 @@ api_post() {
     "$base$endpoint" > "$output"
 }
 
-info "Checking health and authenticated model discovery..."
-curl --fail --silent --show-error http://127.0.0.1:8000/health | jq -e '.status == "ok"' >/dev/null
-curl --fail --silent --show-error \
-  --header "Authorization: Bearer $key" "$base/v1/models" \
-  | jq -e '[.data[].id] | index("local-qwen") != null and index("local-embeddings") != null' >/dev/null
-ok "Gateway and retrieval health checks passed"
-python3 scripts/check-model-bindings.py
+check_gateway() {
+  info "Checking health and authenticated model discovery..."
+  curl --fail --silent --show-error http://127.0.0.1:8000/health | jq -e '.status == "ok"' >/dev/null
+  curl --fail --silent --show-error \
+    --header "Authorization: Bearer $key" "$base/v1/models" \
+    | jq -e '[.data[].id] | index("local-qwen") != null and index("local-embeddings") != null' >/dev/null
+  ok "Gateway and retrieval health checks passed"
+  python3 scripts/check-model-bindings.py
 
-curl --fail --silent --show-error --max-time 10 http://127.0.0.1:8787/health >/dev/null
-python3 scripts/moyai-prepare.py --ui check
-python3 scripts/reconcile-agents.py --check
-ok "Local Moyai is healthy and legacy workspace agent registrations are absent"
+  bash scripts/host-ports.sh verify
+  ok "All host listeners are loopback-only"
 
-bash scripts/host-ports.sh verify
-ok "All host listeners are loopback-only"
+  info "Checking fresh LiteLLM and Grafana dashboard logins using .env credentials..."
+  python3 scripts/check-dashboard-login.py
 
-info "Checking fresh LiteLLM and Grafana dashboard logins using .env credentials..."
-python3 scripts/check-dashboard-login.py
+  embedding_payload=$(jq -cn '{model:"local-embeddings",input:["loopback listeners in the offline profile"],encoding_format:"float",cache:{"no-cache":true,"no-store":true}}')
+  api_post /v1/embeddings "$embedding_payload" "$smoke/embedding.json"
+  jq -e '.data[0].embedding | length == 1024' "$smoke/embedding.json" >/dev/null
+  ok "Embedding route returned 1024 dimensions"
 
-embedding_payload=$(jq -cn '{model:"local-embeddings",input:["loopback listeners in the offline profile"],encoding_format:"float",cache:{"no-cache":true,"no-store":true}}')
-api_post /v1/embeddings "$embedding_payload" "$smoke/embedding.json"
-jq -e '.data[0].embedding | length == 1024' "$smoke/embedding.json" >/dev/null
-ok "Embedding route returned 1024 dimensions"
+  rank_payload=$(jq -cn '{model:"local-reranker",query:"local service bind address",documents:["stylesheet background color","bind local services to the loopback address"]}')
+  api_post /v1/rerank "$rank_payload" "$smoke/rerank.json"
+  jq -e '[.results[].index] == [1,0]' "$smoke/rerank.json" >/dev/null
+  ok "Local reranker prioritized the matching source through LiteLLM"
+}
 
-rank_payload=$(jq -cn '{model:"local-reranker",query:"local service bind address",documents:["stylesheet background color","bind local services to the loopback address"]}')
-api_post /v1/rerank "$rank_payload" "$smoke/rerank.json"
-jq -e '[.results[].index] == [1,0]' "$smoke/rerank.json" >/dev/null
-ok "Local reranker prioritized the matching source through LiteLLM"
+check_moyai() {
+  curl --fail --silent --show-error --max-time 10 http://127.0.0.1:8787/health >/dev/null
+  python3 scripts/moyai-prepare.py --ui check
+  python3 scripts/reconcile-agents.py --check
+  ok "Local Moyai is healthy and legacy workspace agent registrations are absent"
+}
 
 check_qwen() {
   chat_payload=$(jq -cn '{model:"local-qwen",messages:[{role:"user",content:"Reply with exactly READY."}],temperature:0,max_tokens:32}')
@@ -188,11 +195,21 @@ check_retrieval_mcp() (
   trap - EXIT
 )
 
+timed_step Gateway check_gateway
 timed_step Qwen check_qwen &
 qwen_pid=$!
 # Drain the Qwen checks even when a foreground retrieval check exits early.
 trap 'wait "$qwen_pid" || :' EXIT
 
+if [[ ${1:-} == --await-startup ]]; then
+  # up.sh sends one JSON line only after both Moyai and indexing succeed.
+  if ! IFS= read -r index_result <&3 || [[ -z $index_result ]]; then
+    die "Moyai startup or indexing did not produce a result"
+  fi
+  exec 3<&-
+  set -- --index-result "$index_result"
+fi
+check_moyai
 search_payload=$(python3 scripts/retrieval_probe.py query)
 timed_step "retrieval/MCP" check_retrieval_mcp "$@"
 
@@ -204,6 +221,8 @@ timed_step Monitoring bash scripts/check-observability.sh
 if rg -q -F -e 'CACHE-SMOKE-' -e 'loopback listeners in the offline profile' \
   -e "$(jq -r '.query' <<< "$search_payload")" .local/logs; then
   die "A synthetic prompt sentinel leaked into metadata-only logs"
+elif [[ $? != 1 ]]; then
+  die "Could not scan metadata-only logs"
 fi
 ok "Synthetic prompt sentinels are absent from collected logs"
 

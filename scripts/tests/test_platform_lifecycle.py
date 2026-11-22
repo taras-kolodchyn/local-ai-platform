@@ -10,7 +10,8 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 INDEX = ['dependency', 'scripts/retrieval_probe.py', 'index']
 INDEX_RESULT = '{"files_indexed": 2, "chunks_reused": 2}'
-SMOKE = ['dependency', 'smoke-test.sh', '--index-result', INDEX_RESULT]
+SMOKE_START = ['dependency', 'smoke-test.sh', '--await-startup']
+SMOKE = ['search-ready', INDEX_RESULT]
 
 DRIVER = '''import json, os, sys, time
 from pathlib import Path
@@ -23,7 +24,7 @@ def rendezvous(worker, peer):
     if os.getenv('TEST_JOIN'):
         Path(worker + '.started').touch()
         deadline = time.monotonic() + 3
-        while not Path(peer + '.started').exists():
+        while not (Path(peer + '.started').exists() and Path('gateway.started').exists()):
             if time.monotonic() > deadline:
                 raise SystemExit('Workers did not overlap: ' + worker)
             time.sleep(.01)
@@ -37,6 +38,14 @@ if component == 'dependency' and args == ['scripts/retrieval_probe.py', 'index']
     rendezvous('index', 'moyai')
     print(os.environ['TASK_INDEX_RESULT'])
     sys.exit(0)
+if component == 'dependency' and args == ['smoke-test.sh', '--await-startup']:
+    Path('gateway.started').touch()
+    result = sys.stdin.readline().strip()
+    if not result:
+        sys.exit(13)
+    with open(os.environ['TASK_EVENTS'], 'a') as stream:
+        stream.write(json.dumps(['search-ready', result]) + '\\n')
+    sys.exit(12 if os.getenv('FAIL_GROUP') == 'smoke' else 0)
 state = json.loads(state_file.read_text())
 error = 0
 if component == 'moyai':
@@ -49,8 +58,6 @@ if component == 'moyai':
             raise SystemExit('Core gateway must start before Moyai')
         state['moyai'] = args == ['up']
 elif component == 'dependency':
-    if args[:1] == ['smoke-test.sh'] and os.getenv('FAIL_GROUP') == 'smoke':
-        error = 12
     if args == ['scripts/reconcile-agents.py', '--stop-runtimes']:
         state['workspace'] = False
 elif component == 'docker' and args[0] == 'compose':
@@ -161,19 +168,19 @@ class PlatformLifecycleTests(unittest.TestCase):
         self.assertEqual(calls.count(['moyai', 'up']), 1)
         core_ready, = [call for call in calls if call[:2] == ['docker', 'compose'] and '--wait' in call]
         self.assertLess(calls.index(core_ready), calls.index(['dependency', 'provision-client-key.sh']))
-        for group in (INDEX, ['moyai', 'up']):
+        for group in (INDEX, ['moyai', 'up'], SMOKE_START):
             self.assertLess(calls.index(['dependency', 'provision-client-key.sh']), calls.index(group))
         self.assertLess(calls.index(['dependency', 'scripts/provision-workspace.py', 'moyai-skills']),
                         calls.index(['moyai', 'up']))
         self.assertFalse(state['workspace'])
         self.assertLess(calls.index(['moyai', 'up']), calls.index(SMOKE))
 
-    def test_up_joins_moyai_and_current_index_before_smoke(self):
+    def test_up_overlaps_gateway_and_joins_moyai_and_index_before_search(self):
         for timings in ('0', '1'):
             for failure in ('', 'index', 'moyai', 'smoke'):
                 with self.subTest(timings=timings, failure=failure):
                     self.events.write_text('')
-                    for marker in ('index.started', 'moyai.started', 'index.finished', 'moyai.finished'):
+                    for marker in ('index.started', 'moyai.started', 'gateway.started', 'index.finished', 'moyai.finished'):
                         (self.root / marker).unlink(missing_ok=True)
                     # Use a file so an orphaned child cannot keep capture_output's pipe open.
                     with (self.root / 'output').open('w') as out:
@@ -185,6 +192,7 @@ class PlatformLifecycleTests(unittest.TestCase):
                     self.assertTrue((self.root / 'moyai.finished').exists())
                     calls = self.calls()
                     self.assertEqual(calls.count(INDEX), 1)
+                    self.assertEqual(calls.count(SMOKE_START), 1)
                     self.assertEqual([c for c in calls if c[:2] == SMOKE[:2]],
                                      [SMOKE] if failure in ('', 'smoke') else [])
 
@@ -211,7 +219,7 @@ class PlatformLifecycleTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('after provisioning', result.stderr)
         self.assertNotIn(INDEX, self.calls())
-        self.assertFalse(any(c[:2] == SMOKE[:2] for c in self.calls()))
+        self.assertNotIn(SMOKE_START, self.calls())
 
     def test_up_rebinds_stale_retrieval_key_after_provisioning(self):
         for mount in ('litellm_client_key', 'vector_backend_key'):
