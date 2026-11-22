@@ -124,6 +124,42 @@ exit 1
         self.assertEqual((self.root / 'calls').read_text().splitlines(),
                          ['-nP -iTCP:3000,4000,8000,8001,9090,12434 -sTCP:LISTEN -Fn'] * (1 + len(cases)))
 
+    def test_verify_reads_published_ports_through_ss(self):
+        # On rootful Docker Engine an ordinary user's lsof cannot see the
+        # root-owned docker-proxy listeners, so verify must enumerate via ss,
+        # which reads the kernel socket table and reveals the bind address.
+        (self.binaries / 'grep').symlink_to(shutil.which('grep'))
+        self.write_executable('bin/ss', r'''
+printf '%s\n' "$*" >> ss_calls
+while IFS= read -r endpoint; do
+  [ -n "$endpoint" ] && printf 'LISTEN 0 4096 %s *:*\n' "$endpoint"
+done <<< "$LISTENERS"
+''')
+        self.write_executable('bin/lsof', 'printf lsof >> lsof_calls\nexit 1\n')
+
+        ports = (3000, 4000, 8000, 8001, 9090, 12434)
+        loopback = ['127.0.0.1:' + str(port) for port in ports]
+        cases = [
+            (loopback, None),
+            (loopback[1:], 'missing on port 3000'),
+            *[(loopback + [f'{address}:8001'], 'exposed beyond loopback')
+              for address in ('*', '0.0.0.0', '[::]')],
+        ]
+        for endpoints, error in cases:
+            with self.subTest(endpoints=endpoints):
+                self.env['LISTENERS'] = '\n'.join(endpoints)
+                result = subprocess.run(['bash', 'scripts/host-ports.sh', 'verify'], cwd=self.root,
+                                        env=self.env, capture_output=True, text=True, timeout=5)
+                if error:
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn(error, result.stderr)
+                else:
+                    self.assertEqual(result.returncode, 0, result.stderr)
+        # ss is preferred; the root-blind lsof probe must never run.
+        self.assertEqual((self.root / 'ss_calls').read_text().splitlines(),
+                         ['-H -l -t -n'] * len(cases))
+        self.assertFalse((self.root / 'lsof_calls').exists())
+
     def test_pulls_overlap_and_both_must_finish_before_configuration(self):
         shutil.copy(ROOT / 'scripts/pull-model.sh', self.root / 'scripts')
         self.write_executable('scripts/ensure-docker.sh', 'exit 0\n')
