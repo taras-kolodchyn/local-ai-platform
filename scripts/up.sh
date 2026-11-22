@@ -28,8 +28,16 @@ fi
 # explicit migration; ordinary startup keeps Moyai as the single default agent.
 python3 scripts/reconcile-agents.py --stop-runtimes
 python3 scripts/provision-workspace.py moyai-skills
-timed_step "Moyai setup" bash scripts/moyai.sh up
-timed_step "Smoke checks" bash scripts/smoke-test.sh
+info "Starting Moyai and indexing the two platform policy documents in parallel..."
+timed_step "Moyai setup" bash scripts/moyai.sh up &
+moyai_pid=$!
+# Finish the startup worker even if indexing fails. Its failure also gates smoke.
+trap 'wait "$moyai_pid" || :' EXIT
+index_result=$(timed_step Indexing python3 scripts/retrieval_probe.py index)
+wait "$moyai_pid"
+trap - EXIT
+
+timed_step "Smoke checks" bash scripts/smoke-test.sh --index-result "$index_result"
 
 printf '\nLiteLLM: http://127.0.0.1:4000\n'
 printf 'Grafana: http://127.0.0.1:3000\n'
