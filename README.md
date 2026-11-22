@@ -128,6 +128,36 @@ matches on paths, symbols and content. [Retrieval and scoring](docs/platform-ope
 make index REPO=/absolute/path/to/your-project
 ```
 
+To keep a search index current after merges, run these commands from the permanent
+platform checkout on the Mac after `make up`.
+
+```sh
+make rag-connect REPO=owner/project
+make rag-status
+```
+
+Connect once per repository. The default branch is `main`. Use `BRANCH=release`
+to follow another branch. Private GitHub repositories need a Git HTTPS credential
+helper that works without a terminal. An absolute path to a local Git repository
+is also supported. Only commits on the selected branch enter this index.
+
+A per-user macOS job checks the branch every minute while logged in and catches
+up after sleep. A new tip triggers an export of the committed tree. Ingestion
+reuses unchanged chunks and removes chunks for deleted files. The store ID stays
+stable across updates. `make rag-status` shows the schedule, observed and indexed
+commit, last check, publication time, store ID and any error. A failed update
+is retried on a later poll. After restoring or resetting the database, rerun
+the connect command to reconcile the index even if the branch tip is unchanged.
+
+To stop polling and remove the branch's indexed content and LiteLLM store, run
+`make rag-disconnect REPO=owner/project`. Supply the same `BRANCH` for a
+non-default branch. The last disconnect unloads the polling schedule. If cleanup
+is interrupted, the connection stays paused. Repeat the same command to finish.
+
+Search through `POST /v1/vector_stores/{store_id}/search` using a LiteLLM key
+with read access to that store. Connecting a repository grants no client access.
+The default startup continues to check only the two platform probe documents.
+
 For projects matching the protected `rust-retry` profile,
 `make repository-add REPO=/absolute/path/to/crate` also enables verified edits in a private copy.
 Moyai delivers a patch, test report and result receipt through **Files**.

@@ -77,8 +77,19 @@ class HostRequirementsTests(unittest.TestCase):
         self.assertFalse(any('scripts/tests' in args for args in self.calls()))
 
     def test_doctor_accepts_a_healthy_host_without_cargo(self):
+        self.write_executable('bin/docker', '''printf '%s\\n' "$*" >> docker.calls''')
         result = self.run_make('doctor')
         self.assertEqual(result.returncode, 0, result.stderr)
+        calls = (self.root / 'docker.calls').read_text().splitlines()
+        for probe in ('info', 'model status', 'compose version', 'model version'):
+            self.assertEqual(calls.count(probe), 1, probe)
+
+        (self.root / 'docker.calls').unlink()
+        result = subprocess.run(['bash', 'scripts/doctor.sh', '--runtime-checked'], cwd=self.root,
+                                env=self.env, capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.root / 'docker.calls').read_text().splitlines(),
+                         [call for call in calls if call.startswith('model inspect ')])
 
     def test_doctor_accepts_a_healthy_linux_host(self):
         # 48 GiB in KiB, matching the Darwin fixture's byte total.
@@ -163,36 +174,90 @@ done <<< "$LISTENERS"
     def test_pulls_overlap_and_both_must_finish_before_configuration(self):
         shutil.copy(ROOT / 'scripts/pull-model.sh', self.root / 'scripts')
         self.write_executable('scripts/ensure-docker.sh', 'exit 0\n')
+    def setup_model_preparation(self):
+        for script in ('pull-model.sh', 'ensure-docker.sh'):
+            shutil.copy(ROOT / 'scripts' / script, self.root / 'scripts')
+        self.write_executable('scripts/bootstrap.sh', 'exit 0')
         (self.root / '.env').write_text('QWEN_MODEL=coder\nEMBEDDING_MODEL=embed\n')
-        for name in ('seq', 'sleep'):
-            (self.binaries / name).symlink_to(shutil.which(name))
-        for name in ('pull-reranker.py', 'model-config.py'):
-            (self.root / 'scripts' / name).write_text(
-                'from pathlib import Path\n'
-                'assert Path("coder.done").exists() and Path("embed.done").exists()\n'
-                'Path(__file__).with_suffix(".called").touch()\n')
-        self.write_executable('bin/docker', '''
-if [[ "$1 $2" == "model pull" ]]; then
-  : > "$3.started"
-  for ((i=0; i<200; i++)); do
-    [[ -f coder.started && -f embed.started ]] && break
-    sleep 0.01
-  done
-  [[ -f coder.started && -f embed.started ]] || exit 42
-  : > "$3.done"
-  [[ "$FAIL_MODEL" != "$3" ]] || exit 23
-elif [[ "$1 $2" == "model configure" ]]; then
-  : > configured
-fi
-''')
-        for failure in ('coder', 'embed', ''):
+        self.write_executable('bin/sleep', """printf 'sleep %s\\n' "$1" >> readiness""")
+        # A barrier makes skipped or serialized workers fail deterministically.
+        (self.root / 'worker.py').write_text("""
+import os, sys, time
+from pathlib import Path
+state = Path(os.environ['STATE'])
+name = sys.argv[1]
+(state / (name + '.started')).touch()
+workers = os.environ['WORKERS'].split()
+deadline = time.monotonic() + 3
+while not all((state / (peer + '.started')).exists() for peer in workers):
+    if time.monotonic() >= deadline:
+        sys.exit('worker barrier timed out: ' + name)
+    time.sleep(0.005)
+(state / (name + '.done')).touch()
+sys.exit(23 if name == os.getenv('FAIL') else 0)
+""")
+        (self.root / 'scripts/pull-reranker.py').write_text(
+            'import runpy, sys\nsys.argv[1:] = ["reranker"]\nrunpy.run_path("worker.py")\n')
+        (self.root / 'scripts/model-config.py').write_text(
+            'from pathlib import Path\nassert Path("configured").exists()\nPath("runtime-env").touch()\n')
+        self.write_executable('bin/docker', """
+case "$1 ${2:-}" in
+  'info ') echo info >> readiness ;;
+  'desktop enable') echo enable >> readiness ;;
+  'model status')
+    echo status >> readiness
+    n=0
+    [[ ! -e attempts ]] || read -r n < attempts
+    echo "$((n+1))" > attempts
+    (( n >= ${UNREADY:-0} )) ;;
+  'model pull') exec python3 worker.py "$3" ;;
+  'compose version') exec python3 worker.py compose ;;
+  'model version') exec python3 worker.py dmr ;;
+  'model configure')
+    for worker in $WORKERS; do [[ -e "$STATE/$worker.done" ]] || exit 42; done
+    : > configured ;;
+  *) exit 2 ;;
+esac
+""")
+
+    def test_startup_workers_overlap_and_each_failure_blocks_configuration(self):
+        self.setup_model_preparation()
+        workers = ['coder', 'embed', 'reranker', 'compose', 'dmr']
+        for failure in ['', *workers]:
             with self.subTest(failure=failure):
-                result = subprocess.run(['bash', 'scripts/pull-model.sh'], cwd=self.root,
-                                        env=self.env | {'FAIL_MODEL': failure}, capture_output=True,
-                                        text=True, timeout=10)
-                self.assertEqual(result.returncode, 23 if failure else 0, result.stderr)
-                for model in ('coder', 'embed'):
-                    (self.root / f'{model}.done').unlink()
-                    (self.root / f'{model}.started').unlink()
-                for marker in ('configured', 'scripts/pull-reranker.called', 'scripts/model-config.called'):
-                    self.assertEqual((self.root / marker).exists(), not failure, marker)
+                state = self.root / (failure or 'success')
+                state.mkdir()
+                result = subprocess.run(
+                    ['bash', 'scripts/pull-model.sh', '--for-up'], cwd=self.root,
+                    env=self.env | {'STATE': str(state), 'WORKERS': ' '.join(workers), 'FAIL': failure},
+                    capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode == 0, not failure, result.stderr)
+                self.assertEqual((self.root / 'readiness').read_text().splitlines(), ['enable', 'status'])
+                (self.root / 'readiness').unlink()
+                for worker in workers:
+                    self.assertTrue((state / (worker + '.done')).exists(), worker)
+                for marker in ('configured', 'runtime-env'):
+                    path = self.root / marker
+                    self.assertEqual(path.exists(), not failure, marker)
+                    path.unlink(missing_ok=True)
+
+    def test_standalone_pull_waits_for_docker_and_runner_and_honors_deadline(self):
+        self.setup_model_preparation()
+        self.env.update(STATE=str(self.root), WORKERS='coder embed reranker', UNREADY='60')
+        result = self.run_make('pull-model')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        expected = ['info', 'enable'] + ['status', 'sleep 2'] * 60 + ['status']
+        self.assertEqual((self.root / 'readiness').read_text().splitlines(), expected)
+        self.assertTrue((self.root / 'runtime-env').exists())
+        for marker in ('readiness', 'attempts', 'runtime-env', 'configured'):
+            (self.root / marker).unlink()
+        for marker in self.root.glob('*.started'):
+            marker.unlink()
+
+        self.env['UNREADY'] = '61'
+        result = self.run_make('pull-model')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Docker Model Runner did not become ready', result.stderr)
+        self.assertEqual((self.root / 'readiness').read_text().splitlines(), expected)
+        self.assertFalse(list(self.root.glob('*.started')))
+        self.assertFalse((self.root / 'configured').exists())

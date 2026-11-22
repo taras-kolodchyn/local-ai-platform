@@ -2,6 +2,10 @@
 
 source "$(dirname "$0")/lib.sh"
 
+if (( $# )) && ! [[ $# == 1 && $1 == --runtime-checked ]]; then
+  die 'Usage: doctor.sh [--runtime-checked]'
+fi
+
 require_command python3
 model_configuration=$(python3 scripts/model-config.py resolve --format json)
 qwen_model=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["models"][0]["reference"])' <<< "$model_configuration")
@@ -65,7 +69,8 @@ for command in docker curl jq git make openssl python3; do
   check "$command available" command -v "$command"
 done
 
-if command -v docker >/dev/null 2>&1; then
+# During startup, Docker readiness and model preparation already ran these four checks.
+if [[ $# == 0 ]] && command -v docker >/dev/null 2>&1; then
   check "Docker daemon reachable" docker info
   check "Docker Compose available" docker compose version
   check "Docker Model Runner plugin available" docker model version

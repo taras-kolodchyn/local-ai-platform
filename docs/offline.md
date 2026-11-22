@@ -22,7 +22,11 @@ profile. Startup finishes by running the local smoke checks.
 With the prepared stack running, disconnect the Mac and run `make smoke-test`
 to exercise inference, retrieval, scoped tools, dashboard logins and monitoring.
 Each `make up` runs `docker model pull` for the coding and embedding models
-in parallel and waits for both to succeed before configuring them. Compose builds images on first use, when their local build inputs change, or
+in parallel with the pinned reranker SHA-256 checks and the Compose and DMR
+version checks. Model configuration starts after all five succeed.
+`make pull-model` also starts Docker Desktop if needed and prepares all three
+model artifacts. Use `make doctor` for an independent host and runtime check.
+Compose builds images on first use, when their local build inputs change, or
 when their image tags are missing or replaced.
 These steps can require registry access even when a previous session ran locally.
 
