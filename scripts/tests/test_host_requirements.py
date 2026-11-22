@@ -80,6 +80,16 @@ class HostRequirementsTests(unittest.TestCase):
         result = self.run_make('doctor')
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_doctor_accepts_a_healthy_linux_host(self):
+        # 48 GiB in KiB, matching the Darwin fixture's byte total.
+        self.write_executable('bin/uname', 'case "$1" in -s) printf "Linux\\n";; '
+                              '-m) printf "x86_64\\n";; *) exit 1;; esac\n')
+        self.write_executable('bin/free', 'printf "Mem: 50331648 0 0\\n"\n')
+        result = self.run_make('doctor')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('Linux detected', result.stdout)
+        self.assertIn('System memory: 48 GiB', result.stdout)
+
     def test_doctor_and_smoke_take_separate_listener_snapshots(self):
         (self.binaries / 'grep').symlink_to(shutil.which('grep'))
         self.write_executable('bin/lsof', r'''

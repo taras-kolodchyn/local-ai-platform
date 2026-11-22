@@ -1,19 +1,25 @@
 # Local AI Platform
 
-Run a local AI coding platform on an Apple Silicon Mac. Moyai edits and tests code
-in an isolated workspace, Qwen serves requests through LiteLLM, and pgvector
-searches the repositories you choose to index. After the initial downloads, the
-default profile runs locally with local credentials.
+Run a local AI coding platform on an Apple Silicon Mac or a Linux x86_64/Arm64
+host. Moyai edits and tests code in an isolated workspace, Qwen serves requests
+through LiteLLM, and pgvector searches the repositories you choose to index.
+After the initial downloads, the default profile runs locally with local
+credentials.
 
 ## Quick start
 
-Use an Apple Silicon Mac with Docker Desktop, Docker Compose and Docker Model
-Runner. The default Qwen3-Coder artifact is about 16.5 GB. Allow at least 30 GiB
-of free disk space for a fresh setup. The host check requires 32 GiB of unified
-memory. For the default 65,536-token context, use 48 GiB or more. With 32–47 GiB,
-run `make bootstrap` after cloning and set `QWEN_CONTEXT_SIZE=32768` in the
-generated `.env` before starting. See the host and service versions in the
-[compatibility matrix](docs/capability-matrix.md). [Docker Model Runner](https://docs.docker.com/ai/model-runner/)
+Use an Apple Silicon Mac with Docker Desktop, or a Linux host with Docker Engine,
+together with Docker Compose and Docker Model Runner. On Docker Engine, install
+the runner with `sudo apt-get install docker-model-plugin`; its TCP endpoint on
+port 12434 is enabled by default. The default Qwen3-Coder artifact is about
+16.5 GB. Allow at least 30 GiB of free disk space for a fresh setup. The host
+check requires 32 GiB of memory (unified memory on a Mac, system RAM on Linux).
+For the default 65,536-token context, use 48 GiB or more. With 32–47 GiB, run
+`make bootstrap` after cloning and set `QWEN_CONTEXT_SIZE=32768` in the generated
+`.env` before starting. See the host and service versions in the
+[compatibility matrix](docs/capability-matrix.md).
+[Docker Model Runner](https://docs.docker.com/ai/model-runner/) ·
+[DMR on Docker Engine](https://docs.docker.com/ai/model-runner/get-started/)
 
 Install Git, Make, curl, jq, OpenSSL and Python. The test suite supports
 Python 3.11–3.14. The first setup needs
@@ -47,7 +53,7 @@ downloaded model artifacts. `make restart` performs the full stop/start cycle.
 
 | Task | Execution path |
 | --- | --- |
-| Chat and code generation | Moyai or an OpenAI-compatible client → LiteLLM → Docker Model Runner on the Mac. The llama.cpp inference engine uses Metal in Docker Desktop's macOS host sandbox. |
+| Chat and code generation | Moyai or an OpenAI-compatible client → LiteLLM → Docker Model Runner on the host. The llama.cpp inference engine uses Metal in Docker Desktop's macOS host sandbox, or runs in a container on Linux using the CPU (or an NVIDIA/AMD GPU when a supported driver is present). |
 | File edits and commands | Moyai connects over SSH to a separate Linux sandbox. Temporal persists workflow state and Moyai delivers saved files through the local UI. |
 | Repository search | An internal bridge uses a dedicated search credential for the selected snapshot and indexed generation. Retrieval combines pgvector cosine search with PostgreSQL full-text search over source, symbols and paths. |
 | Observability | Prometheus collects metrics, Alloy sends service logs to Loki, and Grafana displays them locally. Request and response body logging is off by default. |
@@ -226,7 +232,7 @@ Grafana 13.3.1. [LiteLLM UI credentials](https://docs.litellm.ai/docs/proxy/ui) 
 
 - **Set up and operate** — [offline preparation](docs/offline.md), [platform operations](docs/platform-operations.md), [troubleshooting](docs/troubleshooting.md) and [benchmarking](docs/benchmarking.md).
 - **Use Moyai** — [chat, files and skills](docs/moyai-local.md), [verified repository tasks](docs/repository-workflow.md), [read-only GitHub access](docs/connected.md) and [issue-to-PR publishing](docs/moyai-github-issues.md).
-- **Understand the stack** — [architecture](docs/architecture.md), [macOS inference decision](docs/adr/0001-inference-runtime.md) and [compatibility matrix](docs/capability-matrix.md).
+- **Understand the stack** — [architecture](docs/architecture.md), [inference runtime decision](docs/adr/0001-inference-runtime.md) and [compatibility matrix](docs/capability-matrix.md).
 - **Contribute and report issues** — [contributing](CONTRIBUTING.md), [security boundaries](docs/security.md) and [private vulnerability reporting](SECURITY.md).
 
 ## License

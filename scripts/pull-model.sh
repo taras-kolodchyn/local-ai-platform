@@ -7,8 +7,16 @@ require_command docker
 
 bash scripts/ensure-docker.sh
 
-info "Enabling Docker Model Runner with loopback TCP port 12434..."
-docker desktop enable model-runner --tcp=12434 >/dev/null
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  info "Enabling Docker Model Runner with loopback TCP port 12434..."
+  docker desktop enable model-runner --tcp=12434 >/dev/null
+else
+  # Docker Engine serves the Model Runner TCP endpoint on port 12434 by default;
+  # there is no `docker desktop` command to enable it.
+  docker model version >/dev/null 2>&1 ||
+    die "Docker Model Runner plugin is missing. Install it with 'sudo apt-get install docker-model-plugin' and retry."
+  info "Docker Model Runner plugin present; TCP port 12434 is enabled by default on Docker Engine"
+fi
 
 for _ in $(seq 1 60); do
   docker model status >/dev/null 2>&1 && break

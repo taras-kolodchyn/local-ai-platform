@@ -70,18 +70,31 @@ for run in 1 2 3 4; do
     '{kind:"retrieval",phase:$phase,run:$run,http:$http,result_count:$count}' >> "$samples"
 done
 
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  os_name=macOS
+  os_version=$(sw_vers -productVersion 2>/dev/null || printf unavailable)
+  memory_bytes=$(sysctl -n hw.memsize 2>/dev/null || printf 0)
+else
+  os_name=$(uname -s)
+  os_version=$( ( . /etc/os-release 2>/dev/null && printf '%s' "${VERSION_ID:-${VERSION:-}}" ) || true)
+  [[ -n "$os_version" ]] || os_version=unavailable
+  memory_kib=$(awk '/^MemTotal:/ {print $2; exit}' /proc/meminfo 2>/dev/null || printf 0)
+  memory_bytes=$(( memory_kib * 1024 ))
+fi
+
 result="$output_dir/${timestamp}.json"
 jq -s \
   --arg recorded_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   --arg commit "$(git rev-parse HEAD 2>/dev/null || printf uncommitted)" \
-  --arg macos "$(sw_vers -productVersion)" \
+  --arg os "$os_name" \
+  --arg os_version "$os_version" \
   --arg architecture "$(uname -m)" \
-  --argjson memory_bytes "$(sysctl -n hw.memsize)" \
-  --arg docker_desktop "$(docker version --format '{{.Server.Version}}' 2>/dev/null || printf unavailable)" \
+  --argjson memory_bytes "$memory_bytes" \
+  --arg docker_server "$(docker version --format '{{.Server.Version}}' 2>/dev/null || printf unavailable)" \
   --arg model_runner "$model_runner_version" \
   --arg context_size "$QWEN_CONTEXT_SIZE" \
   --arg model "$QWEN_MODEL" \
-  '{recorded_at:$recorded_at,commit:$commit,host:{macos:$macos,architecture:$architecture,memory_bytes:$memory_bytes},runtime:{docker_server:$docker_desktop,model_runner:$model_runner,model:$model,context_size:($context_size|tonumber)},samples:.}' \
+  '{recorded_at:$recorded_at,commit:$commit,host:{os:$os,os_version:$os_version,architecture:$architecture,memory_bytes:$memory_bytes},runtime:{docker_server:$docker_server,model_runner:$model_runner,model:$model,context_size:($context_size|tonumber)},samples:.}' \
   "$samples" > "$result"
 
 chmod 600 "$result"

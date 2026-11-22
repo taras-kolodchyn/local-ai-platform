@@ -10,23 +10,27 @@ docker compose ps -a
 make moyai-status
 ```
 
-## Docker Desktop or Model Runner is unavailable
+## Docker or Model Runner is unavailable
 
 Check the daemon and the runner separately. `docker model version` can print a
 client version even when its server is unreachable.
 
 ```sh
-docker desktop status
 docker info
 docker model version
 docker model status
+# Docker Desktop (macOS): docker desktop status
+# Docker Engine (Linux): systemctl status docker
 ```
 
-Start Docker Desktop if needed. If the daemon is unresponsive, Docker Desktop's
-restart affects every Docker workload on the Mac. Once the daemon is reachable,
-`make pull-model` enables host TCP on port 12434, pulls the configured DMR
-models, verifies the MiniLM files and applies the model configuration. Re-run it
-after an interrupted pull, then start the platform with `make up`.
+Start Docker if needed — Docker Desktop on macOS, or `sudo systemctl start docker`
+on Linux (your user must be in the `docker` group). On Docker Engine the Model
+Runner TCP port 12434 is enabled by default; install the plugin with
+`sudo apt-get install docker-model-plugin` if `docker model version` fails. Once
+the daemon and runner are reachable, `make pull-model` enables host TCP on port
+12434 on Docker Desktop, pulls the configured DMR models, verifies the MiniLM
+files and applies the model configuration. Re-run it after an interrupted pull,
+then start the platform with `make up`.
 [DMR setup](https://docs.docker.com/ai/model-runner/get-started/) ·
 [Model preparation](../scripts/pull-model.sh)
 
