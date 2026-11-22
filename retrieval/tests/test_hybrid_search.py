@@ -3,6 +3,10 @@ from dataclasses import replace
 import importlib.util
 import json
 import os
+from pathlib import Path
+import re
+import subprocess
+import sys
 
 import psycopg
 import pytest
@@ -34,6 +38,38 @@ def add_chunk(settings, *, path='src/policy.py', symbol='policy', content='polic
              vector_literal(QUERY_VECTOR if embedding is None else embedding), generation,
              json.dumps({'embedding_fingerprint': fingerprint} if fingerprint is not None else {})),
         ).fetchone()[0]
+
+
+def test_batch_registration_preserves_store_ids_across_retries(db_settings):
+    script = Path(__file__).resolve().parents[2] / 'postgres/register-indexed-stores.py'
+
+    def register():
+        with script.open() as program:
+            return json.loads(subprocess.check_output(
+                [sys.executable, '-'], stdin=program, text=True,
+                env=os.environ | {'DATABASE_URL': db_settings.database_url}))
+
+    retained = vector_registry.register_store(db_settings, 'project', 'stable')
+    vector_registry.register_store(db_settings, 'other', 'unindexed')
+    with psycopg.connect(db_settings.database_url) as conn:
+        conn.execute("""INSERT INTO workspace_vector_stores (id, repository, branch, snapshot_id, generation_id)
+                        VALUES ('vs_pinned', 'project', 'main', 'snapshot', 'generation')""")
+    assert register() == []
+    add_chunk(db_settings, repository='project', branch='stable')
+    add_chunk(db_settings, repository='project', branch='main', generation='generation')
+    add_chunk(db_settings, repository='project', branch='main', chunk_index=1)
+
+    stores = register()
+    fresh, existing = stores
+    assert existing == retained
+    assert (fresh['repository'], fresh['branch'], fresh['snapshot_id'], fresh['generation_id']) == (
+        'project', 'main', None, None)
+    assert re.fullmatch(r'vs_[0-9a-f]{32}', fresh['id'])
+    assert register() == stores
+    with psycopg.connect(db_settings.database_url) as conn:
+        pinned = conn.execute(
+            "SELECT snapshot_id, generation_id FROM workspace_vector_stores WHERE id='vs_pinned'").fetchone()
+        assert pinned == ('snapshot', 'generation')
 
 
 def add_semantic_distractors(settings):
