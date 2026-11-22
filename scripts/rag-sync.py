@@ -29,8 +29,8 @@ def now():
     return datetime.now(timezone.utc).isoformat(timespec='seconds')
 
 
-def source(value):
-    if Path(value).is_absolute() and Path(value).is_dir():
+def source(value, *, allow_missing=False):
+    if Path(value).is_absolute() and (allow_missing or Path(value).is_dir()):
         path = Path(value).resolve()
         suffix = hashlib.sha256(os.fsencode(path)).hexdigest()[:12]
         return str(path), 'connected/local/' + suffix
@@ -112,6 +112,12 @@ def synchronize(directory, initial=None):
     path = directory / 'state.json'
     with lock(directory):
         state = json.loads(path.read_text()) if path.exists() else initial
+        if state is None:
+            return  # A poll can discover the path before disconnect takes its lock.
+        if state.get('disconnecting'):
+            if initial:
+                raise ValueError('Finish the pending disconnect before reconnecting')
+            return
         try:
             ref = 'refs/heads/' + state['branch']
             tip = git('ls-remote', '--exit-code', '--refs', state['origin'], ref,
@@ -128,6 +134,58 @@ def synchronize(directory, initial=None):
         finally:
             state['checked_at'] = now()
             save(path, state)
+
+
+def remove_index(state, checkpoint):
+    scope, branch = state['scope'], state['branch']
+    def sql(statement):
+        return run('Index cleanup', ['bash', 'scripts/compose.sh', 'exec', '-T', 'postgres',
+            'psql', '-XqtA', '-U', 'localai', '-d', 'local_ai', '-v', 'ON_ERROR_STOP=1',
+            '-v', 'scope=' + scope, '-v', 'branch=' + branch], cwd=ROOT,
+            input=statement, stdout=subprocess.PIPE, text=True).stdout.strip()
+
+    # Ingestion may have registered the store before its first checkpoint was saved.
+    predicate = "repository = :'scope' AND branch = :'branch'"
+    sid = sql(f"SELECT id FROM workspace_vector_stores WHERE {predicate} AND generation_id IS NULL;")
+    ids = set(state.get('removing_stores', []))
+    ids.update(filter(None, [sid, state.get('store')]))
+    state['removing_stores'] = sorted(ids)
+    save(checkpoint, state)
+    sql(f"""BEGIN;
+        DELETE FROM source_chunks WHERE {predicate} AND generation_id = 'legacy';
+        DELETE FROM ingestion_runs WHERE {predicate};
+        DELETE FROM workspace_vector_stores WHERE {predicate} AND generation_id IS NULL;
+        COMMIT;""")
+    if ids:
+        owner = PROVISION['gateway']((ROOT / '.local/workspace-owner-key').read_text().strip())
+        existing = {item['vector_store_id'] for item in owner('GET', '/vector_store/list')['data']}
+        for store in ids & existing:
+            owner('POST', '/vector_store/delete', {'vector_store_id': store})
+    registry = PROVISION['LOCAL'] / 'workspace-registry.json'
+    if registry.exists():
+        data = json.loads(registry.read_text())
+        data.get('stores', {}).pop(scope + ':' + branch, None)
+        save(registry, data)
+
+
+def disconnect(directory, scope, branch):
+    checkpoint = directory / 'state.json'
+    if not checkpoint.exists():
+        return
+    with lock(directory):
+        state = json.loads(checkpoint.read_text())
+        if (state['scope'], state['branch']) != (scope, branch):
+            raise ValueError('Connection scope mismatch')
+        state['disconnecting'] = True
+        save(checkpoint, state)
+        with PROVISION['vector_registry_lock']():
+            remove_index(state, checkpoint)
+        if not any(path != checkpoint for path in STATE.glob('*/state.json')):
+            if loaded():
+                run('Unload schedule', ['launchctl', 'bootout', JOB])
+            PLIST.unlink(missing_ok=True)
+        checkpoint.unlink()
+        # Keep the lock inode for polls already queued and for a later reconnect.
 
 
 def loaded():
@@ -154,17 +212,22 @@ def install():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=['connect', 'poll', 'status'])
+    parser.add_argument('action', choices=['connect', 'disconnect', 'poll', 'status'])
     action = parser.parse_args().action
-    if action == 'connect':
-        origin, scope = source(os.environ.get('RAG_REPO', ''))
+    if action in ('connect', 'disconnect'):
+        origin, scope = source(os.environ.get('RAG_REPO', ''), allow_missing=action == 'disconnect')
         branch = os.environ.get('RAG_BRANCH', 'main')
         git('check-ref-format', 'refs/heads/' + branch)
         directory = STATE / hashlib.sha256((scope + ':' + branch).encode()).hexdigest()
-        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        STATE.mkdir(parents=True, exist_ok=True)
         with lock(STATE):
+            if action == 'disconnect':
+                disconnect(directory, scope, branch)
+                print(f'Disconnected {scope} ({branch}).')
+                return
+            directory.mkdir(exist_ok=True, mode=0o700)
             install()
-        synchronize(directory, {'origin': origin, 'scope': scope, 'branch': branch})
+            synchronize(directory, {'origin': origin, 'scope': scope, 'branch': branch})
         print(f'Following {scope} ({branch}). Run make rag-status for its searchable revision.')
         return
     if action == 'status':
@@ -172,7 +235,11 @@ def main():
     errors = False
     for path in sorted(STATE.glob('*/state.json')):
         if action == 'status':
-            print(json.dumps(json.loads(path.read_text()), ensure_ascii=False))
+            try:
+                content = path.read_text()
+            except FileNotFoundError:
+                continue
+            print(json.dumps(json.loads(content), ensure_ascii=False))
         else:
             try:
                 synchronize(path.parent)

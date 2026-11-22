@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 """Idempotent local gateway provisioning. Never prints credential values."""
+from contextlib import contextmanager
+import fcntl
 import hashlib
 import json
 import os
@@ -169,6 +171,14 @@ def owner_request(admin):
     return gateway(value['key'])
 
 
+@contextmanager
+def vector_registry_lock():
+    with (LOCAL / 'vector-registry.lock').open('a') as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        yield
+
+
+@vector_registry_lock()
 def vectors():
     admin = gateway(master_key())
     owner = owner_request(admin)
