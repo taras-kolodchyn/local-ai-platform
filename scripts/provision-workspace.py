@@ -172,16 +172,9 @@ def owner_request(admin):
 def vectors():
     admin = gateway(master_key())
     owner = owner_request(admin)
-    code = '''import json, psycopg
-from local_ai_retrieval.config import Settings
-from local_ai_retrieval.vector_registry import register_store
-s=Settings.from_env()
-with psycopg.connect(s.database_url) as c:
- rows=c.execute("SELECT DISTINCT repository, branch FROM source_chunks ORDER BY repository, branch").fetchall()
-print(json.dumps([register_store(s,*row) for row in rows]))
-'''
-    run = subprocess.run(['docker', 'compose', 'exec', '-T', 'retrieval', 'python', '-c', code],
-                         cwd=ROOT, capture_output=True, text=True, check=True)
+    with (ROOT / 'postgres/register-indexed-stores.py').open() as script:
+        run = subprocess.run(['docker', 'compose', 'exec', '-T', 'retrieval', 'python', '-'],
+                             cwd=ROOT, stdin=script, capture_output=True, text=True, check=True)
     mapping = provision_vectors(owner, json.loads(run.stdout), (LOCAL / 'vector-backend-key').read_text().strip())
     registry_path = LOCAL / 'workspace-registry.json'
     registry = json.loads(registry_path.read_text()) if registry_path.exists() else {}
