@@ -55,6 +55,18 @@ Compose v5.7.1. [PostgreSQL connection authentication](https://www.postgresql.or
 [Default privileges](https://www.postgresql.org/docs/17/catalog-pg-default-acl.html) ·
 [Compose merge rules](https://docs.docker.com/reference/compose-file/merge/)
 
+### Temporal data volume on startup
+
+On a repeated `make up`, Moyai checks that the running Temporal container
+mounts the configured named volume at `/data` and that the directory has UID
+1000 and GID 1000. When both match, Compose skips `moyai-volume-init`.
+A new volume, a different owner, or an unavailable container or probe uses the
+normal startup dependency. The initializer must succeed before Temporal starts.
+Both paths wait for service health and run the usual smoke checks.
+Verified on Apple Silicon on 2026-11-22 with Temporal 1.10.1 and Docker Compose
+v5.7.1. [Moyai services and volumes](../compose.moyai.yaml) ·
+[Compose startup order](https://docs.docker.com/compose/how-tos/startup-order/)
+
 ## Resolved models and status
 
 Set `QWEN_MODEL`, `EMBEDDING_MODEL` and `QWEN_CONTEXT_SIZE` in the ignored

@@ -132,7 +132,7 @@ class MoyaiProvisioningTests(unittest.TestCase):
             with self.subTest(state=state, ps_status=ps_status, changed=changed), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 (root / 'scripts').mkdir()
-                for script in ('lib.sh', 'moyai.sh'):
+                for script in ('lib.sh', 'moyai.sh', 'moyai-volume.sh'):
                     shutil.copy(ROOT / 'scripts' / script, root / 'scripts' / script)
                 binaries = root / 'bin'
                 binaries.mkdir()
