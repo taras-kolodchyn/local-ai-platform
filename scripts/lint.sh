@@ -29,6 +29,7 @@ ok "Python syntax and dashboard JSON valid"
 bash scripts/bootstrap.sh >/dev/null
 load_env
 docker compose config --quiet
+docker compose -f compose.yaml -f compose.mcp-current.yaml config --quiet
 docker compose -f compose.moyai.yaml config --quiet
 ok "Compose configuration valid"
 

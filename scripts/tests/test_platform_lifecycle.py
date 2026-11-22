@@ -45,6 +45,8 @@ elif component == 'docker' and args[0] == 'compose':
     elif 'exec' in args and 'cmp' in args:
         if os.getenv('STALE_MOUNT') in args:
             error = 1
+    elif 'exec' in args and 'psql' in args:
+        print('t' if not os.getenv('INVALID_MCP_ROLE') else 'f')
     elif 'up' in args:
         state['core'] = True
         state['gateway_models'] = [os.getenv('QWEN_MODEL'), os.getenv('EMBEDDING_MODEL')]
@@ -69,17 +71,19 @@ class PlatformLifecycleTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
-        self.root = Path(self.temporary.name)
+        self.root = Path(self.temporary.name).resolve()
         self.scripts = self.root / 'scripts'
         self.scripts.mkdir()
         (self.root / '.local').mkdir()
         for name in ('litellm-api-key', 'vector-backend-key'):
             (self.root / '.local' / name).write_text('fixture-key')
         shutil.copy(ROOT / 'Makefile', self.root / 'Makefile')
-        for name in ('lib.sh', 'up.sh', 'down.sh', 'compose.sh', 'compose-timings.py'):
+        for name in ('lib.sh', 'up.sh', 'down.sh', 'compose.sh', 'compose-timings.py', 'mcp-provision.sh'):
             if (ROOT / 'scripts' / name).exists():
                 shutil.copy(ROOT / 'scripts' / name, self.scripts / name)
-        (self.root / '.env').write_text('QWEN_MODEL=fixture-coder\nEMBEDDING_MODEL=fixture-embed\n')
+        (self.root / 'postgres').mkdir()
+        shutil.copy(ROOT / 'postgres/check-mcp-role.sql', self.root / 'postgres')
+        (self.root / '.env').write_text('MCP_POSTGRES_PASSWORD=fixture\nQWEN_MODEL=fixture-coder\nEMBEDDING_MODEL=fixture-embed\n')
         (self.root / '.env.example').write_text('QWEN_MODEL=template-coder\nEMBEDDING_MODEL=template-embed\n')
         driver = self.root / 'driver.py'
         driver.write_text(DRIVER)
@@ -142,9 +146,20 @@ class PlatformLifecycleTests(unittest.TestCase):
             up = [c for c in self.calls() if c[:2] == ['docker', 'compose'] and 'up' in c]
             self.assertEqual('[timings] make up' in result.stderr, timings == '1')
             self.assertLess(self.calls().index(['dependency', 'scripts/build-images.py']), self.calls().index(up[0]))
-            self.assertEqual(up, [['docker', 'compose', *progress, 'up', '--detach', '--no-build', '--wait', '--wait-timeout', '420']])
+            self.assertEqual(up, [
+                ['docker', 'compose', *progress, 'up', '--detach', '--no-build', 'postgres'],
+                ['docker', 'compose', *progress, '-f', str(self.root / 'compose.yaml'),
+                 '-f', str(self.root / 'compose.mcp-current.yaml'),
+                 'up', '--detach', '--no-build', '--wait', '--wait-timeout', '420'],
+            ])
             self.assertNotIn(['docker', 'compose', 'restart', 'retrieval'], self.calls())
             self.assertIn(['dependency', 'smoke-test.sh'], self.calls())
+
+    def test_up_stops_before_smoke_if_mcp_role_repair_did_not_converge(self):
+        result = self.run_make('up', INVALID_MCP_ROLE='1')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('after provisioning', result.stderr)
+        self.assertNotIn(['dependency', 'smoke-test.sh'], self.calls())
 
     def test_up_rebinds_stale_retrieval_key_after_provisioning(self):
         for mount in ('litellm_client_key', 'vector_backend_key'):

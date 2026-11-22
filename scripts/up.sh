@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 source "$(dirname "$0")/lib.sh"
+source "$(dirname "$0")/mcp-provision.sh"
 
 timed_step "Bootstrap" bash scripts/bootstrap.sh
 load_env
@@ -10,7 +11,7 @@ timed_step "Host checks" bash scripts/doctor.sh
 
 info "Checking Compose images and starting services..."
 timed_step "Core images" python3 scripts/build-images.py
-compose_wait Core up --detach --no-build --wait --wait-timeout 420
+start_core
 ok "Container health checks passed"
 
 bash scripts/provision-client-key.sh

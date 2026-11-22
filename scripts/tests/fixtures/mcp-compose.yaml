@@ -1,0 +1,37 @@
+services:
+  postgres:
+    extends:
+      file: ../../../compose.yaml
+      service: postgres
+    command: [postgres]
+    volumes: !override []
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      interval: 1s
+      start_period: 1s
+
+  mcp-provisioner:
+    extends:
+      file: ../../../compose.yaml
+      service: mcp-provisioner
+
+  # Exercise the production dependency and DATABASE_URL with a small SQL client.
+  mcp-tools:
+    extends:
+      file: ../../../compose.yaml
+      service: mcp-tools
+    build: !reset null
+    image: pgvector/pgvector:0.8.7-pg17-bookworm
+    entrypoint: [sleep, infinity]
+    ports: !reset []
+    volumes: !reset []
+    networks: !override [data]
+    healthcheck:
+      test: ["CMD-SHELL", "psql -XwqAt \"$$DATABASE_URL\" -c 'SELECT 1'"]
+      interval: 1s
+      start_period: 1s
+
+networks:
+  data:
+    internal: true

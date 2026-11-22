@@ -1,0 +1,8 @@
+services:
+  mcp-provisioner:
+    profiles: [mcp-provision]
+  mcp-tools:
+    depends_on:
+      mcp-provisioner: !reset null
+      postgres:
+        condition: service_healthy
