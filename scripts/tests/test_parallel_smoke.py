@@ -15,6 +15,10 @@ ROOT = Path(__file__).resolve().parents[2]
 PROBES = """
 curl() {
   case "${!#}" in
+    http://127.0.0.1:8787/health)
+      if [[ ${STARTUP:-0} == 1 ]]; then [[ -f indexed ]] || return 91; fi
+      [[ $FAIL_GROUP != moyai_ui ]] || return 43
+      ;;
     http://127.0.0.1:8000/search)
       [[ -f indexed ]] || return 91
       ;;
@@ -31,9 +35,14 @@ curl() {
 jq() { echo multiply; }
 lsof() { :; }
 grep() { :; }
-rg() { echo LOG_SCAN; return 1; }
+rg() {
+  echo LOG_SCAN
+  if [[ $FAIL_GROUP == ignored_log ]]; then command rg "$@"; return $?; fi
+  [[ $FAIL_GROUP != log_error ]] || return 2
+  [[ $FAIL_GROUP == logs ]]
+}
 bash() {
-  if [[ $1 == scripts/check-observability.sh ]]; then echo MONITORING; fi
+  if [[ $1 == scripts/check-observability.sh ]]; then echo MONITORING; [[ $FAIL_GROUP != monitoring ]] || return 42; fi
 }
 rendezvous() {
   touch "$1-started"
@@ -45,6 +54,9 @@ rendezvous() {
 }
 python3() {
   case "$*" in
+    'scripts/check-model-bindings.py')
+      [[ $FAIL_GROUP != gateway ]] || return 41
+      ;;
     'scripts/compression-smoke.py')
       rendezvous qwen retrieval
       if [[ $FAIL_GROUP == index ]]; then sleep 0.25; fi
@@ -55,6 +67,11 @@ python3() {
       rendezvous retrieval qwen
       [[ $FAIL_GROUP != index ]] || return 37
       touch indexed
+      ;;
+    'scripts/retrieval_probe.py check')
+      # The real citation checker consumes jq output. Drain it here too so a
+      # short-lived reader cannot give the upstream writer SIGPIPE.
+      cat >/dev/null
       ;;
     'scripts/vector-smoke.py --indexed')
       [[ -f indexed ]] || return 91
@@ -69,6 +86,65 @@ python3() {
 
 
 class ParallelSmokeTests(unittest.TestCase):
+    def test_startup_pipe_overlaps_qwen_and_gates_moyai_search_and_monitoring(self):
+        counts = '{"files_indexed": 2}'
+        # The producer cannot finish until Qwen is running. EOF on failure must
+        # never release the UI or search probes against a stale index report.
+        command = """
+        prepare() {
+          [[ $FAIL_GROUP != gateway ]] || return 0
+          rendezvous retrieval qwen || return 90
+          [[ $FAIL_GROUP != startup ]] || return 0
+          touch indexed
+          printf '%s\\n' "$COUNTS"
+        }
+        prepare | /bin/bash scripts/smoke-test.sh --await-startup
+        """
+        cases = {'success': 0, 'gateway': 41, 'qwen': 38, 'startup': 1,
+                 'vector': 39, 'mcp': 40, 'moyai_ui': 43, 'monitoring': 42, 'logs': 1, 'log_error': 1, 'ignored_log': 1}
+        for timing, (group, status) in product(('0', '1'), cases.items()):
+            with self.subTest(timing=timing, group=group), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                (root / 'scripts').mkdir()
+                for script in ('smoke-test.sh', 'lib.sh'):
+                    shutil.copy(ROOT / 'scripts' / script, root / 'scripts')
+                (root / '.env').touch()
+                smoke = root / '.local/smoke'
+                smoke.mkdir(parents=True)
+                (root / '.local/litellm-api-key').write_text('fixture')
+                report = smoke / 'ingestion.json'
+                report.write_text('stale')
+                probes = root / 'probes.sh'
+                probes.write_text(PROBES)
+                if group == 'ignored_log':
+                    subprocess.run(['git', 'init', '-q'], cwd=root, check=True)
+                    (root / '.gitignore').write_text('*.log\n')
+                    logs = root / '.local/logs'
+                    logs.mkdir()
+                    (logs / 'litellm.log').write_text('CACHE-SMOKE-fixture')
+                log = root / 'output'
+                with log.open('w') as output:
+                    result = subprocess.run(['/bin/bash', '-c', command], cwd=root, timeout=10,
+                                            env=os.environ | {'BASH_ENV': str(probes), 'STARTUP': '1',
+                                                              'FAIL_GROUP': group, 'TIMINGS': timing,
+                                                              'COUNTS': counts},
+                                            stdout=output, stderr=subprocess.STDOUT)
+                text = log.read_text()
+                self.assertEqual(result.returncode, status, text)
+                searched = group not in ('gateway', 'startup', 'moyai_ui')
+                self.assertEqual(report.read_text().strip(), counts if searched else 'stale', text)
+                self.assertEqual('Local Moyai is healthy' in text, searched)
+                self.assertEqual((root / 'vector-started').exists(), searched)
+                self.assertEqual((root / 'mcp-started').exists(), searched)
+                self.assertNotIn('INDEX_RAN', text)
+                self.assertEqual('MONITORING' in text, group in ('success', 'monitoring', 'logs', 'log_error', 'ignored_log'))
+                self.assertEqual('LOG_SCAN' in text, group in ('success', 'logs', 'log_error', 'ignored_log'))
+                if group == 'ignored_log':
+                    self.assertIn('A synthetic prompt sentinel leaked', text)
+                self.assertEqual('End-to-end smoke tests passed' in text, status == 0)
+                self.assertEqual('Explicit Redis cache miss/hit path verified' in text,
+                                 group not in ('gateway', 'qwen'))
+
     def test_join_before_monitoring_and_log_scan(self):
         cases = [('neither', 0), ('index', 37), ('qwen', 38), ('vector', 39), ('mcp', 40)]
         for timings, (group, status), prepared in product(('0', '1'), cases, (False, True)):
