@@ -10,10 +10,24 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 
-# Stub the external probes. Rendezvous inside the two real shell groups so a
-# sequential implementation times out. Keep Qwen active during retrieval failure.
+# Each rendezvous requires both real shell groups to be running. The index
+# marker is written only after the indexing probe succeeds.
 PROBES = """
-curl() { :; }
+curl() {
+  case "${!#}" in
+    http://127.0.0.1:8000/search)
+      [[ -f indexed ]] || return 91
+      ;;
+    http://127.0.0.1:4000/local_retrieval/mcp)
+      if [[ ! -f mcp-started ]]; then
+        [[ -f indexed ]] || return 91
+        rendezvous mcp vector
+        [[ $FAIL_GROUP != mcp ]] || return 40
+        if [[ $FAIL_GROUP == vector ]]; then sleep 0.25; fi
+      fi
+      ;;
+  esac
+}
 jq() { echo multiply; }
 lsof() { :; }
 grep() { :; }
@@ -33,12 +47,20 @@ python3() {
   case "$*" in
     'scripts/compression-smoke.py')
       rendezvous qwen retrieval
-      sleep 0.25
+      if [[ $FAIL_GROUP == index ]]; then sleep 0.25; fi
       [[ $FAIL_GROUP != qwen ]] || return 38
       ;;
     'scripts/retrieval_probe.py index')
       rendezvous retrieval qwen
-      [[ $FAIL_GROUP != retrieval ]] || return 37
+      [[ $FAIL_GROUP != index ]] || return 37
+      touch indexed
+      ;;
+    'scripts/vector-smoke.py --indexed')
+      [[ -f indexed ]] || return 91
+      rendezvous vector mcp
+      [[ $FAIL_GROUP != vector ]] || return 39
+      if [[ $FAIL_GROUP == mcp ]]; then sleep 0.25; fi
+      echo VECTOR_DONE
       ;;
   esac
 }
@@ -47,7 +69,8 @@ python3() {
 
 class ParallelSmokeTests(unittest.TestCase):
     def test_join_before_monitoring_and_log_scan(self):
-        for timings, (group, status) in product(('0', '1'), [('neither', 0), ('qwen', 38), ('retrieval', 37)]):
+        cases = [('neither', 0), ('index', 37), ('qwen', 38), ('vector', 39), ('mcp', 40)]
+        for timings, (group, status) in product(('0', '1'), cases):
             with self.subTest(timings=timings, group=group), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 (root / 'scripts').mkdir()
@@ -69,16 +92,21 @@ class ParallelSmokeTests(unittest.TestCase):
                 text = log.read_text()
                 self.assertEqual(result.returncode, status, text)
                 qwen = 'Explicit Redis cache miss/hit path verified'
-                retrieval = 'Read-only PostgreSQL MCP tool call returned bounded metadata'
+                mcp = 'Read-only PostgreSQL MCP tool call returned bounded metadata'
                 self.assertEqual(qwen in text, group != 'qwen', text)
-                self.assertEqual(retrieval in text, group != 'retrieval', text)
+                self.assertEqual('VECTOR_DONE' in text, group not in ('index', 'vector'), text)
+                self.assertEqual(mcp in text, group not in ('index', 'mcp'), text)
+                for name in ('vector', 'mcp'):
+                    self.assertEqual((root / (name + '-started')).exists(), group != 'index', text)
                 for marker in ['MONITORING', 'LOG_SCAN', 'End-to-end smoke tests passed']:
                     self.assertEqual(marker in text, status == 0, text)
-                for lane in ('Qwen', 'retrieval/MCP'):
-                    self.assertEqual(f'[timings] {lane} ' in text, timings == '1', text)
-                if status == 0 and timings == '1':
-                    for lane in ('Qwen', 'retrieval/MCP'):
-                        self.assertLess(text.index(f'[timings] {lane} '), text.index('MONITORING'))
+                for lane in ('Qwen', 'retrieval/MCP', 'Indexing', 'Vector search', 'MCP'):
+                    ran = group != 'index' or lane not in ('Vector search', 'MCP')
+                    marker = f'[timings] {lane} '
+                    self.assertEqual(marker in text, timings == '1' and ran, text)
+                    if status == 0 and timings == '1':
+                        self.assertLess(text.index(marker), text.index('MONITORING'))
                 if status == 0:
-                    self.assertGreater(text.index('MONITORING'), max(text.index(qwen), text.index(retrieval)))
+                    for success in (qwen, 'VECTOR_DONE', mcp):
+                        self.assertLess(text.index(success), text.index('MONITORING'))
                     self.assertGreater(text.index('LOG_SCAN'), text.index('MONITORING'))

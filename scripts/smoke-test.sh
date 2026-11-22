@@ -112,9 +112,7 @@ check_qwen() {
   ok "Explicit Redis cache miss/hit path verified"
 }
 
-check_retrieval_mcp() {
-  info "Indexing the two platform policy documents through LiteLLM embeddings..."
-  python3 scripts/retrieval_probe.py index > "$smoke/ingestion.json"
+check_vector_search() {
   curl --fail --silent --show-error --max-time 300 \
     --header 'Content-Type: application/json' --data "$search_payload" \
     http://127.0.0.1:8000/search > "$smoke/search.json"
@@ -122,7 +120,9 @@ check_retrieval_mcp() {
   ok "Hybrid pgvector search cited the platform loopback policy"
 
   python3 scripts/vector-smoke.py --indexed
+}
 
+check_mcp() {
   mcp_request=$(jq -cn '{jsonrpc:"2.0",id:1,method:"tools/list",params:{}}')
   curl --fail --silent --show-error --max-time 60 \
     --header "Authorization: Bearer $key" \
@@ -164,6 +164,20 @@ check_retrieval_mcp() {
   jq -e '.result.isError == false and (.result.structuredContent.result | fromjson | .[0].chunks >= 1)' "$smoke/mcp-postgres-call.json" >/dev/null
   ok "Read-only PostgreSQL MCP tool call returned bounded metadata"
 }
+
+check_retrieval_mcp() (
+  info "Indexing the two platform policy documents through LiteLLM embeddings..."
+  timed_step Indexing python3 scripts/retrieval_probe.py index > "$smoke/ingestion.json"
+
+  timed_step "Vector search" check_vector_search &
+  vector_pid=$!
+  # This subshell drains the vector probe (including temporary key cleanup)
+  # on an MCP failure. The parent keeps its own EXIT trap for Qwen.
+  trap 'wait "$vector_pid" || :' EXIT
+  timed_step MCP check_mcp
+  wait "$vector_pid"
+  trap - EXIT
+)
 
 timed_step Qwen check_qwen &
 qwen_pid=$!
