@@ -143,6 +143,11 @@ commit, last check, publication time, store ID and any error. A failed update
 is retried on a later poll. After restoring or resetting the database, rerun
 the connect command to reconcile the index even if the branch tip is unchanged.
 
+To stop polling and remove the branch's indexed content and LiteLLM store, run
+`make rag-disconnect REPO=owner/project`. Supply the same `BRANCH` for a
+non-default branch. The last disconnect unloads the polling schedule. If cleanup
+is interrupted, the connection stays paused. Repeat the same command to finish.
+
 Search through `POST /v1/vector_stores/{store_id}/search` using a LiteLLM key
 with read access to that store. Connecting a repository grants no client access.
 The default startup continues to check only the two platform probe documents.

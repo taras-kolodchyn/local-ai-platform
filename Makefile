@@ -125,12 +125,15 @@ github-app-issues: export MOYAI_AUTO_MERGE := $(value AUTO_MERGE)
 github-app-issues: ## Publish as the GitHub App (ISSUE=N AUTO_MERGE=1 also merges after verified CI)
 	@bash scripts/github-command.sh scripts/github-issues.py --app
 
-.PHONY: rag-connect rag-status
+.PHONY: rag-connect rag-disconnect rag-status
 BRANCH ?= main
-rag-connect: export RAG_REPO := $(value REPO)
-rag-connect: export RAG_BRANCH := $(value BRANCH)
+rag-connect rag-disconnect: export RAG_REPO := $(value REPO)
+rag-connect rag-disconnect: export RAG_BRANCH := $(value BRANCH)
 rag-connect: ## Follow a GitHub repository branch and publish its index through LiteLLM
 	@python3 scripts/rag-sync.py connect
+
+rag-disconnect: ## Stop following REPO and remove its branch search index
+	@python3 scripts/rag-sync.py disconnect
 
 rag-status: ## Show background polling and indexed revisions
 	@python3 scripts/rag-sync.py status

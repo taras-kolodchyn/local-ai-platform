@@ -41,3 +41,40 @@ class BranchSyncTests(unittest.TestCase):
                 sync.synchronize(root)
                 publish.assert_called_once()
             self.assertNotIn('error', json.loads((root / 'state.json').read_text()))
+
+    def test_interrupted_disconnect_pauses_poll_and_can_resume(self):
+        from contextlib import nullcontext
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            directory = root / 'connection'
+            directory.mkdir()
+            path = directory / 'state.json'
+            sync.save(path, {'scope': 'connected/github/o/r', 'branch': 'main'})
+            with patch.object(sync, 'STATE', root), patch.dict(sync.PROVISION, vector_registry_lock=nullcontext), \
+                 patch.object(sync, 'remove_index', side_effect=[RuntimeError('offline'), None]), \
+                 patch.object(sync, 'git') as git, patch.object(sync, 'loaded', return_value=False), \
+                 patch.object(sync, 'PLIST', root / 'job.plist'):
+                with self.assertRaises(RuntimeError):
+                    sync.disconnect(directory, 'connected/github/o/r', 'main')
+                sync.synchronize(directory)
+                sync.disconnect(directory, 'connected/github/o/r', 'main')
+                sync.synchronize(directory)
+                sync.disconnect(directory, 'connected/github/o/r', 'main')
+                git.assert_not_called()
+                self.assertFalse(path.exists())
+
+    def test_disconnect_preserves_another_branch_and_schedule(self):
+        from contextlib import nullcontext
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            scope = 'connected/github/o/r'
+            for branch in ('main', 'stable'):
+                directory = root / branch
+                directory.mkdir()
+                sync.save(directory / 'state.json', {'scope': scope, 'branch': branch})
+            with patch.object(sync, 'STATE', root), patch.dict(sync.PROVISION, vector_registry_lock=nullcontext), \
+                 patch.object(sync, 'remove_index') as remove, patch.object(sync, 'loaded') as loaded:
+                sync.disconnect(root / 'main', scope, 'main')
+                self.assertEqual(remove.call_args.args[0]['branch'], 'main')
+                self.assertTrue((root / 'stable/state.json').exists())
+                loaded.assert_not_called()
