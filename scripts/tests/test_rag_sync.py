@@ -26,6 +26,10 @@ class BranchSyncTests(unittest.TestCase):
             git = ['git', '-C', str(origin), '-c', 'user.name=Test', '-c', 'user.email=test@localhost']
             subprocess.run([*git, 'commit', '-qm', 'Initial', '--allow-empty'], check=True)
             tip = subprocess.check_output([*git, 'rev-parse', 'HEAD'], text=True).strip()
+            target = root / 'export'
+            target.mkdir()
+            sync.export_tree(origin, tip, target)
+            self.assertEqual(list(target.iterdir()), [])
             with patch.object(sync, 'publish', side_effect=RuntimeError('ingestion failed')):
                 with self.assertRaises(RuntimeError):
                     sync.synchronize(root, {'branch': 'main', 'scope': 'test', 'origin': str(origin)})

@@ -68,7 +68,8 @@ def lock(directory):
 def export_tree(bare, commit, target):
     # Never create links or apply modes, owners or extended attributes from Git.
     with tempfile.TemporaryFile(dir=bare.parent) as archive:
-        git('archive', '--format=tar', commit, cwd=bare, stdout=archive)
+        # Export the tree so an empty revision is a valid empty tar stream.
+        git('archive', '--format=tar', commit + '^{tree}', cwd=bare, stdout=archive)
         archive.seek(0)
         with tarfile.open(fileobj=archive, mode='r|') as tree:
             for member in tree:
