@@ -35,7 +35,12 @@ curl() {
 jq() { echo multiply; }
 lsof() { :; }
 grep() { :; }
-rg() { echo LOG_SCAN; [[ $FAIL_GROUP != log_error ]] || return 2; [[ $FAIL_GROUP == logs ]]; }
+rg() {
+  echo LOG_SCAN
+  if [[ $FAIL_GROUP == ignored_log ]]; then command rg "$@"; return $?; fi
+  [[ $FAIL_GROUP != log_error ]] || return 2
+  [[ $FAIL_GROUP == logs ]]
+}
 bash() {
   if [[ $1 == scripts/check-observability.sh ]]; then echo MONITORING; [[ $FAIL_GROUP != monitoring ]] || return 42; fi
 }
@@ -91,7 +96,7 @@ class ParallelSmokeTests(unittest.TestCase):
         prepare | /bin/bash scripts/smoke-test.sh --await-startup
         """
         cases = {'success': 0, 'gateway': 41, 'qwen': 38, 'startup': 1,
-                 'vector': 39, 'mcp': 40, 'moyai_ui': 43, 'monitoring': 42, 'logs': 1, 'log_error': 1}
+                 'vector': 39, 'mcp': 40, 'moyai_ui': 43, 'monitoring': 42, 'logs': 1, 'log_error': 1, 'ignored_log': 1}
         for timing, (group, status) in product(('0', '1'), cases.items()):
             with self.subTest(timing=timing, group=group), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
@@ -106,6 +111,12 @@ class ParallelSmokeTests(unittest.TestCase):
                 report.write_text('stale')
                 probes = root / 'probes.sh'
                 probes.write_text(PROBES)
+                if group == 'ignored_log':
+                    subprocess.run(['git', 'init', '-q'], cwd=root, check=True)
+                    (root / '.gitignore').write_text('*.log\n')
+                    logs = root / '.local/logs'
+                    logs.mkdir()
+                    (logs / 'litellm.log').write_text('CACHE-SMOKE-fixture')
                 log = root / 'output'
                 with log.open('w') as output:
                     result = subprocess.run(['/bin/bash', '-c', command], cwd=root, timeout=10,
@@ -121,8 +132,10 @@ class ParallelSmokeTests(unittest.TestCase):
                 self.assertEqual((root / 'vector-started').exists(), searched)
                 self.assertEqual((root / 'mcp-started').exists(), searched)
                 self.assertNotIn('INDEX_RAN', text)
-                self.assertEqual('MONITORING' in text, group in ('success', 'monitoring', 'logs', 'log_error'))
-                self.assertEqual('LOG_SCAN' in text, group in ('success', 'logs', 'log_error'))
+                self.assertEqual('MONITORING' in text, group in ('success', 'monitoring', 'logs', 'log_error', 'ignored_log'))
+                self.assertEqual('LOG_SCAN' in text, group in ('success', 'logs', 'log_error', 'ignored_log'))
+                if group == 'ignored_log':
+                    self.assertIn('A synthetic prompt sentinel leaked', text)
                 self.assertEqual('End-to-end smoke tests passed' in text, status == 0)
                 self.assertEqual('Explicit Redis cache miss/hit path verified' in text,
                                  group not in ('gateway', 'qwen'))

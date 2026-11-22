@@ -218,7 +218,7 @@ trap - EXIT
 
 timed_step Monitoring bash scripts/check-observability.sh
 
-if rg -q -F -e 'CACHE-SMOKE-' -e 'loopback listeners in the offline profile' \
+if rg --no-ignore -q -F -e 'CACHE-SMOKE-' -e 'loopback listeners in the offline profile' \
   -e "$(jq -r '.query' <<< "$search_payload")" .local/logs; then
   die "A synthetic prompt sentinel leaked into metadata-only logs"
 elif [[ $? != 1 ]]; then
