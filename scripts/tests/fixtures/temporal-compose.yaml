@@ -1,0 +1,19 @@
+services:
+  moyai-temporal:
+    extends:
+      file: ../../../compose.moyai.yaml
+      service: moyai-temporal
+    healthcheck:
+      interval: 1s
+  moyai-volume-init:
+    extends:
+      file: ../../../compose.moyai.yaml
+      service: moyai-volume-init
+
+volumes:
+  moyai_temporal:
+    name: ${TEST_TEMPORAL_VOLUME:?set an isolated test volume}
+
+networks:
+  private:
+    internal: true

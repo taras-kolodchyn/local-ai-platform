@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 source "$(dirname "$0")/lib.sh"
+source "$(dirname "$0")/moyai-volume.sh"
 
 moyai_compose=(docker compose --project-name local-ai-moyai --file compose.moyai.yaml)
 
@@ -10,7 +11,7 @@ case "${1:-up}" in
     changed=$(python3 scripts/moyai-prepare.py)
     existing=$("${moyai_compose[@]}" ps -q moyai)
     python3 scripts/build-images.py "${moyai_compose[@]:2}"
-    compose_wait Moyai "${moyai_compose[@]:2}" up --detach --no-build --wait --wait-timeout 300
+    start_moyai_services "${moyai_compose[@]:2}"
     if [[ "$changed" == changed && -n "$existing" ]]; then
       compose_wait "Moyai refresh" "${moyai_compose[@]:2}" up --detach --wait --wait-timeout 120 \
         --force-recreate --no-deps moyai

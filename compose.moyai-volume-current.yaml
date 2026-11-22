@@ -1,0 +1,6 @@
+services:
+  moyai-volume-init:
+    profiles: [temporal-volume-init]
+  moyai-temporal:
+    depends_on:
+      moyai-volume-init: !reset null

@@ -31,6 +31,7 @@ load_env
 docker compose config --quiet
 docker compose -f compose.yaml -f compose.mcp-current.yaml config --quiet
 docker compose -f compose.moyai.yaml config --quiet
+docker compose -f compose.moyai.yaml -f compose.moyai-volume-current.yaml config --quiet
 ok "Compose configuration valid"
 
 if rg -n --hidden --glob '!LICENSE' --glob '!.git/**' \
