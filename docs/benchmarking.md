@@ -34,10 +34,12 @@ records the last commit even when the tree has local edits.
 ## Startup timings
 
 Run `make up TIMINGS=1` to include timings in the terminal during a full
-startup. The final line reports wall time for `make up`. Qwen and retrieval/MCP
-run concurrently. Within retrieval/MCP, both the vector search and MCP checks
-use the same completed index and run concurrently. The output includes the
-indexing time, each group's duration and the total elapsed time for retrieval/MCP.
+startup. The final line reports wall time for `make up`. Once the core services
+and keys are ready, `Indexing` and `Moyai setup` run concurrently. Both must
+succeed before smoke checks start. Qwen and retrieval/MCP then run concurrently.
+Within retrieval/MCP, vector search and MCP run in parallel against the same
+completed index. During `make up`, the retrieval/MCP timing covers these probes.
+Standalone `make smoke-test` runs its own index before either search.
 Monitoring starts after all groups succeed, followed by the log scan.
 
 Each Compose `up --wait` prints elapsed time from the start of its progress

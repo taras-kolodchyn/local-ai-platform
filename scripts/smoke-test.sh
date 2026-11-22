@@ -2,6 +2,10 @@
 
 source "$(dirname "$0")/lib.sh"
 
+if (( $# )) && ! [[ $# == 2 && $1 == --index-result && -n ${2:-} ]]; then
+  die 'Usage: smoke-test.sh [--index-result JSON]'
+fi
+
 load_env
 require_command curl
 require_command jq
@@ -166,8 +170,13 @@ check_mcp() {
 }
 
 check_retrieval_mcp() (
-  info "Indexing the two platform policy documents through LiteLLM embeddings..."
-  timed_step Indexing python3 scripts/retrieval_probe.py index > "$smoke/ingestion.json"
+  if (( $# )); then
+    # up.sh passes the counts from this invocation's successful index.
+    printf '%s\n' "$2" > "$smoke/ingestion.json"
+  else
+    info "Indexing the two platform policy documents through LiteLLM embeddings..."
+    timed_step Indexing python3 scripts/retrieval_probe.py index > "$smoke/ingestion.json"
+  fi
 
   timed_step "Vector search" check_vector_search &
   vector_pid=$!
@@ -185,7 +194,7 @@ qwen_pid=$!
 trap 'wait "$qwen_pid" || :' EXIT
 
 search_payload=$(python3 scripts/retrieval_probe.py query)
-timed_step "retrieval/MCP" check_retrieval_mcp
+timed_step "retrieval/MCP" check_retrieval_mcp "$@"
 
 wait "$qwen_pid"
 trap - EXIT

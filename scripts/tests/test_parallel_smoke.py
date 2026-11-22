@@ -51,6 +51,7 @@ python3() {
       [[ $FAIL_GROUP != qwen ]] || return 38
       ;;
     'scripts/retrieval_probe.py index')
+      echo INDEX_RAN >&2
       rendezvous retrieval qwen
       [[ $FAIL_GROUP != index ]] || return 37
       touch indexed
@@ -70,8 +71,10 @@ python3() {
 class ParallelSmokeTests(unittest.TestCase):
     def test_join_before_monitoring_and_log_scan(self):
         cases = [('neither', 0), ('index', 37), ('qwen', 38), ('vector', 39), ('mcp', 40)]
-        for timings, (group, status) in product(('0', '1'), cases):
-            with self.subTest(timings=timings, group=group), tempfile.TemporaryDirectory() as tmp:
+        for timings, (group, status), prepared in product(('0', '1'), cases, (False, True)):
+            if prepared and group == 'index':
+                continue  # up.sh stops before smoke when its index fails.
+            with self.subTest(timings=timings, group=group, prepared=prepared), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 (root / 'scripts').mkdir()
                 for script in ['smoke-test.sh', 'lib.sh']:
@@ -79,6 +82,15 @@ class ParallelSmokeTests(unittest.TestCase):
                 (root / '.env').touch()
                 (root / '.local').mkdir()
                 (root / '.local/litellm-api-key').write_text('fixture')
+                report = root / '.local/smoke/ingestion.json'
+                report.parent.mkdir()
+                report.write_text('stale')
+                command = ['bash', 'scripts/smoke-test.sh']
+                counts = '{"files_indexed": 2, "chunks_reused": 2}'
+                if prepared:
+                    (root / 'indexed').touch()
+                    (root / 'retrieval-started').touch()
+                    command.extend(['--index-result', counts])
                 probes = root / 'probes.sh'
                 probes.write_text(PROBES)
                 log = root / 'output'
@@ -86,11 +98,14 @@ class ParallelSmokeTests(unittest.TestCase):
                 # even if a regression leaves a child holding stdout open.
                 with log.open('w') as output:
                     result = subprocess.run(
-                        ['bash', 'scripts/smoke-test.sh'], cwd=root, timeout=10,
+                        command, cwd=root, timeout=10,
                         env=os.environ | {'BASH_ENV': str(probes), 'FAIL_GROUP': group, 'TIMINGS': timings},
                         stdout=output, stderr=subprocess.STDOUT)
                 text = log.read_text()
                 self.assertEqual(result.returncode, status, text)
+                self.assertEqual('INDEX_RAN' in text, not prepared)
+                if prepared:
+                    self.assertEqual(report.read_text().strip(), counts)
                 qwen = 'Explicit Redis cache miss/hit path verified'
                 mcp = 'Read-only PostgreSQL MCP tool call returned bounded metadata'
                 self.assertEqual(qwen in text, group != 'qwen', text)
@@ -102,9 +117,11 @@ class ParallelSmokeTests(unittest.TestCase):
                     self.assertEqual(marker in text, status == 0, text)
                 for lane in ('Qwen', 'retrieval/MCP', 'Indexing', 'Vector search', 'MCP'):
                     ran = group != 'index' or lane not in ('Vector search', 'MCP')
+                    if lane == 'Indexing':
+                        ran = not prepared
                     marker = f'[timings] {lane} '
                     self.assertEqual(marker in text, timings == '1' and ran, text)
-                    if status == 0 and timings == '1':
+                    if status == 0 and timings == '1' and ran:
                         self.assertLess(text.index(marker), text.index('MONITORING'))
                 if status == 0:
                     for success in (qwen, 'VECTOR_DONE', mcp):
