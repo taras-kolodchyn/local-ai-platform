@@ -101,6 +101,26 @@ class ContextBridge:
                                           'generation_id', 'verification_profile')}
 
     def search(self, repository_id, snapshot_id, generation_id, query, limit=6, exact_path=None):
+        row = self.binding(repository_id, snapshot_id, generation_id)
+        return self._search(row, query, limit, exact_path)
+
+    def search_branch(self, session, work_item, query, limit, exact_path):
+        match = re.fullmatch(r'https://github\.com/([\w.-]+/[\w.-]+)/(issues|pull)/([1-9][0-9]{0,9})', work_item)
+        if not match:
+            raise PermissionError('Expected a GitHub issue or pull request')
+        scope = 'connected/github/' + match[1].lower()
+        grants = self.config.catalog_file.with_name('branch-search.json')
+        rows = [r for r in json.loads(grants.read_text()) if r['scope'] == scope and session in r['sessions']
+                and (r['targets']['default'] if match[2] == 'issues' else int(match[3]) in r['targets']['pulls'])]
+        if not rows or len({r['indexed'] for r in rows}) != 1:
+            raise PermissionError('No connected revision for this session and work item')
+        selected = rows[0]
+        row = {'repository_id': scope, 'snapshot_id': 'legacy', 'generation_id': 'legacy',
+               'store_id': selected['store'], 'branch': selected['branch'], 'indexed': selected['indexed']}
+        return self._search(row, query, limit, exact_path)
+
+    def _search(self, row, query, limit, exact_path):
+        repository_id, snapshot_id, generation_id = (row[k] for k in ('repository_id', 'snapshot_id', 'generation_id'))
         if not isinstance(query, str) or not 2 <= len(query.strip()) <= 4000:
             raise ValueError('Query must contain 2–4000 characters')
         if type(limit) is not int or not 1 <= limit <= 12:
@@ -110,7 +130,6 @@ class ContextBridge:
             if not isinstance(exact_path, str) or not 1 <= len(exact_path) <= 1000:
                 raise ValueError('Invalid exact path filter')
             payload['filters'] = {'type':'eq', 'key':'path', 'value':exact_path}
-        row = self.binding(repository_id, snapshot_id, generation_id)
         try:
             key = self.config.upstream_key_file.read_text().strip()
             if not key:
@@ -138,6 +157,8 @@ class ContextBridge:
                 if (attributes.get('repository'), attributes.get('snapshot_id'),
                     attributes.get('generation_id')) != (repository_id, snapshot_id, generation_id):
                     raise ValueError('Search response scope mismatch')
+                if 'indexed' in row and (attributes.get('commit_hash'), attributes.get('branch')) != (row['indexed'], row['branch']):
+                    raise ValueError('Branch revision changed')
                 path = entry['filename']
                 if exact_path is not None and path != exact_path:
                     raise ValueError('Search response path mismatch')
@@ -202,6 +223,15 @@ def create_app(bridge: ContextBridge):
             return SearchResult(**bridge.search(repository_id, snapshot_id, generation_id, query, limit, exact_path))
         except (PermissionError, ValueError, RuntimeError):
             raise ValueError('Repository context request was rejected or unavailable') from None
+
+    @mcp.tool(annotations=annotations, structured_output=True)
+    def search_connected_branch(session: str, work_item: str, query: str, limit: int = 6,
+                                exact_path: str | None = None) -> SearchResult:
+        """Search the granted branch at its indexed Git revision."""
+        try:
+            return SearchResult(**bridge.search_branch(session, work_item, query, limit, exact_path))
+        except (OSError, PermissionError, ValueError, RuntimeError):
+            raise ValueError('Connected branch search is unavailable') from None
 
     @mcp.tool(annotations=annotations, structured_output=True)
     def repository_status(repository_id: str, snapshot_id: str, generation_id: str) -> RepositoryStatus:
