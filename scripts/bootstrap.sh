@@ -80,19 +80,25 @@ touch .local/litellm-api-key
 if [[ ! -s .local/litellm-metrics-key ]]; then
   printf 'sk-metrics-%s' "$(generate_hex 32)" > .local/litellm-metrics-key
 fi
-chmod 600 .local/litellm-metrics-key
 
 for service in litellm retrieval ingestion mcp-tools postgres redis; do
   touch ".local/logs/${service}.log"
 done
-chmod 600 .local/litellm-api-key
 chmod 600 .local/model-runtime.env
 chmod 666 .local/logs/*.log
 
 if [[ ! -s .local/vector-backend-key ]]; then
   openssl rand -hex 32 > .local/vector-backend-key
 fi
-chmod 600 .local/vector-backend-key
+
+# Files mounted as Compose secrets must be readable by the unprivileged service
+# UIDs baked into each image (e.g. retrieval/ingestion run as 10001, Prometheus
+# as nobody). Non-swarm Compose bind-mounts secrets with their host ownership
+# and ignores secrets.*.{uid,gid,mode}, so a 0600 host file owned by the admin
+# user is unreadable in the container on rootful Docker Engine. World-read keeps
+# them reachable for any service UID; the 0700 .local directory keeps them
+# private from other host users, as with the container log files above.
+chmod 644 .local/litellm-api-key .local/litellm-metrics-key .local/vector-backend-key
 
 python3 scripts/model-config.py render >/dev/null
 
