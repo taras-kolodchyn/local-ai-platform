@@ -160,7 +160,9 @@ make rag-connect REPO=owner/project BRANCH=main SESSIONS="$DEVELOPER_SESSION" PO
 make rag-connect REPO=owner/project BRANCH=feature/topic SESSIONS="$VERIFIER_SESSION" POLL=0
 ```
 
-Include one GitHub issue or PR URL in the private lookup request. Ask for a
+Start a dedicated lookup with `Search source for https://github.com/owner/project/issues/42 followed by your question`.
+The same command accepts a pull request URL. It runs one repository search and
+answers from its result. A normal private request can also include one work-item URL. Ask for a
 passage, its path and its Git SHA. For an issue, search uses the connected
 default branch. For a PR it requires a connected branch at the same commit
 as the PR head observed by Git during synchronization. A fork's PR therefore
