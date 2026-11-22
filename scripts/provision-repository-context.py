@@ -9,6 +9,8 @@ import re
 import secrets
 import subprocess
 import sys
+import os
+import tempfile
 from urllib.error import HTTPError
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 import uuid
@@ -76,7 +78,24 @@ def provision_context(admin, root=ROOT, registration=None):
 
 def _provision_context_locked(admin, root, registration):
     rows = registrations(root, registration)
-    stores = sorted({row['store_id'] for row in rows})
+    branches = []
+    for path in sorted((root / '.local/rag').glob('*/state.json')):
+        try:
+            state = json.loads(path.read_text())
+        except FileNotFoundError:
+            continue  # A concurrent disconnect has already removed the checkpoint.
+        if (state.get('sessions') and state.get('targets') and not state.get('disconnecting')
+                and state.get('indexed') == state.get('observed') and state['scope'].startswith('connected/github/')):
+            branches.append({k: state[k] for k in ('scope', 'branch', 'store', 'indexed', 'sessions', 'targets')})
+    directory = root / '.local/repositories'
+    grants = directory / 'branch-search.json'
+    content = json.dumps(branches, sort_keys=True)
+    if not grants.exists() or grants.read_text() != content:
+        with tempfile.NamedTemporaryFile('w', dir=directory, delete=False) as temp:
+            temp.write(content)
+            os.fchmod(temp.fileno(), 0o644)
+        os.replace(temp.name, grants)
+    stores = sorted({row['store_id'] for row in rows} | {b['store'] for b in branches})
     local = root / '.local/moyai'
     token_file = local / 'context-token'
     token = token_file.read_text().strip() if token_file.exists() else secrets.token_urlsafe(32)

@@ -445,11 +445,25 @@ class RepositoryBackend:
                 {'kind':cmd.get('kind'),'exit_code':cmd.get('exit_code')} for cmd in latest.get('commands',[])[:16]]}
         return result
 
-    async def search(self, scope, query, limit, exact_path=None):
+    @staticmethod
+    async def context_call(tool, args):
         from mcp import ClientSession
         from mcp.client.streamable_http import streamable_http_client
         import httpx2
 
+        async with asyncio.timeout(75), httpx2.AsyncClient(
+            headers={'Authorization':'Bearer '+os.environ['MOYAI_REPOSITORY_CONTEXT_TOKEN']},
+            follow_redirects=False, trust_env=False, timeout=70,
+        ) as client, streamable_http_client(CONTEXT_URL, http_client=client, terminate_on_close=False,
+                                           max_sse_event_size=1_048_576) as streams:
+            async with ClientSession(streams[0], streams[1], read_timeout_seconds=70) as session:
+                await session.initialize()
+                result = await session.call_tool(tool, args)
+        if result.is_error or not isinstance(result.structured_content, dict):
+            raise RepositoryError('Repository context is unavailable for this request.')
+        return result.structured_content
+
+    async def search(self, scope, query, limit, exact_path=None):
         task = self.ledger.status(*scope)
         if not task or not 1 <= limit <= 8 or not 2 <= len(query.strip()) <= 1000:
             raise RepositoryError('Search requires a pinned task, bounded query and limit (1–8).')
@@ -458,16 +472,8 @@ class RepositoryBackend:
         args = {**ids, 'query':query, 'limit':limit}
         if exact_path is not None:
             args['exact_path'] = relative_name(exact_path)
-        async with asyncio.timeout(75), httpx2.AsyncClient(
-            headers={'Authorization':'Bearer '+os.environ['MOYAI_REPOSITORY_CONTEXT_TOKEN']},
-            follow_redirects=False, trust_env=False, timeout=70,
-        ) as client, streamable_http_client(CONTEXT_URL, http_client=client, terminate_on_close=False,
-                                           max_sse_event_size=1_048_576) as streams:
-            async with ClientSession(streams[0], streams[1], read_timeout_seconds=70) as session:
-                await session.initialize()
-                result = await session.call_tool('search_repository', args)
-        value = result.structured_content
-        if result.is_error or not isinstance(value, dict) or any(value.get(k) != v for k,v in ids.items()):
+        value = await self.context_call('search_repository', args)
+        if any(value.get(k) != v for k,v in ids.items()):
             raise RepositoryError('Context bridge returned a failed or foreign scope.')
         rows = value['results']
         manifest, _ = await asyncio.to_thread(self.snapshot, binding)

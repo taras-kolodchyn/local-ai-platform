@@ -19,7 +19,7 @@ with workflow.unsafe.imports_passed_through():
 from local_config import workspace_directory
 from repository_backend import SSH_ARGS, projected_tree_hash, scoped_tree
 from repository_ledger import RepositoryError
-from repository_workflow import RepositoryWorkflow, WRITES, allowed, identity, scope_of
+from repository_workflow import RepositoryWorkflow, WRITES, allowed, connected_item, identity, scope_of
 
 DESTINATION = 'ssh://agent@moyai-sandbox:22'
 LIST_RETRY = 'Call list_repositories through the native tool to discover registered repositories.'
@@ -154,12 +154,15 @@ class SessionWorkspace(RepositoryWorkflow):
             raise RuntimeError('Could not inspect the analysis directory')
         return result.stdout.strip() == '1'
 
+    def analysis_tools(self, ctx):
+        return analysis_mode.TOOLS | {'search_repository'} if connected_item(ctx) else analysis_mode.TOOLS
+
     async def prepare_tools(self, ctx, tool_defs):
         offered = await super().prepare_tools(ctx, tool_defs)
         if self.engineering_skills.issue_step(ctx, getattr(ctx, 'messages', ())) and await self.phase(*scope_of(ctx)) == 'analyzing':
             return [tool for tool in tool_defs if tool.name == SELECT_SKILLS]
         if analysis_mode.active(ctx):
-            offered = [tool for tool in offered if tool.name in analysis_mode.TOOLS]
+            offered = [tool for tool in offered if tool.name in self.analysis_tools(ctx)]
             if any(t.name in {'list_files', 'read_file'} for t in offered) and not await self.analysis_workspace_has_files(*scope_of(ctx)):
                 offered = [tool for tool in offered if tool.name not in {'list_files', 'read_file'}]
         if any(tool.name == SELECT_SKILLS for tool in offered) and not self.engineering_skills.needs_selection(ctx, ctx.messages):
@@ -169,7 +172,7 @@ class SessionWorkspace(RepositoryWorkflow):
     async def before_model_request(self, ctx, request_context):
         request = await super().before_model_request(ctx, request_context)
         if analysis_mode.active(ctx):
-            request = analysis_mode.restrict_request(ctx, request, self.engineering_skills.catalog(ctx))
+            request = analysis_mode.restrict_request(ctx, request, self.engineering_skills.catalog(ctx), tools=self.analysis_tools(ctx))
         elif (getattr(ctx.deps, 'surface', None) == 'web' and ctx.run_id == ctx.deps.root_run_id
                 and any(isinstance(part, ToolReturnPart) and part.tool_name == 'open_repository'
                         and part.outcome == 'success' for message in request.messages if message.run_id == ctx.run_id
@@ -230,7 +233,7 @@ class SessionWorkspace(RepositoryWorkflow):
                 url = requested_issue_url(ctx)
                 if url and await self.admit_issue_skill(*scope_of(ctx), int(url.rsplit('/', 1)[1]), identity(ctx, call.tool_call_id)):
                     return args
-        if analysis_mode.active(ctx) and (tool_def.name not in analysis_mode.TOOLS
+        if analysis_mode.active(ctx) and (tool_def.name not in self.analysis_tools(ctx)
                 or call.tool_name != tool_def.name or (tool_def.name == 'load_capability'
                 and (tool_def.tool_kind != 'capability-load' or args.get('id') not in self.engineering_skills.catalog(ctx)))):
             raise ToolFailed('The analysis-only profile permits local reads and enabled gateway skills only.')

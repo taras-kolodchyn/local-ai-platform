@@ -88,6 +88,8 @@ services:
     image: local-ai-platform/retrieval:0.1.0
     restart: unless-stopped
     entrypoint: [python, /app/context_bridge.py]
+    labels:
+      local.workspace.context-revision: "${CONTEXT_BRIDGE_REVISION:-local}"
     read_only: true
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]

@@ -129,6 +129,8 @@ github-app-issues: ## Publish as the GitHub App (ISSUE=N AUTO_MERGE=1 also merge
 BRANCH ?= main
 rag-connect rag-disconnect: export RAG_REPO := $(value REPO)
 rag-connect rag-disconnect: export RAG_BRANCH := $(value BRANCH)
+rag-connect: export RAG_SESSIONS := $(value SESSIONS)
+rag-connect: export RAG_POLL := $(value POLL)
 rag-connect: ## Follow a GitHub repository branch and publish its index through LiteLLM
 	@python3 scripts/rag-sync.py connect
 

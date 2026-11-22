@@ -149,7 +149,25 @@ non-default branch. The last disconnect unloads the polling schedule. If cleanup
 is interrupted, the connection stays paused. Repeat the same command to finish.
 
 Search through `POST /v1/vector_stores/{store_id}/search` using a LiteLLM key
-with read access to that store. Connecting a repository grants no client access.
+with read access to that store. By default a connection grants no client access.
+
+For a private Moyai conversation, pass its session UUID with `SESSIONS`.
+Use a comma-separated list to grant the same branch to several sessions.
+Add `POLL=0` for a one-time index without installing a schedule.
+
+```sh
+make rag-connect REPO=owner/project BRANCH=main SESSIONS="$DEVELOPER_SESSION" POLL=0
+make rag-connect REPO=owner/project BRANCH=feature/topic SESSIONS="$VERIFIER_SESSION" POLL=0
+```
+
+Include one GitHub issue or PR URL in the private lookup request. Ask for a
+passage, its path and its Git SHA. For an issue, search uses the connected
+default branch. For a PR it requires a connected branch at the same commit
+as the PR head observed by Git during synchronization. A fork's PR therefore
+requires a matching commit on a connected branch of the target repository.
+Citations identify the indexed revision. Repeat a one-time connection to
+refresh its Git refs. Disconnecting a branch revokes new searches from its
+granted sessions. Previously delivered citations remain in chat history.
 The default startup continues to check only the two platform probe documents.
 
 For projects matching the protected `rust-retry` profile,

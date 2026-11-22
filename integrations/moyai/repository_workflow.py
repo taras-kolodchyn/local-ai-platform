@@ -1,5 +1,6 @@
 """Native Moyai repository tools and durable phase gates for attached conversations."""
 import asyncio
+import re
 from dataclasses import replace
 from functools import cached_property
 from typing import Any
@@ -62,6 +63,14 @@ def scope_of(ctx):
     return (ctx.deps.session_id, ctx.deps.workspace_key)
 
 
+def connected_item(ctx):
+    prompt = getattr(ctx, 'prompt', None)
+    if not private_issue_root(ctx) or not isinstance(prompt, str):
+        return None
+    urls = set(re.findall(r'https://github\.com/[\w.-]+/[\w.-]+/(?:issues|pull)/[1-9][0-9]{0,9}(?=$|[\s),.])', prompt))
+    return urls.pop() if len(urls) == 1 else None
+
+
 def identity(ctx, call_id):
     return fingerprint([ctx.deps.turn_id,ctx.run_id,call_id])
 
@@ -114,7 +123,14 @@ class RepositoryWorkflow(AbstractCapability):
             return await backend.status(scope_of(ctx), ctx.deps.turn_id)
 
         async def search_repository(ctx: RunContext, query: str, limit: int = 6, exact_path: str | None = None) -> dict:
-            """Search pinned source. Include filenames from the question in query to find related code. Set exact_path to restrict all citations to one repository path."""
+            """Search the current GitHub issue or PR source, or a pinned task. Return text, path and commit_hash. Include filenames from the question in query to find related code. Set exact_path to restrict all citations to one repository path."""
+            item = connected_item(ctx)
+            if item and not backend.ledger.status(*scope_of(ctx)):
+                try:
+                    return await backend.context_call('search_connected_branch', {'session': ctx.deps.session_id,
+                        'work_item': item, 'query': query, 'limit': limit, 'exact_path': exact_path})
+                except RepositoryError as error:
+                    raise ToolFailed(str(error)) from error
             return await backend.search(scope_of(ctx), query, limit, exact_path)
 
         async def begin_repository_changes(ctx: RunContext) -> dict:
@@ -473,7 +489,8 @@ class RepositoryWorkflow(AbstractCapability):
         if ticket and phase in (None, 'preparing'):
             return [t for t in tool_defs if t.name == ISSUE]
         if phase is None:
-            return [t for t in tool_defs if t.name not in REPOSITORY or (root and t.name in DISCOVERY - {ISSUE})]
+            return [t for t in tool_defs if t.name not in REPOSITORY or (root and t.name in DISCOVERY - {ISSUE})
+                    or (t.name == SEARCH and connected_item(ctx))]
         names = allowed(phase) if root else {STATUS}
         if not ticket:
             names = names - {REVIEW, ISSUE}
@@ -529,6 +546,8 @@ class RepositoryWorkflow(AbstractCapability):
         if not active_version():
             if call.tool_name in REPOSITORY:
                 raise ToolFailed('Repository tools are unavailable for this older execution.')
+            return args
+        if call.tool_name == tool_def.name == SEARCH and connected_item(ctx) and await self.phase(*scope_of(ctx)) is None:
             return args
         outcome = await self.admit(*scope_of(ctx), ctx.run_id == ctx.deps.root_run_id,
                                    identity(ctx,call.tool_call_id), call.tool_name, args.get('path','.'),
