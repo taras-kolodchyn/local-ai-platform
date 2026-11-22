@@ -5,32 +5,52 @@ source "$(dirname "$0")/lib.sh"
 load_env
 require_command docker
 
-bash scripts/ensure-docker.sh
+if (( $# == 0 )); then
+  bash scripts/ensure-docker.sh
+elif ! [[ $# == 1 && $1 == --for-up ]]; then
+  die 'Usage: pull-model.sh [--for-up]'
+fi
 
 info "Enabling Docker Model Runner with loopback TCP port 12434..."
 docker desktop enable model-runner --tcp=12434 >/dev/null
 
-for _ in $(seq 1 60); do
-  docker model status >/dev/null 2>&1 && break
+retries=0
+until docker model status >/dev/null 2>&1; do
+  ((retries < 60)) || die "Docker Model Runner did not become ready"
+  retries=$((retries + 1))
   sleep 2
 done
-docker model status >/dev/null 2>&1 || die "Docker Model Runner did not become ready"
 ok "Docker Model Runner healthy"
 
-info "Pulling the coding and embedding models in parallel (the coding model can download about 16.5 GB)..."
-docker model pull "$QWEN_MODEL" &
-coding_pull=$!
-trap 'kill "$coding_pull" 2>/dev/null || true' EXIT
+check_version() {
+  docker "$1" version >/dev/null || die "$2 version check failed"
+  ok "$2 available"
+}
 
-pull_status=0
-docker model pull "$EMBEDDING_MODEL" || pull_status=$?
-wait "$coding_pull" || pull_status=$?
+workers=()
+start_worker() {
+  "$@" &
+  workers+=("$!")
+}
+
+info "Pulling the coding and embedding models and verifying the pinned reranker in parallel..."
+trap 'for pid in $(jobs -pr); do kill "$pid" 2>/dev/null || true; done; wait' EXIT
+start_worker docker model pull "$QWEN_MODEL"
+start_worker docker model pull "$EMBEDDING_MODEL"
+start_worker python3 scripts/pull-reranker.py
+if [[ ${1:-} == --for-up ]]; then
+  start_worker check_version compose 'Docker Compose'
+  start_worker check_version model 'Docker Model Runner plugin'
+fi
+
+status=0
+for pid in "${workers[@]}"; do
+  wait "$pid" || status=$?
+done
 trap - EXIT
-((pull_status == 0)) || exit "$pull_status"
+((status == 0)) || exit "$status"
 ok "Qwen coding model available"
 ok "Qwen embedding model available"
-
-python3 scripts/pull-reranker.py
 ok "Pinned local reranker available"
 
 docker model configure --context-size "$QWEN_CONTEXT_SIZE" "$QWEN_MODEL" >/dev/null

@@ -108,7 +108,7 @@ class PlatformLifecycleTests(unittest.TestCase):
                      'provision-client-key.sh',
                      'smoke-test.sh',):
             (self.scripts / name).write_text(
-                '#!/bin/sh\nexec "$TASK_PYTHON" "$TASK_DRIVER" dependency ' + name + '\n')
+                '#!/bin/sh\nexec "$TASK_PYTHON" "$TASK_DRIVER" dependency ' + name + ' "$@"\n')
         self.env = os.environ | {'PATH': str(binaries) + os.pathsep + os.environ['PATH'],
                     'TASK_PYTHON': os.sys.executable, 'TASK_DRIVER': str(driver),
                     'TASK_STATE': str(self.state_file), 'TASK_EVENTS': str(self.events)}
@@ -128,6 +128,9 @@ class PlatformLifecycleTests(unittest.TestCase):
         state = json.loads(self.state_file.read_text())
         self.assertTrue(state['core'] and state['moyai'])
         calls = self.calls()
+        runtime_scripts = {'ensure-docker.sh', 'pull-model.sh', 'doctor.sh'}
+        self.assertEqual([call[1:] for call in calls if call[0] == 'dependency' and call[1] in runtime_scripts],
+                         [['ensure-docker.sh'], ['pull-model.sh', '--for-up'], ['doctor.sh', '--runtime-checked']])
         self.assertEqual(calls.count(['moyai', 'up']), 1)
         self.assertLess(calls.index(['dependency', 'scripts/provision-workspace.py', 'moyai-skills']),
                         calls.index(['moyai', 'up']))

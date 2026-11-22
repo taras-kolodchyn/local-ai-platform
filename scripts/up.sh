@@ -6,8 +6,8 @@ source "$(dirname "$0")/mcp-provision.sh"
 timed_step "Bootstrap" bash scripts/bootstrap.sh
 load_env
 timed_step "Docker readiness" bash scripts/ensure-docker.sh
-timed_step "Model preparation" bash scripts/pull-model.sh
-timed_step "Host checks" bash scripts/doctor.sh
+timed_step "Model preparation" bash scripts/pull-model.sh --for-up
+timed_step "Host checks" bash scripts/doctor.sh --runtime-checked
 
 info "Checking Compose images and starting services..."
 timed_step "Core images" python3 scripts/build-images.py
