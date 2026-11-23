@@ -42,6 +42,7 @@ def prepare():
 
 
 async def main():
+    from github_reader import install_readers
     from moyai.api import create_app
     from moyai.runtime import Runtime
     from moyai.settings import Settings
@@ -55,6 +56,7 @@ async def main():
         model, client = local_model(settings)
         async with client:
             runtime = Runtime(settings)
+            install_readers(runtime.security, settings.data_dir)
             install_analysis_routing(runtime.database)
             workspace = SessionWorkspace(RepositoryBackend(plans=runtime.stores.plan, native_files=NativeFiles(runtime), review_client=client))
             if turn_skills not in ACTIVITIES:
