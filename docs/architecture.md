@@ -1,22 +1,24 @@
 # Architecture
 
-The platform runs on one Apple Silicon Mac. LiteLLM is the client-facing gateway.
-Docker Model Runner (DMR) serves generation and embeddings with llama.cpp on the
-macOS host, where it can use Metal. MiniLM reranks source excerpts on a container
-CPU. See the [runtime decision](adr/0001-inference-runtime.md) and the
+The platform runs on one host — an Apple Silicon Mac with Docker Desktop or a
+Linux host with Docker Engine. LiteLLM is the client-facing gateway. Docker Model
+Runner (DMR) serves generation and embeddings with llama.cpp on that host: using
+Metal on macOS, or running in a container on Linux on the CPU (or an NVIDIA/AMD
+GPU when a supported driver is present). MiniLM reranks source excerpts on a
+container CPU. See the [runtime decision](adr/0001-inference-runtime.md) and the
 [component versions](capability-matrix.md).
 
 ```mermaid
 flowchart LR
     Client["OpenAI-compatible client"] --> G["LiteLLM"]
-    Browser["Browser on the Mac"] --> B["Moyai bridge"]
+    Browser["Browser on the host"] --> B["Moyai bridge"]
     B --> A["Moyai"]
     A -->|"via bridge"| G
     A -->|"SSH"| S["Linux workspace"]
     A --> T["Temporal"]
     A --> C["Repository context MCP"]
     C -->|"scoped vector-store search"| G
-    G -->|"chat and embeddings"| D["DMR on macOS"]
+    G -->|"chat and embeddings"| D["DMR on the host"]
     G -->|"eligible history"| H["Headroom"]
     G -->|"rerank"| M["MiniLM"]
     G -->|"opt-in response cache"| R["Redis"]

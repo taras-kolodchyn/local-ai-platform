@@ -15,7 +15,11 @@ write_client_env() {
     printf '%s' "$key" > .local/litellm-api-key
   fi
   printf 'export LITELLM_API_KEY=%q\n' "$key" > .local/client.env
-  chmod 600 .local/litellm-api-key .local/client.env
+  # The key file is mounted into the unprivileged retrieval/ingestion containers
+  # as a Compose secret, so it must stay world-readable inside the 0700 .local
+  # directory; client.env is only read by host tooling and stays owner-only.
+  chmod 644 .local/litellm-api-key
+  chmod 600 .local/client.env
 }
 
 if [[ -s .local/litellm-api-key ]]; then

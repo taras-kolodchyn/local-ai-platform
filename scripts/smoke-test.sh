@@ -42,7 +42,7 @@ check_gateway() {
   python3 scripts/check-model-bindings.py
 
   bash scripts/host-ports.sh verify
-  ok "All host listeners are loopback-only"
+  ok "Host listeners use the expected local addresses"
 
   info "Checking fresh LiteLLM and Grafana dashboard logins using .env credentials..."
   python3 scripts/check-dashboard-login.py

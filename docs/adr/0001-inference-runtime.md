@@ -34,6 +34,27 @@ require a second runtime to provision and supervise.
   [DMR context configuration](https://docs.docker.com/ai/model-runner/configuration/)
 - `make down` stops the clients and requests unloading of the two configured DMR
   models. Downloaded artifacts survive shutdown. Use `make benchmark` to
-  measure cold and warm latency on a specific Mac.
+  measure cold and warm latency on a specific host.
   [Docker model unload](https://docs.docker.com/reference/cli/docker/model/unload/) ·
   [Benchmark method](../benchmarking.md)
+
+## Addendum — Docker Engine on Linux (2026-11-22)
+
+Ubuntu support is in alpha, with no stability guarantee. Host tooling and container
+connectivity were tested on Ubuntu x86_64 with Docker Engine 29.10.0 and DMR client 1.2.9. The differences from the macOS
+reference are:
+
+- On Docker Engine the Model Runner TCP endpoint on port 12434 is enabled by
+  default, so `make pull-model` skips the Docker Desktop–only
+  `docker desktop enable model-runner` step and only verifies that the
+  `docker-model-plugin` package is installed.
+- Containers reach DMR through the host gateway. LiteLLM keeps
+  `host.docker.internal:host-gateway` and the `host.docker.internal:12434`
+  base URL; `172.17.0.1:12434` and `model-runner.docker.internal` are equivalent.
+- The llama.cpp engine runs in a container and uses the CPU by default, or an
+  NVIDIA (CUDA) / AMD (ROCm) GPU when a supported driver is present. There is no
+  Metal on Linux. On a CPU-only host the 30B coding model loads normally but
+  generates more slowly; lower `QWEN_CONTEXT_SIZE` or select a smaller
+  `QWEN_MODEL` in `.env` to trade quality for latency.
+- The host memory check reads total system RAM instead of Apple unified memory;
+  the same 32/48 GiB thresholds apply. [DMR on Docker Engine](https://docs.docker.com/ai/model-runner/get-started/)

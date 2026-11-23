@@ -37,3 +37,105 @@ jobs:
       - run: .local/test-venv/bin/python -m unittest discover -s scripts/tests
       - run: docker compose --env-file .env.example config --quiet
       - run: docker compose -f compose.moyai.yaml config --quiet
+
+  ubuntu-ports:
+    name: Ubuntu published ports
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    services:
+      listener:
+        image: nginx:stable-alpine
+        ports:
+          - 127.0.0.1:3000:80
+          - 127.0.0.1:4000:80
+          - 127.0.0.1:8000:80
+          - 127.0.0.1:8001:80
+          - 127.0.0.1:9090:80
+          - 127.0.0.1:12434:80
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Verify published listeners as the runner user
+        run: |
+          test "$(id -u)" -ne 0
+          command -v lsof
+          for port in 3000 4000 8000 8001 9090 12434; do
+            curl --fail --silent --show-error --retry 5 --retry-connrefused \
+              --output /dev/null "http://127.0.0.1:$port/"
+          done
+          bash scripts/host-ports.sh verify
+
+      - name: Reject a specific non-loopback listener on port 8001
+        run: |
+          sudo unshare --net -- bash -ec '
+            ip link set lo up
+            ip address add 192.0.2.10/32 dev lo
+            exec runuser -u "$1" -- python3 .github/ci/check-port-exposure.py
+          ' verify "$(id -un)"
+
+  ubuntu-keys:
+    name: Ubuntu service key permissions
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Provision disposable keys using the startup scripts
+        run: |
+          test "$(id -u)" -ne 0
+          make bootstrap
+          # Supply the gateway response while exercising the real key writer.
+          fixture_bin=$(mktemp -d)
+          cat > "$fixture_bin/curl" <<'SH'
+          #!/bin/sh
+          printf '%s\n' '{"key":"sk-test-local"}'
+          SH
+          chmod +x "$fixture_bin/curl"
+          PATH="$fixture_bin:$PATH" bash scripts/provision-client-key.sh
+      - name: Build the shared retrieval and ingestion image
+        run: docker compose build retrieval
+      - name: Read mounted keys as each service user
+        run: |
+          status=0
+          for service in retrieval ingestion; do
+            keys=(/run/secrets/litellm_client_key)
+            if [[ $service == retrieval ]]; then
+              keys+=(/run/secrets/vector_backend_key)
+            fi
+            docker compose run --rm --no-deps --entrypoint sh "$service" -ec '
+              test "$(id -u)" -ne 0
+              failed=0
+              for key do
+                if ! test -s "$key" || ! head -c 1 "$key" > /dev/null; then
+                  echo "$0 cannot read a nonempty $key" >&2
+                  failed=1
+                fi
+              done
+              exit "$failed"
+            ' "$service" "${keys[@]}" || status=1
+          done
+          exit "$status"
+
+      - name: Authenticate to the running repository context service
+        run: |
+          python3 .github/ci/provision-context.py
+          compose=(docker compose -f compose.moyai.yaml)
+          "${compose[@]}" up -d --no-deps --wait --wait-timeout 90 repository-context
+          "${compose[@]}" exec -T repository-context python -c '
+          import os
+          import sys
+          import httpx
+
+          assert os.getuid() != 0, "Expected the unprivileged service user"
+          token = sys.stdin.read().strip()
+          payload = {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}
+          headers = {"Accept": "application/json, text/event-stream"}
+          with httpx.Client(base_url="http://127.0.0.1:8000", trust_env=False) as client:
+              denied = client.post("/mcp/", headers=headers, json=payload)
+              assert denied.status_code == 401, denied.status_code
+              headers["Authorization"] = "Bearer " + token
+              response = client.post("/mcp/", headers=headers, json=payload)
+              response.raise_for_status()
+              tools = response.json()["result"]["tools"]
+              assert any(tool["name"] == "search_repository" for tool in tools)
+          with open("/run/secrets/context_gateway_key", "rb") as key:
+              assert key.read(1), "Gateway key is empty"
+          ' < .local/moyai/context-token

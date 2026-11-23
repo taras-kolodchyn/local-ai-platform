@@ -91,6 +91,16 @@ class HostRequirementsTests(unittest.TestCase):
         self.assertEqual((self.root / 'docker.calls').read_text().splitlines(),
                          [call for call in calls if call.startswith('model inspect ')])
 
+    def test_doctor_accepts_a_healthy_linux_host(self):
+        # 48 GiB in KiB, matching the Darwin fixture's byte total.
+        self.write_executable('bin/uname', 'case "$1" in -s) printf "Linux\\n";; '
+                              '-m) printf "x86_64\\n";; *) exit 1;; esac\n')
+        self.write_executable('bin/free', 'printf "Mem: 50331648 0 0\\n"\n')
+        result = self.run_make('doctor')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('Linux detected', result.stdout)
+        self.assertIn('System memory: 48 GiB', result.stdout)
+
     def test_doctor_and_smoke_take_separate_listener_snapshots(self):
         (self.binaries / 'grep').symlink_to(shutil.which('grep'))
         self.write_executable('bin/lsof', r'''
@@ -125,6 +135,51 @@ exit 1
         self.assertEqual((self.root / 'calls').read_text().splitlines(),
                          ['-nP -iTCP:3000,4000,8000,8001,9090,12434 -sTCP:LISTEN -Fn'] * (1 + len(cases)))
 
+    def test_verify_reads_published_ports_through_ss(self):
+        # On rootful Docker Engine an ordinary user's lsof cannot see the
+        # root-owned docker-proxy listeners, so verify must enumerate via ss,
+        # which reads the kernel socket table and reveals the bind address.
+        (self.binaries / 'grep').symlink_to(shutil.which('grep'))
+        self.write_executable('bin/ss', r'''
+printf '%s\n' "$*" >> ss_calls
+while IFS= read -r endpoint; do
+  [ -n "$endpoint" ] && printf 'LISTEN 0 4096 %s *:*\n' "$endpoint"
+done <<< "$LISTENERS"
+''')
+        self.write_executable('bin/lsof', 'printf lsof >> lsof_calls\nexit 1\n')
+
+        ports = (3000, 4000, 8000, 8001, 9090, 12434)
+        loopback = ['127.0.0.1:' + str(port) for port in ports]
+        self.write_executable('bin/uname', 'printf "Linux\n"')
+        self.write_executable('bin/docker', '[[ "$1 $2 $3" == "network inspect bridge" ]] || exit 1\n'
+                              'printf "172.18.0.1\n"')
+        cases = [
+            (loopback + ['172.18.0.1:12434'], None),
+            (loopback + ['192.0.2.10:12434'], 'exposed beyond loopback'),
+            (loopback + ['172.18.0.1:8001'], 'exposed beyond loopback'),
+            (loopback, None),
+            (loopback[1:], 'missing on port 3000'),
+            *[(loopback + [f'{address}:8001'], 'exposed beyond loopback')
+              for address in ('*', '0.0.0.0', '[::]')],
+        ]
+        for endpoints, error in cases:
+            with self.subTest(endpoints=endpoints):
+                self.env['LISTENERS'] = '\n'.join(endpoints)
+                result = subprocess.run(['bash', 'scripts/host-ports.sh', 'verify'], cwd=self.root,
+                                        env=self.env, capture_output=True, text=True, timeout=5)
+                if error:
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn(error, result.stderr)
+                else:
+                    self.assertEqual(result.returncode, 0, result.stderr)
+        # ss is preferred; the root-blind lsof probe must never run.
+        self.assertEqual((self.root / 'ss_calls').read_text().splitlines(),
+                         ['-H -l -t -n'] * len(cases))
+        self.assertFalse((self.root / 'lsof_calls').exists())
+
+    def test_pulls_overlap_and_both_must_finish_before_configuration(self):
+        shutil.copy(ROOT / 'scripts/pull-model.sh', self.root / 'scripts')
+        self.write_executable('scripts/ensure-docker.sh', 'exit 0\n')
     def setup_model_preparation(self):
         for script in ('pull-model.sh', 'ensure-docker.sh'):
             shutil.copy(ROOT / 'scripts' / script, self.root / 'scripts')

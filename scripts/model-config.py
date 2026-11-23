@@ -92,7 +92,7 @@ def resolve(root=ROOT):
                        else f'semantic code search, retrieval and agent memory; configured dimensions: {dimensions}')
             description = (f'Local {mode} model for {purpose}. '
                            'Parameter count and weight format have not been verified for this reference.')
-        description += f' Docker Model Runner reference: {reference}. Served on the Mac through LiteLLM.'
+        description += f' Docker Model Runner reference: {reference}. Served locally through LiteLLM.'
         models.append({'alias': alias, 'reference': reference, 'description': description,
                        'mode': mode, 'desired_context_size': context if mode == 'chat' else None,
                        'embedding_dimensions': dimensions if mode == 'embedding' else None})

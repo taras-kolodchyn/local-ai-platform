@@ -97,6 +97,8 @@ services:
     volumes:
       - ./integrations/moyai/context_bridge.py:/app/context_bridge.py:ro
       - ./.local/repositories:/run/local-repositories:ro
+    group_add:
+      - "${WORKSPACE_GID:-10001}"
     secrets:
       - context_token
       - context_gateway_key

@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 import json
 from pathlib import Path
+import platform
 import re
 import runpy
 import subprocess
@@ -91,9 +92,22 @@ def services(project):
         return {'status': 'unavailable', 'project': project, 'containers': []}
 
 
+def linux_memory_total():
+    try:
+        for line in Path('/proc/meminfo').read_text().splitlines():
+            if line.startswith('MemTotal:'):
+                return int(line.split()[1]) * 1024
+    except (OSError, ValueError, IndexError):
+        return None
+    return None
+
+
 def host_memory():
-    output = observe(['sysctl', '-n', 'hw.memsize'])
-    total = int(output.strip()) if output and output.strip().isdigit() else None
+    if platform.system() == 'Darwin':
+        output = observe(['sysctl', '-n', 'hw.memsize'])
+        total = int(output.strip()) if output and output.strip().isdigit() else None
+    else:
+        total = linux_memory_total()
     output = observe(['ps', '-axo', 'pid=,rss=,comm='])
     processes = []
     if output:

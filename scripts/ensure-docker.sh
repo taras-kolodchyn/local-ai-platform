@@ -5,7 +5,7 @@ source "$(dirname "$0")/lib.sh"
 require_command docker
 
 if docker info >/dev/null 2>&1; then
-  ok "Docker Desktop available"
+  ok "Docker daemon available"
   exit 0
 fi
 
@@ -14,11 +14,16 @@ if [[ "$(uname -s)" == "Darwin" && -d /Applications/Docker.app ]]; then
   open -a Docker
   for _ in $(seq 1 90); do
     if docker info >/dev/null 2>&1; then
-      ok "Docker Desktop available"
+      ok "Docker daemon available"
       exit 0
     fi
     sleep 2
   done
+  die "Docker daemon is unavailable. Start Docker Desktop and retry."
 fi
 
-die "Docker daemon is unavailable. Start Docker Desktop and retry."
+if [[ "$(uname -s)" == "Linux" ]]; then
+  die "Docker daemon is unavailable. Start Docker Engine with 'sudo systemctl start docker' (and ensure your user is in the 'docker' group), then retry."
+fi
+
+die "Docker daemon is unavailable. Start Docker and retry."
