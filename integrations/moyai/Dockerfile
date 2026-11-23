@@ -5,6 +5,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends openssh-client 
 COPY *.py LICENSE.upstream /opt/moyai-local/
 COPY tests /opt/moyai-local/tests
 ENV PYTHONPATH=/opt/moyai-local:/app PYDANTIC_AI_NO_BANNER=1
-RUN python /opt/moyai-local/offline_assets.py
+RUN python /opt/moyai-local/offline_assets.py && python /opt/moyai-local/verifier_review.py
 RUN --mount=type=bind,source=skills,target=/opt/test-skill-seeds python -m unittest discover -s /opt/moyai-local/tests
 ENTRYPOINT ["python", "/opt/moyai-local/server.py"]
