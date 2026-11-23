@@ -37,7 +37,7 @@ def request(path, token=None, body=None):
     if not path.startswith('/') or path.startswith('//'):
         raise AppError('Expected a GitHub REST path.')
     headers = {'Accept':'application/vnd.github+json', 'X-GitHub-Api-Version':API_VERSION,
-               'User-Agent':'Moyai-local-issue-publisher'}
+               'User-Agent':'Repository Access'}
     if token:
         headers['Authorization'] = 'Bearer ' + token
     data = None if body is None else json.dumps(body).encode()
@@ -86,7 +86,7 @@ class Installation:
         self.token = None
         self.expires = 0
 
-    def refresh(self):
+    def refresh(self, *, reader=False):
         jwt = make_jwt(str(self.app_id), self.key)
         repo_path = '/repos/' + self.repository
         try:
@@ -107,9 +107,21 @@ class Installation:
         if selection['total_count'] != 1 or [r['full_name'] for r in selection['repositories']] != [self.repository]:
             raise AppError('The app installation must select only ' + self.repository + '.')
         repo_id = selection['repositories'][0]['id']
-        grant = request(mint, jwt, {'repository_ids':[repo_id], 'permissions':PERMISSIONS})
-        if any(grant['permissions'].get(k) != v for k, v in PERMISSIONS.items()):
+        permissions = dict.fromkeys(PERMISSIONS, 'read') if reader else PERMISSIONS
+        grant = request(mint, jwt, {'repository_ids':[repo_id], 'permissions':permissions})
+        if any(grant['permissions'].get(k) != v for k, v in permissions.items()):
             raise AppError('GitHub did not grant the required issue, content and pull request permissions.')
+        if reader:
+            if grant['permissions'] != {**permissions, 'metadata':'read'}:
+                raise AppError('Unexpected installation token permissions.')
+            scoped = request('/installation/repositories?per_page=2', grant['token'])
+            if scoped['total_count'] != 1 or [r['id'] for r in scoped['repositories']] != [repo_id]:
+                raise AppError('Unexpected installation token repository selection.')
+            self.authority = {
+                'app': self.app_id, 'installation': install['id'], 'owner': install['account']['id'],
+                'repository': repo_id, 'permissions': grant['permissions'],
+                'installation_permissions': install['permissions'],
+            }
         self.expires = datetime.fromisoformat(grant['expires_at'].replace('Z','+00:00')).timestamp()
         self.token = grant['token']
 

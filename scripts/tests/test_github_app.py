@@ -87,3 +87,25 @@ class GitHubAppTests(unittest.TestCase):
                 self.installation.api('git/refs', {'ref':'ignored'})
             self.assertEqual(req.call_count,3)
         self.assertIsNone(self.installation.token)
+
+    def test_reader_pins_effective_permissions_and_repository(self):
+        install = {'id':20, 'app_id':12, 'app_slug':'moyai-test', 'repository_selection':'selected',
+                   'account':{'id':47, 'login':TARGET.repository.split('/')[0]}, 'permissions':app.PERMISSIONS}
+        selection = {'total_count':1, 'repositories':[{'id':77, 'full_name':TARGET.repository}]}
+        permissions = dict.fromkeys(('contents','issues','pull_requests','metadata'), 'read')
+        grant = {'permissions':permissions, 'expires_at':'2026-11-18T08:00:00Z', 'token':'fixture'}
+        for effective, scoped, valid in [
+            (grant, selection, True), ({**grant, 'permissions':{**permissions, 'checks':'write'}}, selection, False),
+            (grant, {'total_count':1, 'repositories':[{'id':78}]}, False),
+        ]:
+            with self.subTest(valid=valid), patch.object(app, 'make_jwt', return_value='jwt'), patch.object(
+                app, 'request', side_effect=[install, {'token':'metadata'}, selection, effective, scoped]
+            ):
+                if valid:
+                    self.installation.refresh(reader=True)
+                    self.assertEqual(self.installation.authority, {
+                        'app':12, 'installation':20, 'owner':47, 'repository':77,
+                        'permissions':permissions, 'installation_permissions':app.PERMISSIONS})
+                else:
+                    with self.assertRaises(app.AppError):
+                        self.installation.refresh(reader=True)

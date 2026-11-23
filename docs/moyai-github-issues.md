@@ -60,3 +60,23 @@ The retired pilot used two native Moyai schedules, Developer and Verifier,
 which were paused. This repository ships the foreground publisher and its own
 platform CI. An external project needs its own schedule configuration, GitHub
 permissions, CI and merge rules to run scheduled work. [Platform CI](../.github/workflows/ci.yml)
+
+### Renew a private GitHub reader
+
+From the repository root, configure the registered application for the selected repository.
+Enroll a separate private connection for each role and select it on the first message in a new private chat.
+
+```sh
+bash scripts/github-command.sh scripts/github-reader.py --enroll issue
+bash scripts/github-command.sh scripts/github-reader.py --enroll review
+bash scripts/github-command.sh scripts/github-reader.py --refresh CONNECTION_UUID
+```
+
+The optional `--app-directory PATH` selects an existing registration. Each refresh is manual. If enrollment prints a connection ID and is interrupted, retry with
+`--refresh` and that ID.
+The controller keeps the current token encrypted in its data volume. Enrollment pins the application,
+installation, owner and repository IDs, the installation permissions and the token permissions.
+A change to any of these requires a new enrollment and chat. Ordinary connection edits continue to
+invalidate the previous workspace binding. Renew before expiry to keep using the same chat.
+GitHub installation tokens expire one hour after issuance.
+[GitHub installation access tokens](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-an-installation-access-token-for-a-github-app)
