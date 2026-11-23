@@ -64,6 +64,14 @@ jobs:
           done
           bash scripts/host-ports.sh verify
 
+      - name: Reject a specific non-loopback listener on port 8001
+        run: |
+          sudo unshare --net -- bash -ec '
+            ip link set lo up
+            ip address add 192.0.2.10/32 dev lo
+            exec runuser -u "$1" -- python3 .github/ci/check-port-exposure.py
+          ' verify "$(id -un)"
+
   ubuntu-keys:
     name: Ubuntu service key permissions
     runs-on: ubuntu-24.04
@@ -105,3 +113,29 @@ jobs:
             ' "$service" "${keys[@]}" || status=1
           done
           exit "$status"
+
+      - name: Authenticate to the running repository context service
+        run: |
+          python3 .github/ci/provision-context.py
+          compose=(docker compose -f compose.moyai.yaml)
+          "${compose[@]}" up -d --no-deps --wait --wait-timeout 90 repository-context
+          "${compose[@]}" exec -T repository-context python -c '
+          import os
+          import sys
+          import httpx
+
+          assert os.getuid() != 0, "Expected the unprivileged service user"
+          token = sys.stdin.read().strip()
+          payload = {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}
+          headers = {"Accept": "application/json, text/event-stream"}
+          with httpx.Client(base_url="http://127.0.0.1:8000", trust_env=False) as client:
+              denied = client.post("/mcp/", headers=headers, json=payload)
+              assert denied.status_code == 401, denied.status_code
+              headers["Authorization"] = "Bearer " + token
+              response = client.post("/mcp/", headers=headers, json=payload)
+              response.raise_for_status()
+              tools = response.json()["result"]["tools"]
+              assert any(tool["name"] == "search_repository" for tool in tools)
+          with open("/run/secrets/context_gateway_key", "rb") as key:
+              assert key.read(1), "Gateway key is empty"
+          ' < .local/moyai/context-token
