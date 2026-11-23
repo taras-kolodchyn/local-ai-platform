@@ -40,8 +40,8 @@ require a second runtime to provision and supervise.
 
 ## Addendum — Docker Engine on Linux (2026-11-22)
 
-DMR also runs the platform on Docker Engine on Linux, verified on Ubuntu x86_64
-with Docker Engine 29.10.0 and DMR client 1.2.9. The differences from the macOS
+Ubuntu support is in alpha, with no stability guarantee. Host tooling and container
+connectivity were tested on Ubuntu x86_64 with Docker Engine 29.10.0 and DMR client 1.2.9. The differences from the macOS
 reference are:
 
 - On Docker Engine the Model Runner TCP endpoint on port 12434 is enabled by

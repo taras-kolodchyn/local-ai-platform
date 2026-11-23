@@ -6,6 +6,8 @@ through LiteLLM, and pgvector searches the repositories you choose to index.
 After the initial downloads, the default profile runs locally with local
 credentials.
 
+**Ubuntu support is in alpha.** We do not guarantee stability on Ubuntu during this testing phase.
+
 ## Quick start
 
 Use an Apple Silicon Mac with Docker Desktop, or a Linux host with Docker Engine,

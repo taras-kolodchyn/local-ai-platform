@@ -6,6 +6,8 @@ and [gateway template](../litellm/config.yaml). The check column identifies a
 repeatable local probe. Use its result on the target host when reporting runtime
 compatibility.
 
+**Ubuntu support is in alpha.** We do not guarantee stability on Ubuntu during this testing phase.
+
 | Component | Version or configured default | Capability and local check |
 | --- | --- | --- |
 | Docker (Desktop or Engine) / Compose / Model Runner | Reference Mac on 2026-11-20: Desktop 4.100.0, Compose 5.7.1, DMR client and server 1.2.9. Verified on Ubuntu x86_64 on 2026-11-22: Docker Engine 29.10.0, DMR client 1.2.9 | DMR runs the llama.cpp engine, using Metal on an Apple Silicon host or CPU (or NVIDIA CUDA / AMD ROCm when available) on Linux. On Docker Engine the DMR TCP port 12434 is enabled by default. Check the installation with `make doctor` and the configured models with `make status FORMAT=json`. [DMR inference engines](https://docs.docker.com/ai/model-runner/inference-engines/) · [DMR on Docker Engine](https://docs.docker.com/ai/model-runner/get-started/) |
