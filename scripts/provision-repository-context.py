@@ -4,6 +4,7 @@ import argparse
 import fcntl
 import hashlib
 import json
+from os import chown, getgid
 from pathlib import Path
 import re
 import secrets
@@ -23,11 +24,15 @@ def missing_resource(error):
     return error.code == 404 if isinstance(error, HTTPError) else str(error) == 'Gateway returned 404'
 
 
-def private_write(path, value):
+def write_service_secret(path, value):
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     if not path.is_file() or path.read_text() != value:
         path.write_text(value)
-    path.chmod(0o600)
+    # Compose adds the provisioning user's primary group to the context service.
+    gid = getgid()
+    if path.stat().st_gid != gid:
+        chown(path, -1, gid)
+    path.chmod(0o640)
 
 
 def registrations(root, candidate=None):
@@ -82,7 +87,7 @@ def _provision_context_locked(admin, root, registration):
     token = token_file.read_text().strip() if token_file.exists() else secrets.token_urlsafe(32)
     if len(token) < 32:
         raise ValueError('Repository context token is invalid')
-    private_write(token_file, token + '\n')
+    write_service_secret(token_file, token + '\n')
     existing = {item['vector_store_id']: item for item in admin('GET', '/vector_store/list')['data']}
     backend_key = (root / '.local/vector-backend-key').read_text().strip()
     for row in rows:
@@ -126,7 +131,7 @@ def _provision_context_locked(admin, root, registration):
             'key_alias': 'repository-context-' + uuid.uuid4().hex})['key']
     else:
         admin('POST', '/key/update', payload | {'key': key})
-    private_write(key_file, key + '\n')
+    write_service_secret(key_file, key + '\n')
     return token
 
 

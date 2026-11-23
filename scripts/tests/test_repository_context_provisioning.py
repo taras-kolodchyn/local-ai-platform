@@ -79,10 +79,14 @@ class ContextProvisioningTests(unittest.TestCase):
                                                     'mcp_servers': [], 'agents': []})
         self.assertEqual(self.users['user_role'], 'internal_user')
         self.assertEqual(self.stores['vs_fixture']['litellm_params']['api_base'], 'http://retrieval:8000')
+        secret_files = (key_file, self.local / 'moyai/context-token')
+        for path in secret_files:
+            path.chmod(0o600)
         again = self.module.provision_context(self.admin, self.root, self.row)
         self.assertEqual(again, token)
         self.assertEqual(len(self.keys), 1)
-        self.assertEqual(key_file.stat().st_mode & 0o777, 0o600)
+        for path in secret_files:
+            self.assertEqual(path.stat().st_mode & 0o777, 0o640)
 
     def test_full_catalog_allows_reconciliation_of_an_existing_generation(self):
         rows = [self.row | {'generation_id': f'gen_{i}'} for i in range(1000)]

@@ -150,7 +150,13 @@ done <<< "$LISTENERS"
 
         ports = (3000, 4000, 8000, 8001, 9090, 12434)
         loopback = ['127.0.0.1:' + str(port) for port in ports]
+        self.write_executable('bin/uname', 'printf "Linux\n"')
+        self.write_executable('bin/docker', '[[ "$1 $2 $3" == "network inspect bridge" ]] || exit 1\n'
+                              'printf "172.18.0.1\n"')
         cases = [
+            (loopback + ['172.18.0.1:12434'], None),
+            (loopback + ['192.0.2.10:12434'], 'exposed beyond loopback'),
+            (loopback + ['172.18.0.1:8001'], 'exposed beyond loopback'),
             (loopback, None),
             (loopback[1:], 'missing on port 3000'),
             *[(loopback + [f'{address}:8001'], 'exposed beyond loopback')

@@ -35,8 +35,22 @@ for port in "${ports[@]}"; do
     fi
   else
     [[ -n "$endpoints" ]] || die "Expected listener is missing on port $port"
-    if grep -Eq '(\*:|0\.0\.0\.0:|\[::\]:)' <<< "$endpoints"; then
-      die "Port $port is exposed beyond loopback"
-    fi
+    while IFS= read -r endpoint; do
+      address=${endpoint%:*}
+      case "$address" in
+        127.*|'[::1]'|'::1') continue ;;
+      esac
+      # On Linux the inference endpoint also serves containers on the host bridge.
+      if [[ $port == 12434 && $(uname -s) == Linux ]]; then
+        gateways=$(docker network inspect bridge --format '{{range .IPAM.Config}}{{println .Gateway}}{{end}}') ||
+          die "Could not verify the Docker bridge address for port $port"
+        bridge_address=${address#\[}
+        bridge_address=${bridge_address%\]}
+        if grep -Fxq -- "$bridge_address" <<< "$gateways"; then
+          continue
+        fi
+      fi
+      die "Port $port is exposed beyond loopback at $endpoint"
+    done <<< "$endpoints"
   fi
 done
