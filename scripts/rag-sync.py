@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 STATE = ROOT / '.local/rag'
@@ -108,6 +109,26 @@ def publish(directory, state, ref):
     return {'observed': commit, 'indexed': commit, 'published_at': now(), 'store': sid, 'files': counts['files_indexed']}
 
 
+def update_context():
+    setup = runpy.run_path(str(ROOT / 'scripts/provision-repository-context.py'))
+    setup['provision_context'](PROVISION['gateway'](PROVISION['master_key']()), ROOT)
+
+
+def branch_refs(state):
+    ref = 'refs/heads/' + state['branch']
+    refs = git('ls-remote', '--symref', state['origin'], 'HEAD', ref, 'refs/pull/*/head',
+               stdout=subprocess.PIPE, text=True, timeout=90).stdout.splitlines()
+    tips = {}
+    for line in refs:
+        if not line.startswith('ref: '):
+            sha, name = line.split('\t', 1)
+            tips[name] = sha
+    tip = tips[ref]
+    return tip, {'default': 'ref: ' + ref + '\tHEAD' in refs,
+                 'pulls': sorted(int(name.split('/')[2]) for name, sha in tips.items()
+                                 if sha == tip and re.fullmatch(r'refs/pull/[1-9][0-9]*/head', name))}
+
+
 def synchronize(directory, initial=None):
     path = directory / 'state.json'
     with lock(directory):
@@ -118,15 +139,31 @@ def synchronize(directory, initial=None):
             if initial:
                 raise ValueError('Finish the pending disconnect before reconnecting')
             return
+        if state.get('manual') and not initial:
+            return
         try:
             ref = 'refs/heads/' + state['branch']
-            tip = git('ls-remote', '--exit-code', '--refs', state['origin'], ref,
-                      stdout=subprocess.PIPE, text=True, timeout=60).stdout.strip().split('\t')
-            if len(tip) != 2 or tip[1] != ref:
-                raise ValueError('Unexpected remote ref')
-            state['observed'] = tip[0]
-            if initial or tip[0] != state.get('indexed'):
+            had_access = bool(state.get('sessions'))
+            if initial:
+                state.update({k: initial[k] for k in ('sessions', 'manual') if k in initial})
+            if state.get('sessions'):
+                tip, targets = branch_refs(state)
+            else:
+                remote = git('ls-remote', '--exit-code', '--refs', state['origin'], ref,
+                             stdout=subprocess.PIPE, text=True, timeout=60).stdout.strip().split('\t')
+                if len(remote) != 2 or remote[1] != ref:
+                    raise ValueError('Unexpected remote ref')
+                tip, targets = remote[0], None
+            state['observed'] = tip
+            refresh = initial or tip != state.get('indexed') or targets != state.get('targets') or state.get('context_pending')
+            if initial or tip != state.get('indexed'):
                 state.update(publish(directory, state, ref))
+            if refresh and (had_access or state.get('sessions') or state.get('context_pending')):
+                state['targets'] = targets if state.get('indexed') == tip else None
+                state['context_pending'] = True
+                save(path, state)
+                update_context()
+                state.pop('context_pending')
             state.pop('error', None)
         except Exception as exc:
             state['error'] = str(exc) if isinstance(exc, RuntimeError) else type(exc).__name__
@@ -178,9 +215,12 @@ def disconnect(directory, scope, branch):
             raise ValueError('Connection scope mismatch')
         state['disconnecting'] = True
         save(checkpoint, state)
+        if state.get('sessions') or state.get('context_pending'):
+            update_context()
         with PROVISION['vector_registry_lock']():
             remove_index(state, checkpoint)
-        if not any(path != checkpoint for path in STATE.glob('*/state.json')):
+        if not any(path != checkpoint and not json.loads(path.read_text()).get('manual')
+                   for path in STATE.glob('*/state.json')):
             if loaded():
                 run('Unload schedule', ['launchctl', 'bootout', JOB])
             PLIST.unlink(missing_ok=True)
@@ -226,8 +266,16 @@ def main():
                 print(f'Disconnected {scope} ({branch}).')
                 return
             directory.mkdir(exist_ok=True, mode=0o700)
-            install()
-            synchronize(directory, {'origin': origin, 'scope': scope, 'branch': branch})
+            config = {'origin': origin, 'scope': scope, 'branch': branch}
+            sessions = os.environ.get('RAG_SESSIONS', '')
+            if sessions:
+                if not scope.startswith('connected/github/'):
+                    raise ValueError('Session access requires a GitHub repository')
+                config['sessions'] = sorted({str(uuid.UUID(value)) for value in sessions.split(',')})
+            config['manual'] = os.environ.get('RAG_POLL') == '0'
+            if not config['manual']:
+                install()
+            synchronize(directory, config)
         print(f'Following {scope} ({branch}). Run make rag-status for its searchable revision.')
         return
     if action == 'status':

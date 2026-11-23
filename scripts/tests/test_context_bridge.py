@@ -72,6 +72,28 @@ class ContextBridgeTests(unittest.TestCase):
                 bridge.search(*values, 'retry ceiling', 3)
         self.assertEqual(self.requests, [])
 
+    def test_branch_search_requires_session_repository_target_and_indexed_sha(self):
+        scope = 'connected/github/example/project'
+        grant = {'scope': scope, 'branch': 'main', 'indexed': 'a' * 40, 'store': 'vs_branch',
+                 'sessions': ['developer'], 'targets': {'default': True, 'pulls': [7]}}
+        path = self.root / 'branch-search.json'
+        path.write_text(json.dumps([grant]))
+        url = 'https://github.com/example/project/pull/7'
+        bridge = self.bridge()
+        for user, target in [('other', url), ('developer', url[:-1] + '8'),
+                             ('developer', url.replace('example', 'foreign'))]:
+            with self.assertRaises(PermissionError):
+                bridge.search_branch(user, target, 'policy', 1, None)
+        attrs = self.payload['data'][0]['attributes']
+        attrs.update(repository=scope, snapshot_id='legacy', generation_id='legacy')
+        with self.assertRaises(RuntimeError):
+            bridge.search_branch('developer', url, 'policy', 1, None)
+        attrs['commit_hash'] = grant['indexed']
+        self.assertEqual(bridge.search_branch('developer', url, 'policy', 1, None)['count'], 1)
+        path.write_text('[]')
+        with self.assertRaises(PermissionError):
+            bridge.search_branch('developer', url, 'policy', 1, None)
+
     def test_exact_path_filters_the_pinned_store_and_rejects_other_results(self):
         bridge = self.bridge()
         scope = ('repo_test', 'a' * 64, 'gen_old', 'retry ceiling', 6)
@@ -117,7 +139,7 @@ class ContextBridgeTests(unittest.TestCase):
                 'Accept': 'application/json, text/event-stream'})
             self.assertEqual(response.status_code, 200, response.text)
             tools = response.json()['result']['tools']
-            self.assertEqual({tool['name'] for tool in tools}, {'search_repository', 'repository_status'})
+            self.assertEqual({tool['name'] for tool in tools}, {'search_repository', 'repository_status', 'search_connected_branch'})
             self.assertTrue(all(tool['annotations']['readOnlyHint'] for tool in tools))
 
     def test_mcp_executes_scoped_search_and_exports_metadata_metrics(self):

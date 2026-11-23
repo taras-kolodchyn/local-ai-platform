@@ -59,7 +59,7 @@ def chat_response(ctx, response):
     return replace(response, parts=[*response.parts[:-1], replace(part, content=(body + '\n\n' + note).strip())])
 
 
-def restrict_request(ctx, request, catalog):
+def restrict_request(ctx, request, catalog, *, tools=TOOLS):
     # The SDK adds deferred loaders after prepare_tools. Apply the same policy
     # to the final model request, including provider-native tools.
     params = request.model_request_parameters
@@ -69,7 +69,7 @@ def restrict_request(ctx, request, catalog):
         ids.intersection_update(selected)
     offered = []
     for tool in params.function_tools:
-        if tool.name not in TOOLS:
+        if tool.name not in tools:
             continue
         if tool.name == LOAD:
             if tool.tool_kind != 'capability-load' or not ids:

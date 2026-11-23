@@ -8,6 +8,8 @@ moyai_compose=(docker compose --project-name local-ai-moyai --file compose.moyai
 case "${1:-up}" in
   up)
     require_command ssh-keygen
+    CONTEXT_BRIDGE_REVISION=$(shasum -a 256 integrations/moyai/context_bridge.py | cut -d' ' -f1)
+    export CONTEXT_BRIDGE_REVISION
     changed=$(python3 scripts/moyai-prepare.py)
     existing=$("${moyai_compose[@]}" ps -q moyai)
     python3 scripts/build-images.py "${moyai_compose[@]:2}"

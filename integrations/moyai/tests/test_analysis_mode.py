@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock
 
 from moyai.contracts import NewMessage
 from pydantic_ai.exceptions import ModelRetry, ToolFailed
-from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.workspaces import WorkspaceReadOnlyError
@@ -37,6 +37,16 @@ class AnalysisModeTests(unittest.IsolatedAsyncioTestCase):
             await db.submit('actor', 's', body)
             self.assertEqual(submit.await_args.args[2].model, model)
             self.assertEqual(body.model, 'local-qwen')
+
+    async def test_revoked_lookup_cannot_repeat_a_cached_answer(self):
+        self.ctx.deps.surface = 'web'
+        self.ctx.deps.visibility = 'private'
+        self.ctx.prompt = 'Search source for https://github.com/o/r/pull/3 policy'
+        failed = ToolReturnPart('search_repository', 'Unavailable', 'search', outcome='failed')
+        messages = [ModelRequest(parts=[failed], run_id=self.ctx.run_id)]
+        response = await self.workspace.after_model_request(self.ctx,
+            request_context=SimpleNamespace(messages=messages), response=ModelResponse(parts=[TextPart('stale citation')]))
+        self.assertEqual(response.text, 'Repository search is unavailable for this work item and session.')
 
     async def test_workspace_refuses_all_mutations_and_commands_before_ssh(self):
         readonly = self.workspace.get_workspace(self.ctx, ref=None)
