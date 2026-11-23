@@ -80,3 +80,14 @@ A change to any of these requires a new enrollment and chat. Ordinary connection
 invalidate the previous workspace binding. Renew before expiry to keep using the same chat.
 GitHub installation tokens expire one hour after issuance.
 [GitHub installation access tokens](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-an-installation-access-token-for-a-github-app)
+
+### Confirmed pull request reviews
+
+Set `MOYAI_VERIFIER_CONNECTION_ID` in the local `.env` to the UUID of the
+dedicated private GitHub connection, then run `make up`. Leave it unset to
+keep review publication disabled. Select that connection in the private
+Verifier chat. Its GitHub installation needs pull request write access to
+the target repository. Explicitly allow `pull_request_review_write` on the
+connection and enable required approvals. Check the repository, PR number,
+review event and commit SHA in the proposed action. Choose **Allow this action**
+and **Continue** to submit it. Verify the published review on GitHub before merge.
