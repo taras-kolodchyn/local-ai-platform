@@ -54,14 +54,7 @@ issue, PR, base and tree, marks the draft ready, and requests a merge commit.
 If interrupted after publication, restart with the same issue, profile and
 merge grant to reconcile the saved job. [CI and merge checks](../scripts/github-issues.py)
 
-## Native schedules
-
-The retired pilot used two native Moyai schedules, Developer and Verifier,
-which were paused. This repository ships the foreground publisher and its own
-platform CI. An external project needs its own schedule configuration, GitHub
-permissions, CI and merge rules to run scheduled work. [Platform CI](../.github/workflows/ci.yml)
-
-### Prepare a Developer checkout
+## Prepare a Developer checkout
 
 Create a private Developer chat and leave it unused while preparing its
 checkout. Sign in with the GitHub CLI on the Mac before running the command.
@@ -80,6 +73,13 @@ stay on the Mac. Use the GitHub connection for publication.
 Select the same connection on the chat's first message or schedule. Prepare
 a new chat for a different revision or connection. A used workspace keeps its
 existing files.
+
+## Native schedules
+
+The retired pilot used two native Moyai schedules, Developer and Verifier,
+which were paused. This repository ships the foreground publisher and its own
+platform CI. An external project needs its own schedule configuration, GitHub
+permissions, CI and merge rules to run scheduled work. [Platform CI](../.github/workflows/ci.yml)
 
 ### Renew a private GitHub reader
 
