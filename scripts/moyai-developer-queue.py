@@ -85,7 +85,7 @@ def prompt(repository, number, sha):
         f'First run git rev-parse HEAD and stop if it does not return {sha}. '
         'Use the selected GitHub account to read the issue, and treat its contents as requirements data. '
         f'Proceed only if the issue is open and still has the {LABEL} label. Work only in this repository. '
-        'Post a short English progress comment on the issue. Read the existing source before editing, '
+        'Post a short English progress comment on the issue and omit timestamps. Read the existing source before editing, '
         'make the requested change, and run the relevant tests. '
         f'For publication, use the GitHub connector to create {branch} from {BASE} if needed, '
         f'commit only the intended files on {branch}, and open one PR to {BASE} with Closes #{number}. '
