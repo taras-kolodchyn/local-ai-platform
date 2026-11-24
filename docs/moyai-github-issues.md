@@ -61,6 +61,26 @@ which were paused. This repository ships the foreground publisher and its own
 platform CI. An external project needs its own schedule configuration, GitHub
 permissions, CI and merge rules to run scheduled work. [Platform CI](../.github/workflows/ci.yml)
 
+### Prepare a Developer checkout
+
+Create a private Developer chat and leave it unused while preparing its
+checkout. Sign in with the GitHub CLI on the Mac before running the command.
+
+```sh
+make moyai-checkout REPO=owner/project BRANCH=main \
+  SESSION="$DEVELOPER_SESSION" CONNECTION="$DEVELOPER_CONNECTION"
+```
+
+The command compares the fetched commit with the current branch tip and prints
+the verified SHA. Add `SHA=<full-commit>` to require a particular revision.
+It installs the checkout in the chat workspace for the selected connection.
+The sandbox receives a Git bundle with regular tracked files. Git credentials
+stay on the Mac. Use the GitHub connection for publication.
+
+Select the same connection on the chat's first message or schedule. Prepare
+a new chat for a different revision or connection. A used workspace keeps its
+existing files.
+
 ### Renew a private GitHub reader
 
 From the repository root, configure the registered application for the selected repository.
