@@ -2,6 +2,7 @@
 from copy import deepcopy
 from pathlib import Path
 import runpy
+from unittest.mock import Mock
 import unittest
 
 
@@ -71,9 +72,9 @@ class DeveloperQueueTests(unittest.TestCase):
     def checkout(self, repo, branch, chat, connection, sha):
         self.events.append(('checkout', repo, branch, chat, connection, sha))
 
-    def check(self, checkout=None):
+    def check(self, checkout=None, reviewer=None):
         return tick(self.repo, lambda: self.controller, checkout or self.checkout,
-                    'developer', self.state, self.save)
+                    'developer', self.state, self.save, reviewer)
 
     def test_checkout_precedes_submission_and_waiting_input_blocks_next_issue(self):
         result = self.check()
@@ -127,6 +128,21 @@ class DeveloperQueueTests(unittest.TestCase):
         result = self.check()
         self.assertEqual(result['session'], 'chat-2')
         self.assertEqual([event[0] for event in self.events], ['session', 'checkout', 'session', 'checkout', 'submit'])
+
+    def test_developer_completion_advances_to_verifier_before_next_issue(self):
+        reviewer = Mock(settings=QUEUE['ReviewSettings']('separate', 'developer-app', 'verifier-app'))
+        reviewer.find.return_value = 10
+        result = self.check(reviewer=reviewer)
+        self.controller.sessions[result['session']]['turns'][0]['status'] = 'completed'
+        self.assertEqual(self.check(reviewer=reviewer), {'status': 'review_ready', 'issue': 7, 'pull': 10})
+        reviewer.find.assert_called_once_with(7)
+        self.state = deepcopy(self.saved)
+        reviewer.tick.return_value = {'status': 'ready_to_merge'}
+        self.assertEqual(self.check(reviewer=reviewer)['status'], 'ready_to_merge')
+        self.assertEqual(len(self.events), 3)
+        reviewer.tick.return_value = {'status': 'main_green'}
+        self.assertEqual(self.check(reviewer=reviewer)['status'], 'main_green')
+        self.assertEqual(self.check(reviewer=reviewer)['issue'], 9)
 
     def test_held_issue_becomes_eligible_when_label_is_removed_and_reapplied(self):
         self.repo.ready = [7]
