@@ -137,6 +137,13 @@ moyai-checkout: export CHECKOUT_SHA := $(value SHA)
 moyai-checkout: ## Prepare a verified Git checkout for a new private Moyai chat
 	@python3 scripts/moyai-checkout.py
 
+.PHONY: moyai-developer-queue
+moyai-developer-queue: export QUEUE_REPO := $(value REPO)
+moyai-developer-queue: export QUEUE_CONNECTION := $(value CONNECTION)
+moyai-developer-queue: export QUEUE_WATCH := $(value WATCH)
+moyai-developer-queue: ## Check moyai:ready and start one Developer task with a verified checkout
+	@python3 scripts/moyai-developer-queue.py
+
 rag-connect rag-disconnect: export RAG_REPO := $(value REPO)
 rag-connect rag-disconnect: export RAG_BRANCH := $(value BRANCH)
 rag-connect: export RAG_SESSIONS := $(value SESSIONS)

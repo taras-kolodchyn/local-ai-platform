@@ -74,6 +74,29 @@ Select the same connection on the chat's first message or schedule. Prepare
 a new chat for a different revision or connection. A used workspace keeps its
 existing files.
 
+## Hand off a labeled issue to Developer
+
+With the platform running, sign in with the GitHub CLI as the issue author
+and select a private Developer connection for the same repository. Enable
+native confirmations and allow `issue_read`, `add_issue_comment`,
+`create_branch`, `push_files` and `create_pull_request`.
+
+```sh
+make moyai-developer-queue REPO=owner/project CONNECTION="$DEVELOPER_CONNECTION" WATCH=1
+```
+
+Leave the process running and add `moyai:ready` to an open issue. It picks
+the oldest eligible issue, prepares a fresh private checkout of verified
+`main`, and submits the task to Developer. Each repository on the Mac has one active
+handoff. The queue waits while the conversation is running or awaiting input.
+It records the issue, session, revision and submission locally so restarts
+can resume the same handoff. Publication uses the normal confirmation forms.
+
+Omit `WATCH=1` for one check. The queue skips issues with an open PR from
+`issue-<number>`. An issue whose turn finished without such a PR stays held.
+To retry it, remove the label, wait for one check, and reapply the label.
+Keep the connection token current and confirm writes before it expires.
+
 ## Native schedules
 
 The retired pilot used two native Moyai schedules, Developer and Verifier,
