@@ -97,6 +97,26 @@ Omit `WATCH=1` for one check. The queue skips issues with an open PR from
 To retry it, remove the label, wait for one check, and reapply the label.
 Keep the connection token current and confirm writes before it expires.
 
+## Hand off the published PR to Verifier
+
+Enable review publication for a separate private Verifier connection as
+described below. Pass both GitHub App slugs without the `[bot]` suffix.
+
+```sh
+make moyai-developer-queue REPO=owner/project CONNECTION="$DEVELOPER_CONNECTION" \
+  VERIFIER="$VERIFIER_CONNECTION" DEVELOPER_APP="$DEVELOPER_APP_SLUG" \
+  VERIFIER_APP="$VERIFIER_APP_SLUG" CI_WORKFLOW=test.yml CI_JOB=unit WATCH=1
+```
+
+The queue sends a PR linked to the issue and opened by the Developer App to
+a separate private Verifier chat. The review receives the exact head SHA and
+uses the normal confirmation form. A new head SHA needs a new review.
+If the previous chat is awaiting confirmation, resolve that prompt first.
+The queue reports `ready_to_merge` after
+the Verifier App approves that SHA and the required job succeeds on the PR.
+After merging through GitHub, the queue reports `main_green` when the
+merge commit passes the required push job on `main` and the issue is closed.
+
 ## Native schedules
 
 The retired pilot used two native Moyai schedules, Developer and Verifier,

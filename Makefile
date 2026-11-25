@@ -141,6 +141,11 @@ moyai-checkout: ## Prepare a verified Git checkout for a new private Moyai chat
 moyai-developer-queue: export QUEUE_REPO := $(value REPO)
 moyai-developer-queue: export QUEUE_CONNECTION := $(value CONNECTION)
 moyai-developer-queue: export QUEUE_WATCH := $(value WATCH)
+moyai-developer-queue: export QUEUE_VERIFIER := $(value VERIFIER)
+moyai-developer-queue: export QUEUE_DEVELOPER_APP := $(value DEVELOPER_APP)
+moyai-developer-queue: export QUEUE_VERIFIER_APP := $(value VERIFIER_APP)
+moyai-developer-queue: export QUEUE_WORKFLOW := $(value CI_WORKFLOW)
+moyai-developer-queue: export QUEUE_JOB := $(value CI_JOB)
 moyai-developer-queue: ## Check moyai:ready and start one Developer task with a verified checkout
 	@python3 scripts/moyai-developer-queue.py
 

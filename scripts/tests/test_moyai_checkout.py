@@ -46,6 +46,7 @@ class CheckoutTests(unittest.TestCase):
         self.install(sha)
         self.assertEqual((self.workspace / 'README.md').read_text(), 'Verified version\n')
         self.assertEqual(git('rev-parse', 'HEAD', directory=self.workspace).decode().strip(), sha)
+        self.assertEqual(git('log', '-5', '--format=%H', directory=self.workspace).decode().splitlines(), [sha])
         self.assertFalse(git('remote', directory=self.workspace))
         self.install(sha)
         (self.workspace / 'notes.txt').write_text('Keep this file\n')

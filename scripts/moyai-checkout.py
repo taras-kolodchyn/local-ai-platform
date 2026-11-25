@@ -116,6 +116,9 @@ def install_bundle(root, key, commit, source):
         git('clone', '--quiet', '--no-local', '--no-tags', '--no-checkout',
             str(bundle), str(checkout))
         check_tree(checkout, commit)
+        # Recreate the shallow boundary because the bundle carries the tip
+        # and tree of the depth-one fetch.
+        (checkout / '.git' / 'shallow').write_text(commit + '\n')
         git('checkout', '--quiet', '--detach', commit, directory=checkout)
         git('remote', 'remove', 'origin', directory=checkout)
         git('config', 'user.name', 'Repository Development', directory=checkout)

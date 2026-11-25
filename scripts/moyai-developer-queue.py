@@ -1,5 +1,6 @@
 """Hand off one approved GitHub issue at a time from a verified local checkout."""
 import argparse
+from dataclasses import asdict
 import fcntl
 import hashlib
 import json
@@ -14,15 +15,15 @@ import time
 from urllib.parse import urlencode
 from uuid import UUID, uuid4
 
-
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'integrations/moyai'))
+sys.path.insert(0, str(ROOT / 'scripts'))
 from client import MoyaiClient
+from moyai_queue_review import ReviewQueue, ReviewSettings, session_busy
 
 
 LABEL = 'moyai:ready'
 BASE = 'main'
-TERMINAL = {'completed', 'failed', 'stopped'}
 REQUIRED = {'issue_read', 'add_issue_comment', 'create_branch', 'push_files', 'create_pull_request'}
 
 
@@ -44,6 +45,9 @@ class GitHubQueue:
         self.path = 'repos/' + repository + '/'
         self.account = github('user')
 
+    def api(self, route, *, pages=False):
+        return github(self.path + route, pages=pages)
+
     def candidates(self):
         query = urlencode({'state': 'open', 'labels': LABEL, 'creator': self.account['login'],
                            'sort': 'created', 'direction': 'asc', 'per_page': 100})
@@ -53,10 +57,20 @@ class GitHubQueue:
             and any(label['name'] == LABEL for label in row['labels'])
         ]
 
-    def has_pull(self, number):
+    def open_pulls(self, number):
         owner = self.repository.split('/')[0]
         query = urlencode({'state': 'open', 'base': BASE, 'head': f'{owner}:issue-{number}'})
-        return bool(github(self.path + 'pulls?' + query))
+        return self.api('pulls?' + query)
+
+    def has_pull(self, number):
+        return bool(self.open_pulls(number))
+
+    def pull_metadata(self, number):
+        output = subprocess.check_output([
+            'gh', 'pr', 'view', str(number), '--repo', 'github.com/' + self.repository, '--json',
+            'headRefOid,closingIssuesReferences,statusCheckRollup',
+        ], stderr=subprocess.PIPE, timeout=90)
+        return json.loads(output)
 
     def head(self):
         ref = github(self.path + 'git/ref/heads/' + BASE)
@@ -66,14 +80,14 @@ class GitHubQueue:
         return sha
 
 
-def verify_connection(client, connection):
+def verify_connection(client, connection, required=REQUIRED):
     data = client.request('/api/connections')
     rows = data['connections'] if isinstance(data, dict) else data
     row = next((item for item in rows if item['id'] == connection), None)
     if (not row or row['kind'] != 'github' or not row['enabled'] or row['shared'] or row['read_only']
             or row['policy'].get('require_approval') is not True
-            or not REQUIRED.issubset(row['policy'].get('allowed_tools') or ())):
-        raise QueueError('Choose a private Developer GitHub connection with the required tools and confirmations.')
+            or not required.issubset(row['policy'].get('allowed_tools') or ())):
+        raise QueueError('Choose a private GitHub connection with the required tools and confirmations.')
     return row['revision']
 
 
@@ -117,10 +131,17 @@ def finish(state, job, status, persist):
     return note(job, status)
 
 
-def tick(github_queue, controller, checkout, connection, state, persist):
+def tick(github_queue, controller, checkout, connection, state, persist, reviewer=None):
     job = state.get('active')
     if job and job['connection'] != connection:
         raise QueueError('Continue the active issue with its original Developer connection.')
+    if job and 'pull' in job:
+        if reviewer is None or job['review_settings'] != asdict(reviewer.settings):
+            raise QueueError('Continue the active PR with its original review and CI settings.')
+        result = reviewer.tick(job, controller, lambda: persist(state))
+        if result['status'] in {'main_green', 'pull_closed', 'merged_without_verifier'}:
+            finish(state, job, result['status'], persist)
+        return result
 
     if job and 'session' in job:
         detail = controller().request('/api/sessions/' + job['session'])
@@ -133,9 +154,15 @@ def tick(github_queue, controller, checkout, connection, state, persist):
                     raise QueueError('The first message used a different connection.')
                 job['turn'] = first['id']
                 persist(state)
-            newest = detail['turns'][0]
-            if detail.get('pending') or newest['status'] not in TERMINAL:
+            if session_busy(detail):
                 return note(job, 'waiting' if detail.get('pending') else 'busy')
+            if reviewer:
+                pull = reviewer.find(job['issue'])
+                if pull is not None:
+                    job.update(pull=pull, review_settings=asdict(reviewer.settings))
+                    persist(state)
+                    return {'status': 'review_ready', 'issue': job['issue'], 'pull': pull}
+                return finish(state, job, 'held', persist)
             status = 'pull_open' if github_queue.has_pull(job['issue']) else 'held'
             return finish(state, job, status, persist)
         if job.get('turn'):
@@ -193,6 +220,11 @@ def main():
     parser.add_argument('--repo', default=os.getenv('QUEUE_REPO'))
     parser.add_argument('--connection', default=os.getenv('QUEUE_CONNECTION'))
     parser.add_argument('--watch', action='store_true', default=os.getenv('QUEUE_WATCH') == '1')
+    parser.add_argument('--verifier', default=os.getenv('QUEUE_VERIFIER'))
+    parser.add_argument('--developer-app', default=os.getenv('QUEUE_DEVELOPER_APP'))
+    parser.add_argument('--verifier-app', default=os.getenv('QUEUE_VERIFIER_APP'))
+    parser.add_argument('--workflow', default=os.getenv('QUEUE_WORKFLOW') or 'test.yml')
+    parser.add_argument('--job', default=os.getenv('QUEUE_JOB') or 'unit')
     args = parser.parse_args()
     if not args.repo or not args.connection:
         parser.error('Supply REPO=owner/project and CONNECTION=<uuid>.')
@@ -200,6 +232,14 @@ def main():
     try:
         repository = namespace['source_url'](args.repo).removeprefix('https://github.com/').removesuffix('.git')
         identity = str(UUID(args.connection))
+        review = None
+        if any((args.verifier, args.developer_app, args.verifier_app)):
+            if not all((args.verifier, args.developer_app, args.verifier_app)):
+                parser.error('Supply VERIFIER, DEVELOPER_APP and VERIFIER_APP together.')
+            verifier = str(UUID(args.verifier))
+            if identity == verifier:
+                parser.error('Select a separate connection for Verifier.')
+            review = ReviewSettings(verifier, args.developer_app, args.verifier_app, args.workflow, args.job)
     except ValueError as error:
         parser.error(str(error))
     os.chdir(ROOT)
@@ -211,6 +251,7 @@ def main():
         with (directory / (name + '.lock')).open('a') as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             queue = GitHubQueue(repository)
+            reviewer = ReviewQueue(queue, review, verify_connection) if review else None
             state = json.loads(state_path.read_text()) if state_path.exists() else {'held': []}
             while True:
                 next_check = time.monotonic() + 60
@@ -225,7 +266,8 @@ def main():
                     return client
 
                 try:
-                    result = tick(queue, controller, namespace['run_checkout'], identity, state, lambda data: save(state_path, data))
+                    result = tick(queue, controller, namespace['run_checkout'], identity, state,
+                                  lambda data: save(state_path, data), reviewer)
                     print(json.dumps(result), flush=True)
                 except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
                     detail = str(error) if isinstance(error, QueueError) else type(error).__name__
