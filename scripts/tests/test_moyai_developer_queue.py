@@ -144,6 +144,14 @@ class DeveloperQueueTests(unittest.TestCase):
         self.assertEqual(self.check(reviewer=reviewer)['status'], 'main_green')
         self.assertEqual(self.check(reviewer=reviewer)['issue'], 9)
 
+    def test_included_guidance_does_not_hide_the_completed_turn(self):
+        result = self.check()
+        chat = self.controller.sessions[result['session']]
+        chat['turns'][0]['status'] = 'completed'
+        chat['turns'].insert(0, {'id': 'guidance', 'status': 'included'})
+        self.repo.pulls.add(7)
+        self.assertEqual(self.check()['status'], 'pull_open')
+
     def test_held_issue_becomes_eligible_when_label_is_removed_and_reapplied(self):
         self.repo.ready = [7]
         result = self.check()

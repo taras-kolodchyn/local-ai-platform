@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'integrations/moyai'))
 sys.path.insert(0, str(ROOT / 'scripts'))
 from client import MoyaiClient
-from moyai_queue_review import ReviewQueue, ReviewSettings, TERMINAL
+from moyai_queue_review import ReviewQueue, ReviewSettings, session_busy
 
 
 LABEL = 'moyai:ready'
@@ -154,8 +154,7 @@ def tick(github_queue, controller, checkout, connection, state, persist, reviewe
                     raise QueueError('The first message used a different connection.')
                 job['turn'] = first['id']
                 persist(state)
-            newest = detail['turns'][0]
-            if detail.get('pending') or newest['status'] not in TERMINAL:
+            if session_busy(detail):
                 return note(job, 'waiting' if detail.get('pending') else 'busy')
             if reviewer:
                 pull = reviewer.find(job['issue'])

@@ -7,7 +7,12 @@ from uuid import uuid4
 
 REVIEW_TOOLS = {'issue_read', 'pull_request_read', 'pull_request_review_write'}
 DECISIONS = {'APPROVED', 'CHANGES_REQUESTED', 'DISMISSED'}
-TERMINAL = {'completed', 'failed', 'stopped'}
+SETTLED = {'completed', 'failed', 'stopped', 'resumed', 'included'}
+
+
+def session_busy(detail):
+    return bool(detail.get('pending') or detail.get('session', {}).get('active_turn')
+                or any(turn['status'] not in SETTLED for turn in detail['turns']))
 
 
 @dataclass(frozen=True)
@@ -134,8 +139,7 @@ class ReviewQueue:
                 if 'turn' not in review:
                     review['turn'] = first['id']
                     persist()
-                status = detail['turns'][0]['status']
-                if detail.get('pending') or status not in TERMINAL:
+                if session_busy(detail):
                     waiting = detail.get('pending')
                     outcome = ('review_stale' if review['sha'] != sha else
                                'review_waiting' if waiting else 'review_busy')
