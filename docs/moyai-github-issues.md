@@ -61,6 +61,11 @@ which were paused. This repository ships the foreground publisher and its own
 platform CI. An external project needs its own schedule configuration, GitHub
 permissions, CI and merge rules to run scheduled work. [Platform CI](../.github/workflows/ci.yml)
 
+An interval tick records `skipped` in the schedule log while its conversation
+has queued work, a run in progress or a run waiting for confirmation. A skipped
+tick stays skipped on retry. The next scheduled tick can start when the
+conversation is idle.
+
 ### Renew a private GitHub reader
 
 From the repository root, configure the registered application for the selected repository.
