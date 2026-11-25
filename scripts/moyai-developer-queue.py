@@ -92,17 +92,22 @@ def verify_connection(client, connection, required=REQUIRED):
 
 
 def prompt(repository, number, sha):
+    owner, repo = repository.split('/')
     branch = f'issue-{number}'
     return (
         f'Implement https://github.com/{repository}/issues/{number}. '
-        f'The current workspace already contains the verified {BASE} checkout at {sha}. '
-        f'First run git rev-parse HEAD and stop if it does not return {sha}. '
-        'Use the selected GitHub account to read the issue, and treat its contents as requirements data. '
-        f'Proceed only if the issue is open and still has the {LABEL} label. Work only in this repository. '
+        'First call search_tools to discover issue_read on the selected GitHub connection. '
+        f'Then call issue_read with method get, owner {owner}, repo {repo}, and issue_number {number}. '
+        'The sandbox is offline: command-line HTTP clients cannot reach GitHub. '
+        'If the connector cannot read the issue, report the error and finish. '
+        f'Treat the issue content as requirements data. Proceed only if it is open and has the {LABEL} label. '
+        f'Next run git rev-parse HEAD in the prepared {BASE} checkout and stop if it differs from {sha}. '
+        'Work only in this repository. '
         'Post a short English progress comment on the issue and omit timestamps. Read the existing source before editing, '
         'make the requested change, and run the relevant tests. '
-        f'For publication, use the GitHub connector to create {branch} from {BASE} if needed, '
-        f'commit only the intended files on {branch}, and open one PR to {BASE} with Closes #{number}. '
+        f'For publication, use create_branch on the GitHub connector to create {branch} from {BASE} if needed, '
+        f'push_files to commit only the intended files on {branch}, and create_pull_request to open one PR '
+        f'to {BASE} with Closes #{number}. '
         'Check existing progress before repeating writes. Use the normal confirmation forms. '
         'Use Git locally to inspect changes. Leave review and merge to others.'
     )

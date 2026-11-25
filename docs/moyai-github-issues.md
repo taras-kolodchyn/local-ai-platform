@@ -6,6 +6,17 @@ A fresh installation has no publication target. Start the publisher separately
 when you need it.
 For read-only GitHub access through MCP, use [connected mode](connected.md).
 
+## Enable the native GitHub connection on the Mac
+
+Set `MOYAI_GITHUB_CONNECTOR=1` in the local `.env` and run `make up`. Compose
+starts the GitHub TLS relay and attaches the controller to its internal
+network even when the controller is recreated. The relay forwards TLS to
+`api.githubcopilot.com:443` with certificate validation performed by the
+controller. It publishes no host ports, and the sandbox retains its internal
+network. GitHub accounts and credentials are configured separately in Moyai.
+The default value is `0`. To remove the relay and return to offline startup,
+run `make down`, set the value to `0`, and run `make up`.
+
 ## Select the external project
 
 1. Run `make bootstrap` on a fresh installation. In the Git-ignored `.env`, set
@@ -87,8 +98,10 @@ make moyai-developer-queue REPO=owner/project CONNECTION="$DEVELOPER_CONNECTION"
 
 Leave the process running and add `moyai:ready` to an open issue. It picks
 the oldest eligible issue, prepares a fresh private checkout of verified
-`main`, and submits the task to Developer. Each repository on the Mac has one active
-handoff. The queue waits while the conversation is running or awaiting input.
+`main`, and submits the task to Developer. Developer reads the issue through
+the selected GitHub connection before using the local checkout. Each
+repository on the Mac has one active handoff. The queue waits while the
+conversation is running or awaiting input.
 It records the issue, session, revision and submission locally so restarts
 can resume the same handoff. Publication uses the normal confirmation forms.
 
