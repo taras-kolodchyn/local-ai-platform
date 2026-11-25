@@ -109,7 +109,8 @@ For an existing issue branch, the queue runs editing and tests first, then
 starts a separate `push_files` step in the same checkout. It opens a PR in a
 third step after GitHub shows one new commit on the pinned issue branch. A
 branch change before submission or a missing commit after publication holds
-the issue for inspection.
+the issue for inspection. The edit step carries the verified issue text as
+task data and still reads the issue through the selected connection.
 
 Omit `WATCH=1` for one check. The queue skips issues with an open PR from
 `issue-<number>`. An issue whose turn finished without such a PR stays held.

@@ -32,6 +32,9 @@ class GitHub:
     def issue_branch(self, issue):
         return self.branches.get(issue)
 
+    def issue_snapshot(self, issue):
+        return {'title': 'Document the default output', 'body': 'Add one example above the first existing example.'}
+
     def published_commit(self, issue, parent, developer_app):
         tip = self.issue_branch(issue)
         return tip if self.commits.get(tip) == (parent, developer_app) else None
@@ -174,6 +177,9 @@ class DeveloperQueueTests(unittest.TestCase):
         self.assertEqual(self.events[1][2:], ('issue-7', edited['session'], 'developer', branch_tip))
         self.assertIn('issue_read', self.controller.requests[0]['prompt'])
         self.assertNotIn('push_files', self.controller.requests[0]['prompt'])
+        self.assertIn('The queue verified that issue #7 is open', self.controller.requests[0]['prompt'])
+        self.assertIn(self.repo.issue_snapshot(7)['body'], self.controller.requests[0]['prompt'])
+        self.assertNotIn('Proceed only if', self.controller.requests[0]['prompt'])
         turns = self.controller.sessions[edited['session']]['turns']
         turns[0]['status'] = 'completed'
 
@@ -203,6 +209,12 @@ class DeveloperQueueTests(unittest.TestCase):
         self.assertEqual(self.check()['status'], 'branch_changed')
         self.assertEqual(self.state['held'], [7])
         self.assertEqual(len(self.controller.requests), 1)
+
+    def test_changed_issue_eligibility_blocks_staged_edit(self):
+        self.repo.branches[7] = self.repo.sha
+        self.repo.issue_snapshot = Mock(return_value=None)
+        self.assertEqual(self.check()['status'], 'skipped')
+        self.assertEqual(self.controller.requests, [])
 
     def test_missing_commit_blocks_opening_the_pull_request(self):
         self.repo.branches[7] = self.repo.sha
