@@ -97,13 +97,19 @@ make moyai-developer-queue REPO=owner/project CONNECTION="$DEVELOPER_CONNECTION"
 ```
 
 Leave the process running and add `moyai:ready` to an open issue. It picks
-the oldest eligible issue, prepares a fresh private checkout of verified
-`main`, and submits the task to Developer. Developer reads the issue through
-the selected GitHub connection before using the local checkout. Each
+the oldest eligible issue and prepares a fresh private checkout of verified
+`main` or the existing `issue-<number>` branch. Developer reads the issue
+through the selected GitHub connection before using the local checkout. Each
 repository on the Mac has one active handoff. The queue waits while the
 conversation is running or awaiting input.
 It records the issue, session, revision and submission locally so restarts
 can resume the same handoff. Publication uses the normal confirmation forms.
+
+For an existing issue branch, the queue runs editing and tests first, then
+starts a separate `push_files` step in the same checkout. It opens a PR in a
+third step after GitHub shows one new commit on the pinned issue branch. A
+branch change before submission or a missing commit after publication holds
+the issue for inspection.
 
 Omit `WATCH=1` for one check. The queue skips issues with an open PR from
 `issue-<number>`. An issue whose turn finished without such a PR stays held.

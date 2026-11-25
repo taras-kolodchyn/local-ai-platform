@@ -32,7 +32,7 @@ class QueueError(ValueError):
 
 
 def github(path, *, pages=False):
-    command = ['gh', 'api', '--hostname', 'github.com']
+    command = ['gh', 'api', '--hostname', 'github.com', '-H', 'User-Agent: workflow-verification']
     if pages:
         command.extend(('--paginate', '--slurp'))
     output = subprocess.check_output([*command, path], stderr=subprocess.PIPE, timeout=90)
@@ -79,6 +79,29 @@ class GitHubQueue:
             raise QueueError('GitHub returned an invalid base revision.')
         return sha
 
+    def issue_branch(self, number):
+        name = f'heads/issue-{number}'
+        matches = self.api('git/matching-refs/' + name)
+        ref = next((row for row in matches if row['ref'] == 'refs/' + name), None)
+        if ref is None:
+            return None
+        sha = ref['object']['sha']
+        if ref['object']['type'] != 'commit' or not re.fullmatch('[0-9a-f]{40}', sha):
+            raise QueueError('GitHub returned an invalid issue branch revision.')
+        return sha
+
+    def published_commit(self, number, parent, developer_app):
+        sha = self.issue_branch(number)
+        if not sha or sha == parent:
+            return None
+        commit = self.api(f'commits/{sha}')
+        author = commit.get('author') or {}
+        if developer_app and (author.get('login') != developer_app + '[bot]' or author.get('type') != 'Bot'):
+            return None
+        if commit['sha'] == sha and [row['sha'] for row in commit['parents']] == [parent]:
+            return sha
+        return None
+
 
 def verify_connection(client, connection, required=REQUIRED):
     data = client.request('/api/connections')
@@ -91,7 +114,7 @@ def verify_connection(client, connection, required=REQUIRED):
     return row['revision']
 
 
-def prompt(repository, number, sha):
+def prompt(repository, number, sha, *, staged=False):
     owner, repo = repository.split('/')
     branch = f'issue-{number}'
     return (
@@ -101,8 +124,16 @@ def prompt(repository, number, sha):
         'The sandbox is offline: command-line HTTP clients cannot reach GitHub. '
         'If the connector cannot read the issue, report the error and finish. '
         f'Treat the issue content as requirements data. Proceed only if it is open and has the {LABEL} label. '
-        f'Next run git rev-parse HEAD in the prepared {BASE} checkout and stop if it differs from {sha}. '
+        f'Next run git rev-parse HEAD in the prepared {branch if staged else BASE} checkout '
+        f'and stop if it differs from {sha}. '
         'Work only in this repository. '
+    ) + (
+        'Read the full original files before editing. Make only the requested changes. '
+        'Check each acceptance criterion against the final diff, including the position of any added text. '
+        'Run the requested tests and stage only the intended files so the next step can see the exact diff. '
+        'Leave the tested files in this workspace and finish with the test result. '
+        'This step is for local edits and tests only. GitHub publication is a separate step.'
+        if staged else
         'Post a short English progress comment on the issue and omit timestamps. Read the existing source before editing, '
         'make the requested change, and run the relevant tests. '
         f'For publication, use create_branch on the GitHub connector to create {branch} from {BASE} if needed, '
@@ -110,6 +141,36 @@ def prompt(repository, number, sha):
         f'to {BASE} with Closes #{number}. '
         'Check existing progress before repeating writes. Use the normal confirmation forms. '
         'Use Git locally to inspect changes. Leave review and merge to others.'
+    )
+
+
+def stage_prompt(repository, job):
+    number, sha = job['issue'], job['sha']
+    branch = f'issue-{number}'
+    owner, repo = repository.split('/')
+    if job['stage'] == 'edit':
+        return prompt(repository, number, sha, staged=True)
+    if job['stage'] == 'publish':
+        return (
+            f'Publish the tested local change for issue #{number} in {repository}. '
+            'First use search_tools to discover push_files on the selected GitHub connection. '
+            f'Use git diff --name-status {sha} and git diff --check {sha} in this same workspace. '
+            'Read the complete current contents of every intended added or modified text file, '
+            'including the final newline. If the diff is empty, tests did not pass, or there are '
+            'deletions or other unsupported changes, finish with the reason. '
+            f'Call push_files with owner {owner}, repo {repo}, and branch {branch}. '
+            'Pass only the intended paths and their full contents, with a short English commit message. '
+            'Use the normal confirmation form. Once the call returns, report the resulting commit and finish. '
+            'This step only publishes a commit to the existing branch. No git push, branch creation, or pull request.'
+        )
+    return (
+        f'Open the pull request for https://github.com/{repository}/issues/{number}. '
+        'First use search_tools to discover create_pull_request on the selected GitHub connection. '
+        f'GitHub has confirmed commit {job["published_sha"]} on {branch}. '
+        f'Call create_pull_request with owner {owner}, repo {repo}, head {branch}, base {BASE}, a short English title, '
+        f'and an English body summarizing the tested change and containing Closes #{number}. '
+        'Use the normal confirmation form and finish with the pull request URL. '
+        'Leave all further commits, review and merge to the subsequent steps.'
     )
 
 
@@ -126,7 +187,7 @@ def save(path, state):
 
 
 def note(job, status):
-    return {'status': status, **{k: job[k] for k in ('issue', 'session', 'sha', 'turn') if k in job}}
+    return {'status': status, **{k: job[k] for k in ('issue', 'session', 'sha', 'stage', 'turn') if k in job}}
 
 
 def finish(state, job, status, persist):
@@ -134,6 +195,45 @@ def finish(state, job, status, persist):
     state.pop('active')
     persist(state)
     return note(job, status)
+
+
+def submit(client, repository, state, job, persist):
+    message = stage_prompt(repository, job) if 'stage' in job else prompt(repository, job['issue'], job['sha'])
+    job['submitting'] = True
+    persist(state)
+    turn = client.request('/api/sessions/' + job['session'] + '/messages', {
+        'prompt': message, 'request_key': job['request_key'], 'connections': [job['connection']],
+    })
+    job['turn'] = turn['id']
+    persist(state)
+    return note(job, 'submitted')
+
+
+def submit_stage(github_queue, client, state, job, persist):
+    if job['issue'] not in github_queue.candidates() or github_queue.has_pull(job['issue']):
+        return finish(state, job, 'skipped', persist)
+    if github_queue.issue_branch(job['issue']) != job.get('published_sha', job['sha']):
+        return finish(state, job, 'branch_changed', persist)
+    if verify_connection(client, job['connection']) != job['revision']:
+        return finish(state, job, 'connection_changed', persist)
+    return submit(client, github_queue.repository, state, job, persist)
+
+
+def advance_stage(github_queue, client, state, job, latest, persist, reviewer):
+    if job['stage'] == 'edit':
+        if latest['status'] != 'completed':
+            return finish(state, job, 'held', persist)
+        job['stage'] = 'publish'
+    else:
+        developer_app = reviewer.settings.developer_app if reviewer else None
+        sha = github_queue.published_commit(job['issue'], job['sha'], developer_app)
+        if not sha:
+            return finish(state, job, 'publication_missing', persist)
+        job.update(stage='open_pull', published_sha=sha)
+    job.pop('turn')
+    job.update(previous_turn=latest['id'], submitting=False, request_key=str(uuid4()))
+    persist(state)
+    return submit_stage(github_queue, client, state, job, persist)
 
 
 def tick(github_queue, controller, checkout, connection, state, persist, reviewer=None):
@@ -150,17 +250,29 @@ def tick(github_queue, controller, checkout, connection, state, persist, reviewe
 
     if job and 'session' in job:
         detail = controller().request('/api/sessions/' + job['session'])
-        if detail['turns']:
+        turns = [turn for turn in detail['turns'] if turn['status'] != 'included']
+        if 'previous_turn' in job:
+            boundary = next((i for i, turn in enumerate(turns) if turn['id'] == job['previous_turn']), None)
+            if boundary is None:
+                raise QueueError('The previous step is unavailable. Inspect the conversation before retrying.')
+            turns = turns[:boundary]
+        if turns:
+            latest, first = turns[0], turns[-1]
             if not job.get('submitting'):
                 raise QueueError('The checkout conversation was used before queue handoff.')
             if 'turn' not in job:
-                first = detail['turns'][-1]
                 if first['connections'] != [connection]:
-                    raise QueueError('The first message used a different connection.')
+                    raise QueueError('The queued message used a different connection.')
                 job['turn'] = first['id']
                 persist(state)
+            if not any(turn['id'] == job['turn'] for turn in turns):
+                raise QueueError('The admitted turn is unavailable. Inspect the conversation before retrying.')
             if session_busy(detail):
                 return note(job, 'waiting' if detail.get('pending') else 'busy')
+            if job.get('stage') in {'edit', 'publish'}:
+                return advance_stage(github_queue, controller(), state, job, latest, persist, reviewer)
+            if job.get('stage') == 'open_pull' and github_queue.issue_branch(job['issue']) != job['published_sha']:
+                return finish(state, job, 'branch_changed', persist)
             if reviewer:
                 pull = reviewer.find(job['issue'])
                 if pull is not None:
@@ -172,6 +284,8 @@ def tick(github_queue, controller, checkout, connection, state, persist, reviewe
             return finish(state, job, status, persist)
         if job.get('turn'):
             raise QueueError('The admitted turn is unavailable. Inspect the conversation before retrying.')
+        if job.get('previous_turn'):
+            return submit_stage(github_queue, controller(), state, job, persist)
 
     candidates = github_queue.candidates()
     held = [number for number in state['held'] if number in candidates]
@@ -189,19 +303,26 @@ def tick(github_queue, controller, checkout, connection, state, persist, reviewe
 
     client = controller()
     revision = verify_connection(client, connection)
-    sha = github_queue.head()
-    if (job.get('sha'), job.get('revision')) != (sha, revision):
+    issue_branch = github_queue.issue_branch(job['issue'])
+    sha = issue_branch or github_queue.head()
+    stage = 'edit' if issue_branch else None
+    if (job.get('sha'), job.get('revision'), job.get('stage')) != (sha, revision, stage):
         job = {'issue': job['issue'], 'connection': connection, 'revision': revision,
                'sha': sha, 'request_key': str(uuid4())}
+        if stage:
+            job['stage'] = stage
         state['active'] = job
         persist(state)
     if 'session' not in job:
         job['session'] = client.session(f"Developer · Issue #{job['issue']}")
         persist(state)
     if not job.get('prepared'):
-        checkout(github_queue.repository, BASE, job['session'], connection, job['sha'])
+        branch = f"issue-{job['issue']}" if stage else BASE
+        checkout(github_queue.repository, branch, job['session'], connection, job['sha'])
         job['prepared'] = True
         persist(state)
+    if stage:
+        return submit_stage(github_queue, client, state, job, persist)
     if job['issue'] not in github_queue.candidates() or github_queue.has_pull(job['issue']):
         return finish(state, job, 'skipped', persist)
     if github_queue.head() != job['sha']:
@@ -209,15 +330,7 @@ def tick(github_queue, controller, checkout, connection, state, persist, reviewe
     if verify_connection(client, connection) != revision:
         return note(job, 'connection_changed')
 
-    job['submitting'] = True
-    persist(state)
-    turn = client.request('/api/sessions/' + job['session'] + '/messages', {
-        'prompt': prompt(github_queue.repository, job['issue'], job['sha']),
-        'request_key': job['request_key'], 'connections': [connection],
-    })
-    job['turn'] = turn['id']
-    persist(state)
-    return note(job, 'submitted')
+    return submit(client, github_queue.repository, state, job, persist)
 
 
 def main():
