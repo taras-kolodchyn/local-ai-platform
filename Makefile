@@ -127,6 +127,16 @@ github-app-issues: ## Publish as the GitHub App (ISSUE=N AUTO_MERGE=1 also merge
 
 .PHONY: rag-connect rag-disconnect rag-status
 BRANCH ?= main
+
+.PHONY: moyai-checkout
+moyai-checkout: export CHECKOUT_REPO := $(value REPO)
+moyai-checkout: export CHECKOUT_BRANCH := $(value BRANCH)
+moyai-checkout: export CHECKOUT_SESSION := $(value SESSION)
+moyai-checkout: export CHECKOUT_CONNECTION := $(value CONNECTION)
+moyai-checkout: export CHECKOUT_SHA := $(value SHA)
+moyai-checkout: ## Prepare a verified Git checkout for a new private Moyai chat
+	@python3 scripts/moyai-checkout.py
+
 rag-connect rag-disconnect: export RAG_REPO := $(value REPO)
 rag-connect rag-disconnect: export RAG_BRANCH := $(value BRANCH)
 rag-connect: export RAG_SESSIONS := $(value SESSIONS)

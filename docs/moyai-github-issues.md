@@ -54,6 +54,26 @@ issue, PR, base and tree, marks the draft ready, and requests a merge commit.
 If interrupted after publication, restart with the same issue, profile and
 merge grant to reconcile the saved job. [CI and merge checks](../scripts/github-issues.py)
 
+## Prepare a Developer checkout
+
+Create a private Developer chat and leave it unused while preparing its
+checkout. Sign in with the GitHub CLI on the Mac before running the command.
+
+```sh
+make moyai-checkout REPO=owner/project BRANCH=main \
+  SESSION="$DEVELOPER_SESSION" CONNECTION="$DEVELOPER_CONNECTION"
+```
+
+The command compares the fetched commit with the current branch tip and prints
+the verified SHA. Add `SHA=<full-commit>` to require a particular revision.
+It installs the checkout in the chat workspace for the selected connection.
+The sandbox receives a Git bundle with regular tracked files. Git credentials
+stay on the Mac. Use the GitHub connection for publication.
+
+Select the same connection on the chat's first message or schedule. Prepare
+a new chat for a different revision or connection. A used workspace keeps its
+existing files.
+
 ## Native schedules
 
 The retired pilot used two native Moyai schedules, Developer and Verifier,
