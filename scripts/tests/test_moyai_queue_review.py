@@ -114,6 +114,8 @@ class QueueReviewTests(unittest.TestCase):
         self.assertEqual(body['connections'], ['review-connection'])
         self.assertIn(HEAD, body['prompt'])
         self.assertIn('/pull/5', body['prompt'])
+        self.assertIn('search_tools to discover pull_request_read and issue_read', body['prompt'])
+        self.assertIn('No local checkout or repository catalog is required', body['prompt'])
         self.assertIn('Use normal confirmation', body['prompt'])
         self.assertEqual(self.tick()['status'], 'review_busy')
         self.assertEqual(len(self.controller.writes), 1)
@@ -146,6 +148,17 @@ class QueueReviewTests(unittest.TestCase):
         chat['turns'][0]['status'] = 'completed'
         self.assertNotEqual(self.tick()['review_session'], first['review_session'])
         self.assertIn('c' * 40, self.controller.writes[-1]['prompt'])
+
+    def test_accepted_guidance_does_not_block_retry_after_a_failed_review(self):
+        first = self.tick()
+        chat = self.controller.sessions[first['review_session']]
+        chat['turns'][0]['status'] = 'failed'
+        chat['turns'].insert(0, {'id': 'guidance', 'status': 'accepted'})
+        self.review.verify_connection = lambda client, connection, tools: 2
+        retry = self.tick()
+        self.assertEqual(retry['status'], 'review_submitted')
+        self.assertNotEqual(retry['review_session'], first['review_session'])
+        self.assertEqual(len(self.controller.writes), 2)
 
     def test_main_green_requires_prior_verifier_approval_merge_ci_and_closed_issue(self):
         self.repo.pull.update(state='closed', merged=True, merge_commit_sha=MERGE, merged_at='2026-11-24T10:10:00Z')
