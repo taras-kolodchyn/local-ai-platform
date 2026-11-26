@@ -112,6 +112,16 @@ branch change before submission or a missing commit after publication holds
 the issue for inspection. The edit step carries the verified issue text as
 task data and still reads the issue through the selected connection.
 
+After a passing test run, Developer records the staged tree in the sandbox at
+`refs/workflow/tested`. The publication step compares that tree with the current
+index and checkout. It reads the changed files and supplies their exact UTF-8
+contents to the native confirmation form, including final newlines. Inspect
+the branch and proposed changes before choosing **Allow this action** and
+**Continue**. An empty or changed checkout, a missing test marker, or an
+unsupported change stops the handoff. This path supports up to 64 regular,
+non-executable text files (128 KiB combined) added or modified on an existing
+issue branch.
+
 Omit `WATCH=1` for one check. The queue skips issues with an open PR from
 `issue-<number>`. An issue whose turn finished without such a PR stays held.
 To retry it, remove the label, wait for one check, and reapply the label.
@@ -127,6 +137,10 @@ make moyai-developer-queue REPO=owner/project CONNECTION="$DEVELOPER_CONNECTION"
   VERIFIER="$VERIFIER_CONNECTION" DEVELOPER_APP="$DEVELOPER_APP_SLUG" \
   VERIFIER_APP="$VERIFIER_APP_SLUG" CI_WORKFLOW=test.yml CI_JOB=unit WATCH=1
 ```
+
+Before confirmation, the queue formats `Closes #<number>` as the final Markdown
+paragraph of the PR description. GitHub must list the issue in the PR’s
+closing references before the queue starts review.
 
 The queue sends a PR linked to the issue and opened by the Developer App to
 a separate private Verifier chat. The review receives the exact head SHA and

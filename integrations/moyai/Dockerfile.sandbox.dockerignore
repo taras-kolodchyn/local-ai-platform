@@ -8,3 +8,4 @@
 !integrations/moyai/command_supervisor.py
 !integrations/moyai/sshd_config
 !integrations/moyai/sandbox-entrypoint.sh
+!integrations/moyai/staged_files.py
