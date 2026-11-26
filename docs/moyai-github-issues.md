@@ -150,6 +150,11 @@ branch change before submission or a missing commit after publication holds
 the issue for inspection. The edit step carries the verified issue text as
 task data and still reads the issue through the selected connection.
 
+`push_files` sends the full contents of each changed file. Before confirming,
+check the target branch, file list and complete contents against the tested
+checkout, including final newlines. Decline a request with extra changes and
+follow the [recovery steps](#recover-a-queued-issue).
+
 Omit `WATCH=1` for one check. The queue skips issues with an open PR from
 `issue-<number>`. An issue whose turn finished without such a PR stays held.
 To retry it, remove the label, wait for one check, and reapply the label.
@@ -176,14 +181,14 @@ Merge the linked PR in GitHub under the repository's merge rules. The queue
 reports `main_green` when the merge commit passes the required push job on
 `main` and the issue closes.
 
-## Recover a queued issue after token expiration
+## Recover a queued issue
 
 1. Inspect the saved activity and check GitHub before repeating an action.
    Compare the issue branch tip, any linked PR, and any review on the PR's
    current head. A failed turn can follow a successful write.
-2. Once the prior turn has ended, renew the affected write connection. Use a
-   new private chat for the new revision. A confirmation from the old run
-   belongs to its original connection revision.
+2. Once the prior turn has ended, renew the affected write connection if its
+   token expired. Use a new private chat for the new revision. A confirmation
+   from the old run belongs to its original connection revision.
 3. If there is no published commit or PR, remove `moyai:ready`, let the queue
    check once to clear its hold, then reapply the label. Leave the existing
    issue branch in place. The queue pins its current tip for the fresh chat.

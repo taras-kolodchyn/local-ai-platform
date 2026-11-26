@@ -136,7 +136,7 @@ tools and log redaction. [Connected-mode runbook](connected.md)
 Check the saved turn and GitHub for the actual branch, PR or review before
 retrying. Check the installation token's expiration and renew it if needed.
 Use a fresh private chat with the updated connection revision.
-[Queue recovery](moyai-github-issues.md#recover-a-queued-issue-after-token-expiration)
+[Queue recovery](moyai-github-issues.md#recover-a-queued-issue)
 
 ## A host Python upgrade breaks the tests
 
