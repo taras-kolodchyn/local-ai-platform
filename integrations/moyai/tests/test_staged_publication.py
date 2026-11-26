@@ -3,8 +3,15 @@ from types import SimpleNamespace as Values
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock
 
+from moyai.connection_catalog import ConnectionToolSearch, connection_search
+from moyai.connections import ConnectionTools
+from moyai.contracts import Grant, RunScope
 from moyai_workspace import SessionWorkspace
+from pydantic_ai import Agent, DeferredToolRequests
+from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelRequest, ToolReturnPart
+from pydantic_ai.models.function import FunctionModel
+from pydantic_ai.toolsets import FunctionToolset
 
 
 class StagedPublicationTests(IsolatedAsyncioTestCase):
@@ -42,3 +49,37 @@ class StagedPublicationTests(IsolatedAsyncioTestCase):
         grant.policy['require_approval'] = False
         self.assertFalse((await route()).tool_calls)
         cap.staged_files.assert_awaited_once()
+
+    async def test_real_deferred_tool_reaches_confirmation_without_dispatch(self):
+        cap = SessionWorkspace()
+        cap.authorize_issue_response = AsyncMock()
+        files = [{'path': 'README.md', 'content': 'one line\n'}]
+        cap.staged_files = AsyncMock(return_value={'files': files})
+
+        class Route(AbstractCapability):
+            async def wrap_model_request(self, ctx, *, request_context, handler):
+                return await cap.wrap_model_request(ctx, request_context=request_context, handler=handler)
+
+        def fallback(*args):
+            raise AssertionError('Publication unexpectedly requested inference.')
+
+        tools = FunctionToolset()
+
+        @tools.tool_plain
+        def github_abcd1234_push_files(owner: str, repo: str, branch: str, message: str,
+                                       files: list[dict[str, str]]) -> str:
+            raise AssertionError('A write was dispatched before confirmation.')
+
+        grant = Grant('abcd1234-fixture', 'github', 1, '', False,
+                      {'allowed_tools': ['push_files'], 'require_approval': True})
+        scope = RunScope('session', 'turn', 'actor', 'test', grants=[grant])
+        runner = Agent(FunctionModel(fallback), output_type=[str, DeferredToolRequests], capabilities=[
+            Route(), ConnectionTools(tools.approval_required().defer_loading(), id='moyai_connections'),
+            ConnectionToolSearch(strategy=connection_search)])
+        prompt = 'Publish staged files for example/project on issue-8 at ' + 'a' * 40 + ' through push_files with confirmation.'
+        result = await runner.run(prompt, deps=scope, run_id=scope.root_run_id)
+        self.assertIsInstance(result.output, DeferredToolRequests)
+        self.assertEqual(len(result.output.approvals), 1)
+        call = result.output.approvals[0]
+        self.assertEqual(call.tool_name, 'github_abcd1234_push_files')
+        self.assertEqual(call.args_as_dict()['files'], files)
