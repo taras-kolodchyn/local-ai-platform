@@ -105,9 +105,12 @@ conversation is running or awaiting input.
 It records the issue, session, revision and submission locally so restarts
 can resume the same handoff. Publication uses the normal confirmation forms.
 
-For an existing issue branch, the queue runs editing and tests first, then
-starts a separate `push_files` step in the same checkout. It opens a PR in a
-third step after GitHub shows one new commit on the pinned issue branch. A
+When the issue branch is missing, Developer reads the issue and requests
+`create_branch` through the GitHub connection with native confirmation. The
+queue checks that the remote branch points to the pinned main commit before
+admitting edits. An existing branch goes directly to editing at its pinned tip.
+Developer edits and tests in the local checkout, then publishes through a
+separate `push_files` step. The queue opens a PR after GitHub shows one new commit on the pinned issue branch. A
 branch change before submission or a missing commit after publication holds
 the issue for inspection. The edit step carries the verified issue text as
 task data and still reads the issue through the selected connection.
