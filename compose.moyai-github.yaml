@@ -1,0 +1,59 @@
+x-github-relay: &github-relay
+  image: python:3.14.10-slim-bookworm@sha256:3fe1a0b6c2d6b2ebb572906cdabeca75aeb558c0c17db5ffefbcf8094871c32b
+  restart: unless-stopped
+  init: true
+  user: '65532:65532'
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  volumes: [./integrations/moyai/relay.py:/relay/relay.py:ro]
+  working_dir: /relay
+  entrypoint: [python, -B, -c]
+  command:
+    - |
+      import asyncio
+      import os
+      from relay import listen
+
+      async def forward():
+          port = int(os.environ['LISTEN_PORT'])
+          target = os.environ['TARGET_HOST']
+          target_port = int(os.environ['TARGET_PORT'])
+          async with await listen('0.0.0.0', port, target, target_port):
+              await asyncio.Event().wait()
+
+      asyncio.run(forward())
+  healthcheck:
+    test:
+      [CMD, python, -c, "import os, socket; socket.create_connection(('127.0.0.1', int(os.environ['LISTEN_PORT'])), 2).close()"]
+    interval: 3s
+    timeout: 3s
+    retries: 10
+  deploy:
+    resources:
+      limits: {memory: 64M, cpus: '0.25'}
+
+services:
+  moyai:
+    networks: [private, sandbox, github-connector]
+    depends_on:
+      github-connector: {condition: service_healthy}
+
+  github-connector:
+    <<: *github-relay
+    environment: {LISTEN_PORT: '443', TARGET_HOST: github-upstream, TARGET_PORT: '8443'}
+    depends_on:
+      github-upstream: {condition: service_healthy}
+    networks:
+      github-connector: {aliases: [api.githubcopilot.com]}
+      github-transit: {}
+
+  github-upstream:
+    <<: *github-relay
+    environment: {LISTEN_PORT: '8443', TARGET_HOST: api.githubcopilot.com, TARGET_PORT: '443'}
+    networks: [github-transit]
+
+networks:
+  github-connector:
+    internal: true
+  github-transit: {}

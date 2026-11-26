@@ -3,9 +3,19 @@
 source "$(dirname "$0")/lib.sh"
 source "$(dirname "$0")/moyai-volume.sh"
 
-moyai_compose=(docker compose --project-name local-ai-moyai --file compose.moyai.yaml)
+operation=${1:-up}
+if [[ -f .env ]]; then
+  load_env
+fi
+connector=${MOYAI_GITHUB_CONNECTOR:-0}
+[[ $connector == 0 || $connector == 1 ]] || die 'MOYAI_GITHUB_CONNECTOR must be 0 or 1'
 
-case "${1:-up}" in
+moyai_compose=(docker compose --project-name local-ai-moyai --file compose.moyai.yaml)
+if [[ $connector == 1 || $operation == down ]]; then
+  moyai_compose+=(--file compose.moyai-github.yaml)
+fi
+
+case "$operation" in
   up)
     require_command ssh-keygen
     CONTEXT_BRIDGE_REVISION=$(shasum -a 256 integrations/moyai/context_bridge.py | cut -d' ' -f1)

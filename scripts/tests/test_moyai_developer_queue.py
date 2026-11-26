@@ -76,6 +76,13 @@ class DeveloperQueueTests(unittest.TestCase):
         return tick(self.repo, lambda: self.controller, checkout or self.checkout,
                     'developer', self.state, self.save, reviewer)
 
+    def test_developer_reads_the_issue_before_using_the_checkout(self):
+        prompt = QUEUE['prompt'](self.repo.repository, 7, self.repo.sha)
+        first = 'First call search_tools to discover issue_read'
+        self.assertIn(first, prompt)
+        self.assertLess(prompt.index(first), prompt.index('git rev-parse HEAD'))
+        self.assertIn('command-line HTTP clients cannot reach GitHub', prompt)
+
     def test_checkout_precedes_submission_and_waiting_input_blocks_next_issue(self):
         result = self.check()
         self.assertEqual((result['status'], result['issue']), ('submitted', 7))

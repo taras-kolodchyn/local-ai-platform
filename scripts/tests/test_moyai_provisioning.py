@@ -117,20 +117,24 @@ class MoyaiProvisioningTests(unittest.TestCase):
             module.connect_ui('fixture-admin-key')
 
     def test_startup_reloads_changed_controller_and_requires_healthy_context(self):
-        # Config change, existing controller, Compose ps output/status, fallback up status.
+        # Config change, existing controller, context state/status, fallback status, GitHub route.
         cases = [
-            ('changed', True, 'running healthy', 0, 0),
-            ('unchanged', True, 'running healthy', 0, 0),
-            ('changed', False, '', 0, 0),
-            ('unchanged', True, 'exited', 0, 0),
-            ('unchanged', True, 'running starting', 0, 0),
-            ('unchanged', True, 'running unhealthy', 0, 7),
-            ('unchanged', True, 'running healthy\nrunning starting', 0, 0),
-            ('unchanged', True, 'running healthy', 1, 0),
+            ('changed', True, 'running healthy', 0, 0, False),
+            ('unchanged', True, 'running healthy', 0, 0, False),
+            ('changed', False, '', 0, 0, False),
+            ('unchanged', True, 'exited', 0, 0, False),
+            ('unchanged', True, 'running starting', 0, 0, False),
+            ('unchanged', True, 'running unhealthy', 0, 7, False),
+            ('unchanged', True, 'running healthy\nrunning starting', 0, 0, False),
+            ('unchanged', True, 'running healthy', 1, 0, False),
+            ('changed', True, 'running healthy', 0, 0, True),
+            ('unchanged', False, 'running starting', 0, 0, True),
         ]
-        for changed, existing, state, ps_status, up_status in cases:
-            with self.subTest(state=state, ps_status=ps_status, changed=changed), tempfile.TemporaryDirectory() as directory:
+        for changed, existing, state, ps_status, up_status, github_route in cases:
+            with self.subTest(state=state, changed=changed, github_route=github_route), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
+                if github_route:
+                    (root / '.env').write_text('MOYAI_GITHUB_CONNECTOR=1\n')
                 (root / 'scripts').mkdir()
                 bridge = root / 'integrations/moyai/context_bridge.py'
                 bridge.parent.mkdir(parents=True)
@@ -145,8 +149,7 @@ with open(os.environ['COMMAND_LOG'], 'a') as stream:
     stream.write(json.dumps(['python3', *sys.argv[1:]]) + '\\n')
 if sys.argv[1:] == ['scripts/moyai-prepare.py']:
     print(os.environ['CONFIG_CHANGE'])
-elif sys.argv[1:] not in (['scripts/moyai-prepare.py', '--ui', 'connect'],
-        ['scripts/build-images.py', '--project-name', 'local-ai-moyai', '--file', 'compose.moyai.yaml']):
+elif sys.argv[1:] != ['scripts/moyai-prepare.py', '--ui', 'connect'] and sys.argv[1] != 'scripts/build-images.py':
     raise SystemExit(1)
 '''.replace('/usr/bin/env python3_fixture', str(Path(os.sys.executable))))
                 (binaries / 'ssh-keygen').write_text('#!/bin/sh\nexit 0\n')
@@ -176,7 +179,10 @@ if sys.argv[-1] == 'repository-context':
                 self.assertEqual('Local Moyai is ready' in result.stdout, up_status == 0)
                 calls = [json.loads(line) for line in log.read_text().splitlines()]
                 compose = ['compose', '--project-name', 'local-ai-moyai', '--file', 'compose.moyai.yaml']
+                if github_route:
+                    compose.extend(['--file', 'compose.moyai-github.yaml'])
                 connected = calls.index(['python3', 'scripts/moyai-prepare.py', '--ui', 'connect'])
+                self.assertIn(['python3', 'scripts/build-images.py'] + compose[1:], calls[:connected])
                 self.assertIn(compose + ['up', '--detach', '--no-build', '--wait', '--wait-timeout', '300'],
                               calls[:connected])
                 expected = [compose + ['ps', '--all', '--format', '{{.State}} {{.Health}}', 'repository-context']]
@@ -191,5 +197,36 @@ if sys.argv[-1] == 'repository-context':
                 forced = [call for call in calls if '--force-recreate' in call]
                 self.assertEqual(bool(forced), changed == 'changed' and existing)
                 if forced:
-                    self.assertEqual(forced[0][-1], 'moyai')
-                    self.assertIn('--no-deps', forced[0])
+                    self.assertEqual(forced, [compose + ['up', '--detach', '--wait', '--wait-timeout',
+                                                         '120', '--force-recreate', '--no-deps', 'moyai']])
+
+    def test_github_relay_is_opt_in_and_does_not_join_the_sandbox(self):
+        def config(*overlays):
+            files = ['--file', 'compose.moyai.yaml']
+            for overlay in overlays:
+                files.extend(['--file', overlay])
+            output = subprocess.check_output(
+                ['docker', 'compose', '--env-file', '.env.example', *files, 'config', '--format', 'json'],
+                cwd=ROOT, text=True, timeout=15,
+            )
+            return json.loads(output)
+
+        offline = config()['services']
+        self.assertEqual(set(offline['moyai']['networks']), {'private', 'sandbox'})
+        self.assertNotIn('github-connector', offline)
+
+        network = 'github-connector'
+        transit = 'github-transit'
+        connected = config('compose.moyai-github.yaml', 'compose.moyai-volume-current.yaml')
+        services = connected['services']
+        self.assertTrue(connected['networks'][network]['internal'])
+        self.assertEqual(set(services['moyai']['networks']), {'private', 'sandbox', network})
+        self.assertEqual(set(services['moyai-sandbox']['networks']), {'sandbox'})
+        self.assertEqual({name for name, service in services.items() if network in service.get('networks', {})},
+                         {'moyai', network})
+        self.assertEqual({name for name, service in services.items() if transit in service.get('networks', {})},
+                         {network, 'github-upstream'})
+        self.assertEqual(services[network]['networks'][network]['aliases'], ['api.githubcopilot.com'])
+        self.assertEqual(services['github-upstream']['environment']['TARGET_HOST'], 'api.githubcopilot.com')
+        self.assertFalse(services[network].get('ports'))
+        self.assertFalse(services['github-upstream'].get('ports'))
