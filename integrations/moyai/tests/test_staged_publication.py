@@ -19,7 +19,7 @@ class StagedPublicationTests(IsolatedAsyncioTestCase):
                      + ' through push_files with confirmation.', run_id='r',
                      deps=Values(session_id='s', workspace_key='w', turn_id='t', root_run_id='r',
                                  visibility='private', surface='web', grants=[grant]))
-        params = Values(function_tools=[Values(name='search_tools')])
+        params = Values(function_tools=[Values(name='github_abcd1234_push_files')])
         request = Values(messages=[], model_request_parameters=params)
 
         async def route():
@@ -28,6 +28,7 @@ class StagedPublicationTests(IsolatedAsyncioTestCase):
         discovery = (await route()).tool_calls[0]
         self.assertEqual(discovery.tool_name, 'search_tools')
         request.messages.append(ModelRequest(parts=[ToolReturnPart('search_tools', 'found', discovery.tool_call_id)]))
+        params.function_tools = [Values(name='search_tools')]
         self.assertFalse((await route()).tool_calls)
         params.function_tools = [Values(name='github_abcd1234_push_files')]
         call = (await route()).tool_calls[0]

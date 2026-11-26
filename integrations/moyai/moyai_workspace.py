@@ -282,18 +282,24 @@ class SessionWorkspace(RepositoryWorkflow):
         prefix = 'publish-' + ctx.deps.turn_id
         parts = [part for message in request.messages for part in message.parts
                  if isinstance(part, (ToolReturnPart, RetryPromptPart))]
-        if any(part.tool_call_id == prefix for part in parts):
+        write_result = next((part for part in parts if part.tool_call_id == prefix), None)
+        if write_result:
+            if not isinstance(write_result, ToolReturnPart) or write_result.outcome != 'success':
+                return finish('The native publication call was declined or failed. Inspect the saved activity.')
             return finish('The publication request finished. The queue will check the remote branch.')
         offered = {tool.name for tool in request.model_request_parameters.function_tools}
-        if name in offered:
+        discovery = next((part for part in parts if part.tool_call_id == prefix + '-discover'), None)
+        # Deferred connection names can be listed here before the SDK admits
+        # them. Discovery has to succeed in this turn before using the schema.
+        if discovery is None:
+            call = ToolCallPart('search_tools', {'queries': ['push_files']}, tool_call_id=prefix + '-discover')
+        elif isinstance(discovery, ToolReturnPart) and discovery.outcome == 'success' and name in offered:
             snapshot = await self.staged_files(*scope_of(ctx), base)
             if 'files' not in snapshot:
                 return finish(snapshot['reason'])
             args = {'owner': owner, 'repo': repo, 'branch': 'issue-' + number,
                     'message': 'Apply changes for issue #' + number, 'files': snapshot['files']}
             call = ToolCallPart(name, args, tool_call_id=prefix)
-        elif 'search_tools' in offered and not any(part.tool_call_id == prefix + '-discover' for part in parts):
-            call = ToolCallPart('search_tools', {'queries': ['push_files']}, tool_call_id=prefix + '-discover')
         else:
             return finish('The selected GitHub connection did not offer push_files.')
         return ModelResponse(parts=[call], finish_reason='tool_call', provider_name='local-controller')
