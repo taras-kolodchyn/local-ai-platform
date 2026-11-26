@@ -131,6 +131,13 @@ Start the local platform, then follow the token and client-header steps in
 the connected-mode guide. `make connected-smoke` checks the nine advertised
 tools and log redaction. [Connected-mode runbook](connected.md)
 
+## A queued GitHub write fails after confirmation
+
+Check the saved turn and GitHub for the actual branch, PR or review before
+retrying. Check the installation token's expiration and renew it if needed.
+Use a fresh private chat with the updated connection revision.
+[Queue recovery](moyai-github-issues.md#recover-a-queued-issue)
+
 ## A host Python upgrade breaks the tests
 
 `make test` uses Python 3.11–3.14 and prefers 3.14. To select an installed

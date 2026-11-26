@@ -1,10 +1,15 @@
-# Publish a verified external change from a GitHub issue
+# GitHub issue workflows
+
+The Developer and Verifier queue takes a labeled issue through a linked PR,
+review on the exact commit, and CI on `main`. Run the queue on the Mac and
+confirm GitHub writes in private chats. [Queue setup](#configure-github-write-connections)
 
 The optional foreground publisher runs on the Mac. It can turn one open issue
 in a supported external repository into a draft PR using a checked Moyai patch.
 A fresh installation has no publication target. Start the publisher separately
-when you need it.
-For read-only GitHub access through MCP, use [connected mode](connected.md).
+when you need it. [Draft publisher setup](#select-the-external-project)
+
+For read-only GitHub access through LiteLLM, use [connected mode](connected.md).
 
 ## Enable the native GitHub connection on the Mac
 
@@ -85,6 +90,39 @@ Select the same connection on the chat's first message or schedule. Prepare
 a new chat for a different revision or connection. A used workspace keeps its
 existing files.
 
+## Configure GitHub write connections
+
+Enable the [native GitHub connection](#enable-the-native-github-connection-on-the-mac).
+Create separate GitHub Apps for Developer and Verifier. For each installation,
+choose **Only select repositories** and select the target repository. Issue
+installation access tokens scoped to that repository and to the role's
+permissions. GitHub installation tokens expire after one hour.
+
+| Role | GitHub repository permissions | Allowed tools in Moyai |
+| --- | --- | --- |
+| Developer | Contents, issues and pull requests write | `issue_read`, `add_issue_comment`, `create_branch`, `push_files`, `create_pull_request` |
+| Verifier | Contents, issues and checks read, pull requests write | `issue_read`, `pull_request_read`, `pull_request_review_write` |
+
+Enroll each role through the authenticated local `POST /api/connections`
+endpoint. Use `kind: github`, `enabled: true`, `shared: false` and
+`read_only: false`. Pass the role's installation token as `credential`,
+set `policy.allowed_tools` to the tools in the table, and set
+`policy.require_approval: true`. Record the returned connection UUID.
+[Local API client](../integrations/moyai/client.py)
+
+Set `MOYAI_VERIFIER_CONNECTION_ID` to the Verifier connection UUID in the
+local `.env` and run `make up` to enable review publication. An unset value
+keeps review publication disabled. Keep App private keys on the Mac and pass
+installation tokens through the credential field.
+[GitHub installation access tokens](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-an-installation-access-token-for-a-github-app)
+
+To renew a write connection, issue a fresh token for the same App,
+repository and role. In **Settings → Connections**, open **Edit** for that
+connection, enter the **Replacement token**, and save. The connection UUID
+stays the same, and the edit creates a new revision. Start a fresh private chat
+or let the queue prepare one with that revision. Use the existing chat's
+confirmation form while its token is current.
+
 ## Hand off a labeled issue to Developer
 
 With the platform running, sign in with the GitHub CLI as the issue author
@@ -96,12 +134,12 @@ native confirmations and allow `issue_read`, `add_issue_comment`,
 make moyai-developer-queue REPO=owner/project CONNECTION="$DEVELOPER_CONNECTION" WATCH=1
 ```
 
-Leave the process running and add `moyai:ready` to an open issue. It picks
-the oldest eligible issue and prepares a fresh private checkout of verified
-`main` or the existing `issue-<number>` branch. Developer reads the issue
-through the selected GitHub connection before using the local checkout. Each
-repository on the Mac has one active handoff. The queue waits while the
-conversation is running or awaiting input.
+Leave the process running and add `moyai:ready` to an open issue. The queue
+checks once per minute for the oldest eligible issue and prepares a private
+checkout of verified `main` or the existing `issue-<number>` branch. Developer
+reads the issue through the selected GitHub connection before using the local
+checkout. Each repository on the Mac has one active handoff. The queue waits
+while the conversation is running or awaiting input.
 It records the issue, session, revision and submission locally so restarts
 can resume the same handoff. Publication uses the normal confirmation forms.
 
@@ -122,13 +160,15 @@ the recorded tree matches the index. If staging or the test receipt is
 incomplete, Developer gets up to two local repair turns in the same checkout
 to stage the intended paths, rerun the issue tests and record the tree.
 An unsupported snapshot or exhausted retries hold the issue for inspection.
-The publication step checks the tree again before opening confirmation. It reads the changed files and supplies their exact UTF-8
-contents to the native confirmation form, including final newlines. Inspect
-the branch and proposed changes before choosing **Allow this action** and
-**Continue**. An empty or changed checkout, a missing test marker, or an
-unsupported change stops the handoff. This path supports up to 64 regular,
-non-executable text files (128 KiB combined) added or modified on an existing
-issue branch.
+Before opening the confirmation form, the publication step checks the tree
+again. An empty or changed checkout, a missing test marker, or an unsupported
+change stops the handoff. `push_files` sends the full UTF-8 contents of up to
+64 added or modified regular, non-executable text files (128 KiB combined).
+
+Check the target branch, file list and complete contents against the tested
+checkout, including final newlines. If they match, choose **Allow this action**
+and **Continue**. Decline a request with extra changes and follow the
+[recovery steps](#recover-a-queued-issue).
 
 Omit `WATCH=1` for one check. The queue skips issues with an open PR from
 `issue-<number>`. An issue whose turn finished without such a PR stays held.
@@ -154,10 +194,29 @@ The queue sends a PR linked to the issue and opened by the Developer App to
 a separate private Verifier chat. The review receives the exact head SHA and
 uses the normal confirmation form. A new head SHA needs a new review.
 If the previous chat is awaiting confirmation, resolve that prompt first.
-The queue reports `ready_to_merge` after
-the Verifier App approves that SHA and the required job succeeds on the PR.
-After merging through GitHub, the queue reports `main_green` when the
-merge commit passes the required push job on `main` and the issue is closed.
+The queue reports `ready_to_merge` after the Verifier App approves that SHA
+and the required job succeeds on the PR.
+Merge the linked PR in GitHub under the repository's merge rules. The queue
+reports `main_green` when the merge commit passes the required push job on
+`main` and the issue closes.
+
+## Recover a queued issue
+
+1. Inspect the saved activity and check GitHub before repeating an action.
+   Compare the issue branch tip, any linked PR, and any review on the PR's
+   current head. A failed turn can follow a successful write.
+2. Once the prior turn has ended, renew the affected write connection if its
+   token expired. Use a new private chat for the new revision. A confirmation
+   from the old run belongs to its original connection revision.
+3. If there is no published commit or PR, remove `moyai:ready`, let the queue
+   check once to clear its hold, then reapply the label. Leave the existing
+   issue branch in place. The queue pins its current tip for the fresh chat.
+4. If a verified commit already exists on the issue branch, reuse that commit
+   when opening or continuing the linked PR. The queue skips issues with an
+   open PR during pickup. If the original queue entry has ended, use a fresh
+   private Verifier chat for the existing PR and verify the review on its
+   exact head and the required PR check before merging. Verify the push CI on
+   the merge commit and check that the issue closes.
 
 ## Native schedules
 
@@ -172,6 +231,9 @@ tick stays skipped on retry. The next scheduled tick can start when the
 conversation is idle.
 
 ### Renew a private GitHub reader
+
+These commands enroll or refresh read-only connections. For Developer and
+Verifier publication, use [write connection renewal](#configure-github-write-connections).
 
 From the repository root, configure the registered application for the selected repository.
 Enroll a separate private connection for each role and select it on the first message in a new private chat.
@@ -193,11 +255,7 @@ GitHub installation tokens expire one hour after issuance.
 
 ### Confirmed pull request reviews
 
-Set `MOYAI_VERIFIER_CONNECTION_ID` in the local `.env` to the UUID of the
-dedicated private GitHub connection, then run `make up`. Leave it unset to
-keep review publication disabled. Select that connection in the private
-Verifier chat. Its GitHub installation needs pull request write access to
-the target repository. Explicitly allow `pull_request_review_write` on the
-connection and enable required approvals. Check the repository, PR number,
-review event and commit SHA in the proposed action. Choose **Allow this action**
-and **Continue** to submit it. Verify the published review on GitHub before merge.
+Select the [private Verifier connection](#configure-github-write-connections)
+in the Verifier chat. Check the repository, PR number, review event and commit
+SHA in the proposed action. Choose **Allow this action** and **Continue** to
+submit it. Verify the published review on GitHub before merge.
