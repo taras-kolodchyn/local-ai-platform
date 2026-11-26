@@ -138,6 +138,10 @@ make moyai-developer-queue REPO=owner/project CONNECTION="$DEVELOPER_CONNECTION"
   VERIFIER_APP="$VERIFIER_APP_SLUG" CI_WORKFLOW=test.yml CI_JOB=unit WATCH=1
 ```
 
+Before confirmation, the queue formats `Closes #<number>` as the final Markdown
+paragraph of the PR description. GitHub must list the issue in the PR’s
+closing references before the queue starts review.
+
 The queue sends a PR linked to the issue and opened by the Developer App to
 a separate private Verifier chat. The review receives the exact head SHA and
 uses the normal confirmation form. A new head SHA needs a new review.

@@ -17,6 +17,7 @@ from engineering_skills import EngineeringSkills, LOAD, SELECT_SKILLS, force_cal
 with workflow.unsafe.imports_passed_through():
     from github_issue import matches_target, private_issue_root, requested_issue_url
 from local_config import workspace_directory
+from pull_description import format_pull_response
 from repository_backend import SSH_ARGS, projected_tree_hash, scoped_tree, ssh_json
 from repository_ledger import RepositoryError
 from repository_workflow import RepositoryWorkflow, WRITES, allowed, connected_item, identity, scope_of
@@ -329,6 +330,10 @@ class SessionWorkspace(RepositoryWorkflow):
             response = analysis_mode.chat_response(ctx, response)
         else:
             response = await super().after_model_request(ctx, request_context=request_context, response=response)
+            if (any(call.tool_name.endswith('_create_pull_request') for call in response.tool_calls)
+                    and private_issue_root(ctx)
+                    and (not workflow.in_workflow() or workflow.patched('local-issue-closing-paragraph-v1'))):
+                response = format_pull_response(ctx, request_context, response)
         tools = request_context.model_request_parameters.function_tools
         if (len(tools) == 1 and tools[0].name == 'open_repository'
                 and (request_context.model_settings or {}).get('tool_choice') == ['open_repository']):
