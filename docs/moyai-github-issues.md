@@ -116,8 +116,13 @@ the issue for inspection. The edit step carries the verified issue text as
 task data and still reads the issue through the selected connection.
 
 After a passing test run, Developer records the staged tree in the sandbox at
-`refs/workflow/tested`. The publication step compares that tree with the current
-index and checkout. It reads the changed files and supplies their exact UTF-8
+`refs/workflow/tested`. Before publication, the queue verifies that the index has
+changes against the pinned revision, that tracked edits are staged, and that
+the recorded tree matches the index. If staging or the test receipt is
+incomplete, Developer gets up to two local repair turns in the same checkout
+to stage the intended paths, rerun the issue tests and record the tree.
+An unsupported snapshot or exhausted retries hold the issue for inspection.
+The publication step checks the tree again before opening confirmation. It reads the changed files and supplies their exact UTF-8
 contents to the native confirmation form, including final newlines. Inspect
 the branch and proposed changes before choosing **Allow this action** and
 **Continue**. An empty or changed checkout, a missing test marker, or an
