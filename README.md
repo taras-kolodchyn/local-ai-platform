@@ -209,6 +209,7 @@ PostgreSQL/pgvector stores source chunks and reusable embeddings for retrieval.
 | To do this | Enable this workflow |
 | --- | --- |
 | Read GitHub from an MCP client | Configure `.env.connected` and run `make connected-up`. The official GitHub MCP server exposes nine allowlisted read-only tools through LiteLLM. `make connected-down` stops it. [Connected mode](docs/connected.md) |
+| Take a labeled issue through review and CI | Enable the native GitHub connection, start the Developer and Verifier queue on the Mac, and add `moyai:ready`. Confirm GitHub writes in the private chats. [Issue queue and credential setup](docs/moyai-github-issues.md#configure-github-write-connections) |
 | Publish a verified change from a supported external project | Set the target repository in the local configuration, start the host publisher, and submit its issue URL in a private Moyai chat. The host verifies the patch before opening a draft PR. [Prerequisites and publication](docs/moyai-github-issues.md) |
 
 Ordinary `make up` starts Moyai with local tools and no external publisher. The
