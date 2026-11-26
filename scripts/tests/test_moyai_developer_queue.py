@@ -19,6 +19,7 @@ class GitHub:
         self.sha = 'a' * 40
         self.branches = {}
         self.commits = {}
+        self.has_developer_comment = Mock(return_value=False)
 
     def candidates(self):
         return self.ready.copy()
@@ -91,12 +92,38 @@ class DeveloperQueueTests(unittest.TestCase):
         return tick(self.repo, lambda: self.controller, checkout or self.checkout,
                     'developer', self.state, self.save, reviewer)
 
-    def test_developer_reads_the_issue_before_using_the_checkout(self):
-        prompt = QUEUE['prompt'](self.repo.repository, 7, self.repo.sha)
-        first = 'First call search_tools to discover issue_read'
-        self.assertIn(first, prompt)
-        self.assertLess(prompt.index(first), prompt.index('git rev-parse HEAD'))
-        self.assertIn('command-line HTTP clients cannot reach GitHub', prompt)
+    def test_new_branch_is_created_remotely_before_editing(self):
+        created = self.check()
+        self.assertEqual(created['stage'], 'create_branch')
+        self.assertEqual(self.events[1][2], 'main')
+        message = self.controller.requests[0]['prompt']
+        self.assertLess(message.index('issue_read'), message.index('discover create_branch'))
+        self.assertIn('branch issue-7, and from_branch main', message)
+        self.assertNotIn('push_files', message)
+        self.assertNotIn('requested edits', message)
+        turns = self.controller.sessions[created['session']]['turns']
+        turns[0]['status'] = 'failed'  # GitHub may already have accepted the confirmed write.
+        self.repo.branches[7] = self.repo.sha
+        self.state = deepcopy(self.saved)
+        self.repo.has_developer_comment.return_value = True
+        reviewer = Mock(settings=QUEUE['ReviewSettings']('separate', 'developer-app', 'verifier-app'))
+        edited = self.check(reviewer=reviewer)
+        self.assertEqual(edited['stage'], 'edit')
+        self.assertEqual(edited['session'], created['session'])
+        self.assertIn(self.repo.issue_snapshot(7)['body'], self.controller.requests[1]['prompt'])
+        self.repo.has_developer_comment.assert_called_once_with(7, 'developer-app')
+        self.assertNotIn('start comment', self.controller.requests[1]['prompt'])
+        self.assertNotIn('create_branch', self.controller.requests[1]['prompt'])
+        turns[0]['status'] = 'completed'
+        self.assertEqual(self.check(reviewer=reviewer)['stage'], 'publish')
+        self.assertIn('push_files', self.controller.requests[2]['prompt'])
+
+    def test_moved_remote_branch_blocks_editing(self):
+        created = self.check()
+        self.repo.branches[7] = 'c' * 40
+        self.controller.sessions[created['session']]['turns'][0]['status'] = 'completed'
+        self.assertEqual(self.check()['status'], 'branch_changed')
+        self.assertEqual(len(self.controller.requests), 1)
 
     def test_checkout_precedes_submission_and_waiting_input_blocks_next_issue(self):
         result = self.check()
@@ -111,8 +138,7 @@ class DeveloperQueueTests(unittest.TestCase):
         self.assertEqual(len(self.events), 3)
         chat.pop('pending')
         chat['turns'][0]['status'] = 'completed'
-        self.repo.pulls.add(7)
-        self.assertEqual(self.check()['status'], 'pull_open')
+        self.assertEqual(self.check()['status'], 'branch_missing')
         self.assertEqual(self.check()['issue'], 9)
 
     def test_restarts_without_duplicating_an_acknowledged_message(self):
@@ -151,10 +177,11 @@ class DeveloperQueueTests(unittest.TestCase):
         self.assertEqual(result['session'], 'chat-2')
         self.assertEqual([event[0] for event in self.events], ['session', 'checkout', 'session', 'checkout', 'submit'])
 
-    def test_developer_completion_advances_to_verifier_before_next_issue(self):
+    def test_legacy_inflight_turn_advances_to_verifier_before_next_issue(self):
         reviewer = Mock(settings=QUEUE['ReviewSettings']('separate', 'developer-app', 'verifier-app'))
         reviewer.find.return_value = 10
         result = self.check(reviewer=reviewer)
+        self.state['active'].pop('stage')  # Jobs submitted by the previous queue version.
         self.controller.sessions[result['session']]['turns'][0]['status'] = 'completed'
         self.assertEqual(self.check(reviewer=reviewer), {'status': 'review_ready', 'issue': 7, 'pull': 10})
         reviewer.find.assert_called_once_with(7)
@@ -256,14 +283,15 @@ class DeveloperQueueTests(unittest.TestCase):
         chat = self.controller.sessions[result['session']]
         chat['turns'][0]['status'] = 'completed'
         chat['turns'].insert(0, {'id': 'guidance', 'status': 'included'})
-        self.repo.pulls.add(7)
-        self.assertEqual(self.check()['status'], 'pull_open')
+        self.repo.branches[7] = self.repo.sha
+        self.assertEqual(self.check()['stage'], 'edit')
+        self.assertIn('start comment', self.controller.requests[1]['prompt'])
 
     def test_held_issue_becomes_eligible_when_label_is_removed_and_reapplied(self):
         self.repo.ready = [7]
         result = self.check()
         self.controller.sessions[result['session']]['turns'][0]['status'] = 'failed'
-        self.assertEqual(self.check()['status'], 'held')
+        self.assertEqual(self.check()['status'], 'branch_missing')
         self.assertEqual(self.check()['status'], 'idle')
         self.repo.ready = []
         self.assertEqual(self.check()['status'], 'idle')
