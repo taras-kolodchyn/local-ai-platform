@@ -9,3 +9,4 @@
 !integrations/moyai/sshd_config
 !integrations/moyai/sandbox-entrypoint.sh
 !integrations/moyai/staged_files.py
+!integrations/moyai/session_accounts.py

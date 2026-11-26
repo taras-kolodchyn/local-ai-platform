@@ -51,8 +51,10 @@ attached to the conversation. [Inference configuration](../integrations/moyai/in
 
 Only the Moyai web port, `127.0.0.1:8787`, is published from its Compose project.
 The controller and sandbox share an internal network. The sandbox has its own
-workspace volume and a nonroot user. Conversation directories share that user, so
-this deployment assumes one trusted operator. The sandbox has no host home,
+workspace volume. The controller selects a separate unprivileged SSH login for
+each conversation and connection scope. Linux directory permissions isolate
+their checkouts within the shared sandbox. The Mac remains under the control
+of one trusted operator. The sandbox has no host home,
 Docker socket, writable host checkout or LiteLLM credentials mounted into it.
 
 The controller's inference key is scoped to `local-qwen`, `/v1/responses` and

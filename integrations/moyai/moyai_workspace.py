@@ -18,7 +18,7 @@ with workflow.unsafe.imports_passed_through():
     from github_issue import matches_target, private_issue_root, requested_issue_url
 from local_config import workspace_directory
 from pull_description import format_pull_response
-from repository_backend import SSH_ARGS, projected_tree_hash, scoped_tree, ssh_json
+from repository_backend import SSH_ARGS, prepare_session, projected_tree_hash, scoped_ssh_args, scoped_tree, ssh_json
 from repository_ledger import RepositoryError
 from repository_workflow import RepositoryWorkflow, WRITES, allowed, connected_item, identity, scope_of
 
@@ -61,18 +61,15 @@ def listed_open_tool(ctx, request, repository_id):
 
 class SessionBackend(SSHWorkspaceBackend):
     def __init__(self, directory):
-        super().__init__(DESTINATION, working_dir=directory, ssh_args=SSH_ARGS)
+        super().__init__(DESTINATION, working_dir=directory, ssh_args=scoped_ssh_args(directory))
         self.directory = directory
         self.ready = False
 
-    async def working_dir(self):
+    async def _resolve_working_dir(self, *, timeout):
         if not self.ready:
-            parent = SSHWorkspaceBackend(DESTINATION, working_dir='/workspace', ssh_args=SSH_ARGS)
-            result = await parent.run(['mkdir', '-p', '--', self.directory], timeout=15)
-            if result.exit_code:
-                raise RuntimeError('Could not create the local conversation workspace')
+            await prepare_session(self.directory)
             self.ready = True
-        return await super().working_dir()
+        return await super()._resolve_working_dir(timeout=timeout)
 
 
 class AnalysisSessionBackend:
@@ -80,17 +77,15 @@ class AnalysisSessionBackend:
 
     def __init__(self, directory):
         self.directory = directory
-        self.session = SSHWorkspaceBackend(DESTINATION, working_dir=directory, ssh_args=SSH_ARGS)
+        self.session = SSHWorkspaceBackend(DESTINATION, working_dir=directory, ssh_args=scoped_ssh_args(directory))
         self.ref = self.session.ref
         self.selected = None
 
     async def backing(self):
         if self.selected is None:
-            empty = SSHWorkspaceBackend(DESTINATION, working_dir='/opt/moyai-analysis-empty', ssh_args=SSH_ARGS)
-            status = await empty.run(['test', '-d', self.directory], timeout=15)
-            if status.exit_code not in (0, 1):
-                raise RuntimeError('Could not inspect the analysis workspace')
-            self.selected = self.session if status.exit_code == 0 else empty
+            exists = await prepare_session(self.directory, create=False)
+            self.selected = self.session if exists else SSHWorkspaceBackend(
+                DESTINATION, working_dir='/opt/moyai-analysis-empty', ssh_args=scoped_ssh_args(self.directory))
         return self.selected
 
     async def working_dir(self):
@@ -154,7 +149,9 @@ class SessionWorkspace(RepositoryWorkflow):
     @durable_operation('analysis_workspace_has_files')
     async def analysis_workspace_has_files(self, session: str, authority: str) -> bool:
         path = workspace_directory(session, authority)
-        observer = SSHWorkspaceBackend(DESTINATION, working_dir='/opt/moyai-analysis-empty', ssh_args=SSH_ARGS)
+        if not await prepare_session(path, create=False):
+            return False
+        observer = SSHWorkspaceBackend(DESTINATION, working_dir=path, ssh_args=scoped_ssh_args(path))
         probe = 'import os,sys; p=sys.argv[1]; print(int(os.path.isdir(p) and bool(os.listdir(p))))'
         result = await observer.run(['python', '-I', '-c', probe, path], timeout=15)
         if result.exit_code or result.stdout.strip() not in {'0', '1'}:
@@ -360,7 +357,7 @@ class SessionWorkspace(RepositoryWorkflow):
     def get_instructions(self):
         return [
             'Local coding profile: your files and shell commands run as a nonroot user in a local Linux '
-            'SSH sandbox. The conversation has its own working directory. Modal, AWS, desktop/browser '
+            'SSH sandbox. Run project commands and tests from the supplied working directory. Modal, AWS, desktop/browser '
             'control are unavailable in this profile. If offered open_github_issue for a user-submitted issue '
             'URL, pass that exact URL and report any intake error. Use native file '
             'and shell tools for coding and tests; use save_artifact for downloadable deliverables. '

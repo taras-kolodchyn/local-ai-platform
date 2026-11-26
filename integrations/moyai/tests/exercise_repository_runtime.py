@@ -9,7 +9,7 @@ import uuid
 
 from pydantic_ai_harness.ssh_workspace import SSHWorkspaceBackend
 from local_config import workspace_directory
-from moyai_workspace import DESTINATION, SSH_ARGS
+from moyai_workspace import DESTINATION, SSH_ARGS, SessionBackend
 import repository_backend as implementation
 from repository_backend import RepositoryBackend
 from repository_ledger import Ledger, RepositoryError, authentic_receipt
@@ -67,7 +67,7 @@ async def exercise(binding):
 
         # A real pre-launch failed check must be settled and allow a subsequent repair.
         resumed.ledger.begin(*scope,[{'content':'Acceptance: retry delays never exceed 30,000 ms'}])
-        workspace = SSHWorkspaceBackend(DESTINATION,working_dir=workspace_directory(*scope),ssh_args=SSH_ARGS)
+        workspace = SessionBackend(workspace_directory(*scope))
         library = resumed.integration_import(binding)
         assert library, 'The selected profile must expose the pinned Rust library'
         regression = library['code'] + '\n#[test] fn retry_ceiling(){assert_eq!(bounded_backoff_ms(10),30000);}\n'
@@ -125,8 +125,13 @@ target.write_text(sys.argv[1])
         implementation.CHECK_TIMEOUT = original_timeout
         async def remove_workspace(scope):
             # Called only after trusted ledger reconciliation confirms stopped work.
-            workspace = SSHWorkspaceBackend(DESTINATION,working_dir='/workspace',ssh_args=SSH_ARGS)
-            removed = await workspace.run(['rm','-rf','--',workspace_directory(*scope)],timeout=20)
+            directory = workspace_directory(*scope)
+            workspace = SessionBackend(directory)
+            cleared = await workspace.run(['find', '.', '-depth', '-mindepth', '1', '-delete'], timeout=20)
+            if cleared.exit_code:
+                raise RuntimeError('Could not empty disposable runtime probe')
+            control = SSHWorkspaceBackend(DESTINATION, working_dir='/workspace', ssh_args=SSH_ARGS)
+            removed = await control.run(['rmdir', '--', directory], timeout=20)
             if removed.exit_code:
                 raise RuntimeError('Could not clean up disposable runtime probe')
         try:

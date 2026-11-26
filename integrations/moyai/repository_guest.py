@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Fixed, nonroot, offline repository operations. Only controller SSH invokes this.
 
-This helper is not a hostile-code or multi-tenant security boundary: conversations
-share uid 10001. The controller owns the authoritative ledger and rechecks trees.
+The SSH login has access to one checkout. The controller owns the authoritative
+ledger and rechecks trees.
 """
 import base64
 from contextlib import contextmanager
@@ -199,8 +199,9 @@ def open_directory(path):
         raise ValueError('absolute internal directory required')
     descriptor = os.open('/', os.O_RDONLY | os.O_DIRECTORY)
     try:
-        for part in path.parts[1:]:
-            following = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor)
+        for index, part in enumerate(path.parts[1:], start=1):
+            access = os.O_RDONLY if index == len(path.parts) - 1 else getattr(os, 'O_PATH', os.O_RDONLY)
+            following = os.open(part, access | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor)
             os.close(descriptor)
             descriptor = following
         return descriptor
@@ -740,7 +741,7 @@ class Guest:
         argv = ['/opt/rust/bin/cargo', 'test', '--offline', '--locked', '--jobs', '1',
                 '--manifest-path', str(project/'Cargo.toml'), '--target-dir', str(target),
                 '--no-run', '--message-format=json', '--all-targets']
-        env = {'PATH': '/opt/rust/bin:/usr/bin:/bin', 'HOME': '/home/agent', 'CARGO_HOME': '/opt/rust-cargo',
+        env = {'PATH': '/opt/rust/bin:/usr/bin:/bin', 'HOME': str(Path.home()), 'CARGO_HOME': '/opt/rust-cargo',
                'RUSTUP_HOME': '/opt/rustup', 'RUSTUP_TOOLCHAIN': '1.100.0', 'CARGO_NET_OFFLINE': 'true',
                'CARGO_BUILD_JOBS': '1', 'CARGO_INCREMENTAL': '0', 'RUST_BACKTRACE': '0',
                'CARGO_TERM_COLOR': 'never', 'TMPDIR': str(target.parent), 'LANG': 'C.UTF-8'}

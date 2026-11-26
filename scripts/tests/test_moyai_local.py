@@ -84,12 +84,13 @@ class MoyaiConfigTests(unittest.TestCase):
         self.assertTrue(hasattr(config, 'valid_workspace_states'), 'Trusted workspace observation checks are missing')
         check = config.valid_workspace_states
         hashes = {'calc.py': 'fixture-program-hash', 'test_calc.py': 'fixture-tests-hash'}
-        first = {'directory': '/workspace/first', 'uid': 10001, 'files': hashes}
-        other = {'directory': '/workspace/other', 'uid': 10001,
+        first = {'directory': '/workspace/first', 'uid': 200001, 'files': hashes}
+        other = {'directory': '/workspace/other', 'uid': 200002,
                  'files': {'calc.py': None, 'test_calc.py': None}}
         self.assertTrue(check(first, copy.deepcopy(first), other, hashes))
         for continued, second in [(first | {'files': {}}, other), (first, other | {'directory': '/workspace/first'}),
-                                  (first, other | {'files': hashes}), (first, other | {'uid': 0})]:
+                                  (first, other | {'files': hashes}), (first, other | {'uid': 0}),
+                                  (first, other | {'uid': first['uid']})]:
             with self.subTest(continued=continued, second=second):
                 self.assertFalse(check(first, continued, second, hashes))
 

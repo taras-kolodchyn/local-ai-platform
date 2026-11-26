@@ -147,7 +147,8 @@ def publication_index(session, job):
         raise QueueError('Cannot verify the private checkout for this edit.')
     result = subprocess.check_output(
         ['docker', 'compose', '--project-name', 'local-ai-moyai', '-f', str(ROOT / 'compose.moyai.yaml'),
-         'exec', '-T', '--user', '10001', 'moyai-sandbox', 'python3', '-I', '/opt/local-repository/staged_files.py'],
+         'exec', '-T', '--user', 'workspace', 'moyai', 'python', '/opt/moyai-local/staged_files.py',
+         '--session-index'],
         input=json.dumps({'directory': directory[1], 'base': job['sha'], 'check_index': True}).encode(),
         stderr=subprocess.PIPE, timeout=30)
     return json.loads(result).get('status', 'unsupported')

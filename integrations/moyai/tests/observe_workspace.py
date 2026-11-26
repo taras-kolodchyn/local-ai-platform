@@ -11,7 +11,8 @@ from pydantic_ai.workspaces import WorkspaceRef
 from pydantic_ai_harness.ssh_workspace import SSHWorkspaceBackend
 
 from local_config import workspace_directory
-from moyai_workspace import DESTINATION, SSH_ARGS
+from moyai_workspace import DESTINATION, SessionBackend
+from repository_backend import prepare_session, scoped_ssh_args
 
 
 async def observe_analysis_directory(session_id):
@@ -24,7 +25,8 @@ async def observe_analysis_directory(session_id):
         raise RuntimeError('Expected a private smoke session')
     scope = RunScope(session_id, '', row[0], 'local-qwen-analysis', visibility=row[1])
     path = workspace_directory(session_id, scope.workspace_key)
-    backend = SSHWorkspaceBackend(DESTINATION, working_dir='/workspace', ssh_args=SSH_ARGS)
+    await prepare_session(path, create=False)
+    backend = SSHWorkspaceBackend(DESTINATION, working_dir='/opt/moyai-analysis-empty', ssh_args=scoped_ssh_args(path))
     code = '''import json, os, sys
 path = sys.argv[1]
 exists = os.path.lexists(path)
@@ -45,7 +47,7 @@ async def observe(session_id):
     if not row or not row[0] or not row[1]:
         raise RuntimeError('The controller has no bound workspace for this session')
     directory = workspace_directory(session_id, row[1])
-    backend = SSHWorkspaceBackend(DESTINATION, working_dir=directory, ssh_args=SSH_ARGS)
+    backend = SessionBackend(directory)
     if backend.ref != TypeAdapter(WorkspaceRef).validate_json(row[0]):
         raise RuntimeError('The controller workspace reference does not match its session scope')
     code = '''import hashlib, json, os

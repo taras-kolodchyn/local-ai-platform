@@ -7,9 +7,8 @@ from pathlib import Path
 import sqlite3
 import sys
 
-from pydantic_ai_harness.ssh_workspace import SSHWorkspaceBackend
 from local_config import workspace_directory
-from moyai_workspace import DESTINATION, SSH_ARGS
+from moyai_workspace import SessionBackend
 
 
 def canonical(value):
@@ -33,7 +32,7 @@ async def observe(session_id):
         events = [{'phase':phase,'timestamp':ts} for phase,ts in db.execute(
             'SELECT phase,ts FROM events WHERE session_id=? ORDER BY ts,rowid', (session_id,))]
     directory = workspace_directory(session_id, authority)
-    backend = SSHWorkspaceBackend(DESTINATION, working_dir=directory, ssh_args=SSH_ARGS)
+    backend = SessionBackend(directory)
     code = '''import hashlib,json,os,stat
 from pathlib import Path
 root=Path('repository')
