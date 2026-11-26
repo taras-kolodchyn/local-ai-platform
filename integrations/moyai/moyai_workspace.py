@@ -7,7 +7,7 @@ import re
 
 from pydantic_ai.capabilities import durable_operation
 from pydantic_ai.exceptions import ModelRetry, ToolFailed
-from pydantic_ai.messages import InstructionPart, RetryPromptPart, TextPart, ToolReturnPart
+from pydantic_ai.messages import InstructionPart, ModelResponse, RetryPromptPart, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.workspaces import ReadOnlyWorkspace, Workspace
 from pydantic_ai_harness.ssh_workspace import SSHWorkspaceBackend
 from temporalio import workflow
@@ -15,9 +15,10 @@ from temporalio import workflow
 import analysis_mode
 from engineering_skills import EngineeringSkills, LOAD, SELECT_SKILLS, force_call
 with workflow.unsafe.imports_passed_through():
-    from github_issue import matches_target, requested_issue_url
+    from github_issue import matches_target, private_issue_root, requested_issue_url
 from local_config import workspace_directory
-from repository_backend import SSH_ARGS, projected_tree_hash, scoped_tree
+from pull_description import format_pull_response
+from repository_backend import SSH_ARGS, projected_tree_hash, scoped_tree, ssh_json
 from repository_ledger import RepositoryError
 from repository_workflow import RepositoryWorkflow, WRITES, allowed, connected_item, identity, scope_of
 
@@ -257,10 +258,63 @@ class SessionWorkspace(RepositoryWorkflow):
             raise ToolFailed('The analysis-only profile permits local reads and enabled gateway skills only.')
         return await super().before_tool_execute(ctx, call=call, tool_def=tool_def, args=args)
 
+    @durable_operation('staged_publication_files')
+    async def staged_files(self, session: str, authority: str, base: str) -> dict:
+        return await ssh_json(('python3', '-I', '/opt/local-repository/staged_files.py'),
+                              {'directory': workspace_directory(session, authority), 'base': base}, 25)
+
+    async def publication_response(self, ctx, request, target):
+        await self.authorize_issue_response(ctx, request)
+        owner, repo, number, base = target.groups()
+        grants = ctx.deps.grants
+
+        def finish(message):
+            return ModelResponse(parts=[TextPart(message)], finish_reason='stop', provider_name='local-controller')
+
+        if not private_issue_root(ctx) or len(grants) != 1:
+            return finish('Publication requires a private conversation and one selected GitHub connection.')
+        grant = grants[0]
+        if (grant.kind != 'github' or grant.read_only or grant.policy.get('product') is not None
+                or grant.policy.get('require_approval') is not True
+                or 'push_files' not in (grant.policy.get('allowed_tools') or ())):
+            return finish('The selected connection does not allow confirmed file publication.')
+        name = 'github_' + grant.id[:8] + '_push_files'
+        # Only this publication turn may supply a discovery or write receipt.
+        prefix = 'publish-' + ctx.deps.turn_id
+        parts = [part for message in request.messages for part in message.parts
+                 if isinstance(part, (ToolReturnPart, RetryPromptPart))]
+        write_result = next((part for part in parts if part.tool_call_id == prefix), None)
+        if write_result:
+            if not isinstance(write_result, ToolReturnPart) or write_result.outcome != 'success':
+                return finish('The native publication call was declined or failed. Inspect the saved activity.')
+            return finish('The publication request finished. The queue will check the remote branch.')
+        offered = {tool.name for tool in request.model_request_parameters.function_tools}
+        discovery = next((part for part in parts if part.tool_call_id == prefix + '-discover'), None)
+        # Deferred connection names can be listed here before the SDK admits
+        # them. Discovery has to succeed in this turn before using the schema.
+        if discovery is None:
+            call = ToolCallPart('search_tools', {'queries': ['push_files']}, tool_call_id=prefix + '-discover')
+        elif isinstance(discovery, ToolReturnPart) and discovery.outcome == 'success' and name in offered:
+            snapshot = await self.staged_files(*scope_of(ctx), base)
+            if 'files' not in snapshot:
+                return finish(snapshot['reason'])
+            args = {'owner': owner, 'repo': repo, 'branch': 'issue-' + number,
+                    'message': 'Apply changes for issue #' + number, 'files': snapshot['files']}
+            call = ToolCallPart(name, args, tool_call_id=prefix)
+        else:
+            return finish('The selected GitHub connection did not offer push_files.')
+        return ModelResponse(parts=[call], finish_reason='tool_call', provider_name='local-controller')
+
     async def wrap_model_request(self, ctx, *, request_context, handler):
         if analysis_mode.active(ctx):
             # Repository completion and issue intake can have controller-side effects.
             return await handler(request_context)
+        target = re.fullmatch(
+            r'Publish staged files for ([A-Za-z0-9-]+)/([A-Za-z0-9_.-]+) on issue-([1-9][0-9]*) '
+            r'at ([0-9a-f]{40}) through push_files with confirmation\.', ctx.prompt
+        ) if isinstance(getattr(ctx, 'prompt', None), str) else None
+        if target and (not workflow.in_workflow() or workflow.patched('local-staged-publication-v1')):
+            return await self.publication_response(ctx, request_context, target)
         return await super().wrap_model_request(ctx, request_context=request_context, handler=handler)
 
     async def after_model_request(self, ctx, *, request_context, response):
@@ -276,6 +330,10 @@ class SessionWorkspace(RepositoryWorkflow):
             response = analysis_mode.chat_response(ctx, response)
         else:
             response = await super().after_model_request(ctx, request_context=request_context, response=response)
+            if (any(call.tool_name.endswith('_create_pull_request') for call in response.tool_calls)
+                    and private_issue_root(ctx)
+                    and (not workflow.in_workflow() or workflow.patched('local-issue-closing-paragraph-v1'))):
+                response = format_pull_response(ctx, request_context, response)
         tools = request_context.model_request_parameters.function_tools
         if (len(tools) == 1 and tools[0].name == 'open_repository'
                 and (request_context.model_settings or {}).get('tool_choice') == ['open_repository']):

@@ -39,6 +39,7 @@ COPY --from=rust-assets /prepare/probe/Cargo.lock /opt/local-repository/oracles/
 COPY integrations/moyai/oracles/Cargo.toml integrations/moyai/oracles/Cargo.lock \
      integrations/moyai/oracles/retry_policy.rs integrations/moyai/oracles/legacy_policy.rs \
      integrations/moyai/oracles/counterexample_lib.rs /opt/local-repository/oracles/
+COPY integrations/moyai/staged_files.py /opt/local-repository/staged_files.py
 COPY integrations/moyai/repository_guest.py /opt/local-repository/guest.py
 COPY integrations/moyai/command_supervisor.py /opt/local-repository/command_supervisor.py
 COPY integrations/moyai/sshd_config /etc/ssh/sshd_config

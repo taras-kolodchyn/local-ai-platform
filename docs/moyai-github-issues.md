@@ -143,17 +143,32 @@ while the conversation is running or awaiting input.
 It records the issue, session, revision and submission locally so restarts
 can resume the same handoff. Publication uses the normal confirmation forms.
 
-For an existing issue branch, the queue runs editing and tests first, then
-starts a separate `push_files` step in the same checkout. It opens a PR in a
-third step after GitHub shows one new commit on the pinned issue branch. A
+When the issue branch is missing, Developer reads the issue and requests
+`create_branch` through the GitHub connection with native confirmation. The
+queue checks that the remote branch points to the pinned main commit before
+admitting edits. An existing branch goes directly to editing at its pinned tip.
+Developer edits and tests in the local checkout, then publishes through a
+separate `push_files` step. The queue opens a PR after GitHub shows one new commit on the pinned issue branch. A
 branch change before submission or a missing commit after publication holds
 the issue for inspection. The edit step carries the verified issue text as
 task data and still reads the issue through the selected connection.
 
-`push_files` sends the full contents of each changed file. Before confirming,
-check the target branch, file list and complete contents against the tested
-checkout, including final newlines. Decline a request with extra changes and
-follow the [recovery steps](#recover-a-queued-issue).
+After a passing test run, Developer records the staged tree in the sandbox at
+`refs/workflow/tested`. Before publication, the queue verifies that the index has
+changes against the pinned revision, that tracked edits are staged, and that
+the recorded tree matches the index. If staging or the test receipt is
+incomplete, Developer gets up to two local repair turns in the same checkout
+to stage the intended paths, rerun the issue tests and record the tree.
+An unsupported snapshot or exhausted retries hold the issue for inspection.
+Before opening the confirmation form, the publication step checks the tree
+again. An empty or changed checkout, a missing test marker, or an unsupported
+change stops the handoff. `push_files` sends the full UTF-8 contents of up to
+64 added or modified regular, non-executable text files (128 KiB combined).
+
+Check the target branch, file list and complete contents against the tested
+checkout, including final newlines. If they match, choose **Allow this action**
+and **Continue**. Decline a request with extra changes and follow the
+[recovery steps](#recover-a-queued-issue).
 
 Omit `WATCH=1` for one check. The queue skips issues with an open PR from
 `issue-<number>`. An issue whose turn finished without such a PR stays held.
@@ -170,6 +185,10 @@ make moyai-developer-queue REPO=owner/project CONNECTION="$DEVELOPER_CONNECTION"
   VERIFIER="$VERIFIER_CONNECTION" DEVELOPER_APP="$DEVELOPER_APP_SLUG" \
   VERIFIER_APP="$VERIFIER_APP_SLUG" CI_WORKFLOW=test.yml CI_JOB=unit WATCH=1
 ```
+
+Before confirmation, the queue formats `Closes #<number>` as the final Markdown
+paragraph of the PR description. GitHub must list the issue in the PR’s
+closing references before the queue starts review.
 
 The queue sends a PR linked to the issue and opened by the Developer App to
 a separate private Verifier chat. The review receives the exact head SHA and
