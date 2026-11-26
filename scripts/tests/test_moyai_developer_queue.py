@@ -2,7 +2,7 @@
 from copy import deepcopy
 from pathlib import Path
 import runpy
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 import unittest
 
 
@@ -76,6 +76,8 @@ class Controller:
 
 class DeveloperQueueTests(unittest.TestCase):
     def setUp(self):
+        self.index = Mock(return_value='ready')
+        self.enterContext(patch.dict(tick.__globals__, publication_index=self.index))
         self.events = []
         self.repo = GitHub()
         self.controller = Controller(self.events)
@@ -227,6 +229,53 @@ class DeveloperQueueTests(unittest.TestCase):
         turns[0]['status'] = 'completed'
         self.assertEqual(self.check(reviewer=reviewer)['status'], 'review_ready')
         self.assertEqual(len({body['request_key'] for body in self.controller.requests}), 3)
+
+    def test_missing_git_add_repairs_the_same_checkout_before_publication(self):
+        self.repo.branches[7] = self.repo.sha
+        edit = self.check()
+        turns = self.controller.sessions[edit['session']]['turns']
+        turns[0]['status'] = 'completed'
+        self.index.side_effect = ['stage_changes', 'ready']
+        self.controller.lost_receipt = True
+        with self.assertRaises(ConnectionError):
+            self.check()
+        self.controller.lost_receipt = False
+        self.state = deepcopy(self.saved)
+        repair = self.check()
+        self.assertEqual((repair['stage'], repair['session']), ('repair_index', edit['session']))
+        self.assertEqual(len(self.controller.requests), 2)
+        prompt = self.controller.requests[-1]['prompt']
+        self.assertIn('git add --', prompt)
+        self.assertIn(self.repo.issue_snapshot(7)['body'], prompt)
+        turns[0]['status'] = 'completed'
+        self.assertEqual(self.check()['stage'], 'publish')
+        self.assertEqual(len([e for e in self.events if e[0] == 'checkout']), 1)
+
+    def test_unverified_workspace_is_rejected_before_reading_its_index(self):
+        job = {'session': 'chat-1', 'sha': self.repo.sha}
+        probe = QUEUE['publication_index']
+        session = {'id': 'chat-2', 'visibility': 'private', 'surface': 'web', 'workspace': {}}
+        with patch('subprocess.check_output') as command:
+            with self.assertRaises(QUEUE['QueueError']):
+                probe(session, job)
+            session['id'] = job['session']
+            session['workspace'] = {'provider': 'ssh', 'id': '/workspace/../other'}
+            with self.assertRaises(QUEUE['QueueError']):
+                probe(session, job)
+            command.assert_not_called()
+
+    def test_stale_test_receipt_has_bounded_repair(self):
+        self.repo.branches[7] = self.repo.sha
+        edit = self.check()
+        self.index.return_value = 'record_tests'
+        turns = self.controller.sessions[edit['session']]['turns']
+        for _ in range(2):
+            turns[0]['status'] = 'completed'
+            self.assertEqual(self.check()['stage'], 'repair_index')
+            self.assertIn('test receipt is missing or stale', self.controller.requests[-1]['prompt'])
+        turns[0]['status'] = 'completed'
+        self.assertEqual(self.check()['status'], 'index_not_ready')
+        self.assertEqual(self.state, {'held': [7]})
 
     def test_existing_branch_move_before_publication_holds_the_issue(self):
         self.repo.branches[7] = self.repo.sha

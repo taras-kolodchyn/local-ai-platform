@@ -37,7 +37,7 @@ class StagedFilesTests(unittest.TestCase):
 
     def test_missing_receipt_changed_index_or_dirty_checkout_cannot_publish(self):
         self.file.write_bytes(b'tested')
-        with self.assertRaises(subprocess.CalledProcessError):
+        with self.assertRaisesRegex(ValueError, 'stage_changes'):
             snapshot(self.root, self.base)
         self.record()
         self.file.write_bytes(b'changed')
@@ -46,6 +46,20 @@ class StagedFilesTests(unittest.TestCase):
         self.git('add', '.')
         with self.assertRaises(ValueError):
             snapshot(self.root, self.base)
+
+    def test_receipt_for_base_does_not_hide_a_missing_git_add(self):
+        self.record()
+        self.file.write_bytes(b'new example\n')
+        with self.assertRaisesRegex(ValueError, 'stage_changes'):
+            snapshot(self.root, self.base)
+        self.git('add', '--', 'README.md')
+        with self.assertRaisesRegex(ValueError, 'record_tests'):
+            snapshot(self.root, self.base)
+        self.git('update-ref', '-d', 'refs/workflow/tested')
+        with self.assertRaisesRegex(ValueError, 'record_tests'):
+            snapshot(self.root, self.base)
+        self.record()
+        self.assertEqual(snapshot(self.root, self.base), [{'path': 'README.md', 'content': 'new example\n'}])
 
     def test_nothing_to_publish_deletion_binary_and_symlink(self):
         self.record()
