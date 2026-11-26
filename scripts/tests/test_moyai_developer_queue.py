@@ -17,6 +17,8 @@ class GitHub:
         self.ready = [4, 7, 9]
         self.pulls = {4}
         self.sha = 'a' * 40
+        self.branches = {}
+        self.commits = {}
 
     def candidates(self):
         return self.ready.copy()
@@ -27,11 +29,22 @@ class GitHub:
     def head(self):
         return self.sha
 
+    def issue_branch(self, issue):
+        return self.branches.get(issue)
+
+    def issue_snapshot(self, issue):
+        return {'title': 'Document the default output', 'body': 'Add one example above the first existing example.'}
+
+    def published_commit(self, issue, parent, developer_app):
+        tip = self.issue_branch(issue)
+        return tip if self.commits.get(tip) == (parent, developer_app) else None
+
 
 class Controller:
     def __init__(self, events):
         self.events = events
         self.sessions = {}
+        self.requests = []
         self.lost_receipt = False
         self.revision = 1
 
@@ -51,7 +64,9 @@ class Controller:
         if body is None:
             return stored
         self.events.append(('submit', chat, body['request_key']))
-        turn = {'id': 'turn-' + chat, 'status': 'queued', 'connections': body['connections']}
+        self.requests.append(body)
+        turn_id = 'turn-' + chat + (f"-{len(stored['turns']) + 1}" if stored['turns'] else '')
+        turn = {'id': turn_id, 'status': 'queued', 'connections': body['connections']}
         stored['turns'].insert(0, turn)
         if self.lost_receipt:
             raise ConnectionError('The response was lost.')
@@ -150,6 +165,91 @@ class DeveloperQueueTests(unittest.TestCase):
         reviewer.tick.return_value = {'status': 'main_green'}
         self.assertEqual(self.check(reviewer=reviewer)['status'], 'main_green')
         self.assertEqual(self.check(reviewer=reviewer)['issue'], 9)
+
+    def test_existing_branch_is_edited_published_and_then_opened_for_review(self):
+        branch_tip = 'b' * 40
+        published = 'c' * 40
+        self.repo.branches[7] = branch_tip
+        reviewer = Mock(settings=QUEUE['ReviewSettings']('separate', 'developer-app', 'verifier-app'))
+        reviewer.find.return_value = 10
+
+        edited = self.check(reviewer=reviewer)
+        self.assertEqual(self.events[1][2:], ('issue-7', edited['session'], 'developer', branch_tip))
+        self.assertIn('issue_read', self.controller.requests[0]['prompt'])
+        self.assertNotIn('push_files', self.controller.requests[0]['prompt'])
+        self.assertIn('The queue verified that issue #7 is open', self.controller.requests[0]['prompt'])
+        self.assertIn(self.repo.issue_snapshot(7)['body'], self.controller.requests[0]['prompt'])
+        self.assertNotIn('Proceed only if', self.controller.requests[0]['prompt'])
+        turns = self.controller.sessions[edited['session']]['turns']
+        turns[0]['status'] = 'completed'
+
+        self.assertEqual(self.check(reviewer=reviewer)['stage'], 'publish')
+        self.assertIn('push_files', self.controller.requests[1]['prompt'])
+        self.assertIn(branch_tip, self.controller.requests[1]['prompt'])
+        self.assertNotIn('create_pull_request', self.controller.requests[1]['prompt'])
+        turns[0]['status'] = 'resumed'
+        turns.insert(0, {'id': 'answer', 'status': 'completed', 'connections': ['developer']})
+        self.repo.branches[7] = published
+        self.repo.commits[published] = (branch_tip, 'developer-app')
+
+        self.assertEqual(self.check(reviewer=reviewer)['stage'], 'open_pull')
+        self.assertIn('create_pull_request', self.controller.requests[2]['prompt'])
+        self.assertIn(published, self.controller.requests[2]['prompt'])
+        self.assertIn('Closes #7', self.controller.requests[2]['prompt'])
+        reviewer.find.assert_not_called()
+        turns[0]['status'] = 'completed'
+        self.assertEqual(self.check(reviewer=reviewer)['status'], 'review_ready')
+        self.assertEqual(len({body['request_key'] for body in self.controller.requests}), 3)
+
+    def test_existing_branch_move_before_publication_holds_the_issue(self):
+        self.repo.branches[7] = self.repo.sha
+        result = self.check()
+        self.controller.sessions[result['session']]['turns'][0]['status'] = 'completed'
+        self.repo.branches[7] = 'c' * 40
+        self.assertEqual(self.check()['status'], 'branch_changed')
+        self.assertEqual(self.state['held'], [7])
+        self.assertEqual(len(self.controller.requests), 1)
+
+    def test_changed_issue_eligibility_blocks_staged_edit(self):
+        self.repo.branches[7] = self.repo.sha
+        self.repo.issue_snapshot = Mock(return_value=None)
+        self.assertEqual(self.check()['status'], 'skipped')
+        self.assertEqual(self.controller.requests, [])
+
+    def test_missing_commit_blocks_opening_the_pull_request(self):
+        self.repo.branches[7] = self.repo.sha
+        result = self.check()
+        turns = self.controller.sessions[result['session']]['turns']
+        turns[0]['status'] = 'completed'
+        self.check()
+        turns[0]['status'] = 'completed'
+        self.assertEqual(self.check()['status'], 'publication_missing')
+        self.assertEqual(len(self.controller.requests), 2)
+
+    def test_published_commit_survives_a_failed_turn_after_the_write(self):
+        self.repo.branches[7] = self.repo.sha
+        result = self.check()
+        turns = self.controller.sessions[result['session']]['turns']
+        turns[0]['status'] = 'completed'
+        self.check()
+        turns[0]['status'] = 'failed'
+        published = 'b' * 40
+        self.repo.branches[7] = published
+        self.repo.commits[published] = (self.repo.sha, None)
+        self.assertEqual(self.check()['stage'], 'open_pull')
+
+    def test_lost_publication_receipt_does_not_resubmit_or_advance(self):
+        self.repo.branches[7] = self.repo.sha
+        result = self.check()
+        turns = self.controller.sessions[result['session']]['turns']
+        turns[0]['status'] = 'completed'
+        self.controller.lost_receipt = True
+        with self.assertRaises(ConnectionError):
+            self.check()
+        self.state = deepcopy(self.saved)
+        self.assertEqual(self.check()['stage'], 'publish')
+        self.assertEqual(self.state['active']['turn'], turns[0]['id'])
+        self.assertEqual(len(self.controller.requests), 2)
 
     def test_included_guidance_does_not_hide_the_completed_turn(self):
         result = self.check()
