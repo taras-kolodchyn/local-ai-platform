@@ -24,7 +24,7 @@ def snapshot(directory, base):
 
     def git(*args):
         return subprocess.check_output(
-            ['git', '--no-replace-objects', '-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null',
+            ['git', '-c', 'safe.directory=' + str(directory), '--no-replace-objects', '-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null',
              *args], cwd=directory, env={'PATH': os.defpath, 'GIT_CONFIG_NOSYSTEM': '1',
                                         'GIT_CONFIG_GLOBAL': '/dev/null'}, timeout=10, stderr=subprocess.DEVNULL)
 
@@ -71,6 +71,12 @@ def snapshot(directory, base):
 
 if __name__ == '__main__':
     request = json.load(sys.stdin)
+    if sys.argv[1:] == ['--session-index']:
+        import asyncio
+        from repository_backend import ssh_json
+        command = ('python3', '-I', '/opt/local-repository/staged_files.py')
+        print(json.dumps(asyncio.run(ssh_json(command, request, 25))))
+        sys.exit(0)
     try:
         files = snapshot(Path(request['directory']), request['base'])
     except IndexNeedsRepair as error:

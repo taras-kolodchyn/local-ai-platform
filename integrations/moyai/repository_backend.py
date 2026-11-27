@@ -166,12 +166,39 @@ def source_patch(before, after, profile='rust-retry'):
     return ''.join(text).encode()
 
 
+def session_login(directory):
+    key = Path(directory).name
+    if directory != '/workspace/' + key or not re.fullmatch('[a-f0-9]{64}', key):
+        raise RepositoryError('Invalid private workspace.')
+    return 'w' + sha256(key.encode()).hexdigest()
+
+
+def scoped_ssh_args(directory):
+    name = session_login(directory)
+    return (*SSH_ARGS, '-l', name, '-o', 'SetEnv=TMPDIR=/run/session-accounts/homes/' + name)
+
+
+async def prepare_session(directory, create=True):
+    name = session_login(directory)
+    result = await _ssh_json(('python3', '-I', '/opt/local-repository/session_accounts.py',
+                              'open' if create else 'lookup', Path(directory).name), {}, 70, SSH_ARGS)
+    if result.get('user') != name:
+        raise RepositoryError('Private workspace identity mismatch.')
+    return result['exists']
+
+
 async def ssh_json(command, request, timeout):
+    directory = request.get('directory') or '/workspace/' + request['conversation_id']
+    await prepare_session(directory)
+    return await _ssh_json(command, request, timeout, scoped_ssh_args(directory))
+
+
+async def _ssh_json(command, request, timeout, ssh_args):
     payload = canonical(request)
     if len(payload) > MAX_WIRE:
         raise RepositoryError('Repository request exceeds transfer limit.')
     process = await asyncio.create_subprocess_exec(
-        'ssh', '-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5', *SSH_ARGS,
+        'ssh', '-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5', *ssh_args,
         'agent@moyai-sandbox', shlex.join(command), stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
     async def send():
@@ -224,8 +251,7 @@ request = json.load(sys.stdin)
 conversation = request['conversation_id']
 assert re.fullmatch(r'[a-f0-9]{64}', conversation)
 flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-root = os.open('/workspace', flags)
-cwd = os.open(conversation, flags, dir_fd=root)
+cwd = os.open('/workspace/' + conversation, flags)
 try: os.mkdir('repository-results', 0o700, dir_fd=cwd)
 except FileExistsError: pass
 directory = os.open('repository-results', flags, dir_fd=cwd)

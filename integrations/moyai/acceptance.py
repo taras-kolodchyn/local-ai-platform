@@ -15,7 +15,8 @@ def valid_pytest_action(action):
 
 
 def valid_workspace_states(first, continued, other, expected_hashes):
-    return (all(state.get('uid') == 10001 for state in (first, continued, other))
+    return (all(isinstance(state.get('uid'), int) and state['uid'] > 200000 for state in (first, continued, other))
+            and first['uid'] == continued['uid'] and first['uid'] != other['uid']
             and first.get('directory') == continued.get('directory')
             and other.get('directory') != first.get('directory')
             and first.get('files') == continued.get('files') == expected_hashes

@@ -159,7 +159,7 @@ def run_checkout(repository, branch, session, connection, expected):
         commit = branch_bundle(source, branch, bundle, expected)
         if address() != workspace:
             raise CheckoutError('The connection revision changed during preparation.')
-        command = [*compose, 'exec', '-T', '--user', 'agent', 'moyai-sandbox',
+        command = [*compose, 'exec', '-T', '--user', '10001:10001', 'moyai-sandbox',
                    'python', '-c', code.decode(), '_install', workspace, commit]
         with bundle.open('rb') as data:
             subprocess.run(command, stdin=data, stdout=subprocess.PIPE, stderr=subprocess.PIPE,

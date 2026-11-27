@@ -56,7 +56,7 @@ class RepositoryAcceptanceTests(unittest.TestCase):
                 'citations': [{'path': 'docs/architecture-rules.md', 'start_line': 20, 'end_line': 25}],
                 'plan': [{'content': 'Retry delays never exceed 30,000 ms'}], 'attempts':1}
         observer = {'tree_hash': 'verified', 'receipt_authenticity': [True, True],
-                    'protected_unchanged': True, 'uid': 10001}
+                    'protected_unchanged': True, 'uid': 200001}
         hashes = {'repository-results/changes.patch':'a'*64,'repository-results/test-report.json':'b'*64}
         task['artifacts'] = dict(hashes)
         result = {'task_id':'task_fixture','binding': binding, 'original_tree': 'original',

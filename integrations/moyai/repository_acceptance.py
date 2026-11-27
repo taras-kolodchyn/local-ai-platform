@@ -24,7 +24,7 @@ def validate_evidence(task, observer, result, report, completed_tools, binding, 
     require(task.get('verified_tree') == observer.get('tree_hash') == result.get('verified_tree')
             and task.get('original_tree') == result.get('original_tree')
             and result.get('outcome') == 'passed', 'Current source differs from verified result')
-    require(observer.get('uid') == 10001 and observer.get('protected_unchanged') is True,
+    require(isinstance(observer.get('uid'), int) and observer['uid'] > 200000 and observer.get('protected_unchanged') is True,
             'Independent workspace or protected-input observation failed')
     receipts = task.get('receipts') or []
     require(len(receipts) >= 2 and observer.get('receipt_authenticity') == [True] * len(receipts),

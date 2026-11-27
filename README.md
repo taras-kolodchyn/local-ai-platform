@@ -63,7 +63,7 @@ downloaded model artifacts. `make restart` performs the full stop/start cycle.
 Moyai uses an inference credential restricted to `local-qwen` and runs commands in
 a sandbox with a private workspace and no mounted Docker socket, host home or
 writable source checkout. This setup is designed for one trusted local operator.
-Conversations have separate directories and share one sandbox OS user. Treat
+Each conversation and connection scope has a private checkout and a distinct Linux identity. Treat
 repository content, tool output and retrieved passages as untrusted data.
 [Inference engines and Metal](https://docs.docker.com/ai/model-runner/inference-engines/) ·
 [Local Moyai architecture](docs/moyai-local.md) · [Security design](docs/security.md)

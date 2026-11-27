@@ -83,6 +83,13 @@ make moyai-checkout REPO=owner/project BRANCH=main \
 The command compares the fetched commit with the current branch tip and prints
 the verified SHA. Add `SHA=<full-commit>` to require a particular revision.
 It installs the checkout in the chat workspace for the selected connection.
+Each chat and connection scope has a separate Linux login. Run commands from
+the supplied working directory. Its parent is traversable but cannot be listed
+by a session. The root-owned checkout grants access only to its assigned group.
+The UID is retained on the workspace volume across container restarts. On first
+access, older checkouts are adopted in place. A legacy tree with hard links to
+files outside its checkout requires operator inspection.
+
 The sandbox receives a Git bundle with regular tracked files. Git credentials
 stay on the Mac. Use the GitHub connection for publication.
 
