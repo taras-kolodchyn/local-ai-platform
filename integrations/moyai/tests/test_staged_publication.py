@@ -71,16 +71,30 @@ class StagedPublicationTests(IsolatedAsyncioTestCase):
             self.assertEqual(tool.name, 'select_checkout_paths')
             return ModelResponse(parts=[ToolCallPart(tool.name, {'paths': choice})])
 
-        response = await cap.repair_response(ctx, request, select, base, state)
+        response = await cap.repair_response(ctx, request, select, base, state, ctx.prompt)
         call, = response.tool_calls
         self.assertEqual(call.tool_name, 'shell')
         self.assertEqual(shlex.split(call.args['command'])[-4:], ['--stage', base, *choice])
         choice[:] = ['new file.py']
-        self.assertFalse((await cap.repair_response(ctx, request, select, base, state)).tool_calls)
+        self.assertFalse((await cap.repair_response(ctx, request, select, base, state, ctx.prompt)).tool_calls)
         choice[:] = ['source.py', 'unlisted']
-        self.assertFalse((await cap.repair_response(ctx, request, select, base, state)).tool_calls)
+        self.assertFalse((await cap.repair_response(ctx, request, select, base, state, ctx.prompt)).tool_calls)
         request.messages = [ModelRequest(parts=[ToolReturnPart('shell', 'done', call.tool_call_id)])]
-        self.assertFalse((await cap.repair_response(ctx, request, AsyncMock(), base, state)).tool_calls)
+        self.assertFalse((await cap.repair_response(ctx, request, AsyncMock(), base, state, ctx.prompt)).tool_calls)
+
+    async def test_checkpoint_recovers_only_the_current_private_queue_turn(self):
+        cap = SessionWorkspace()
+        cap.authorize_issue_response = AsyncMock()
+        ctx = Values(prompt=None, run_id='turn:segment:2', deps=Values(
+            session_id='s', actor_id='owner', turn_id='turn', root_run_id='turn:segment:2', workspace_key='w',
+            history_segment=2, visibility='private', surface='web'))
+        base = 'a' * 40
+        cap.continued_queue_prompt = AsyncMock(return_value=f'{EDIT_PREFIX}{base}\nPrepare the existing edits for issue #1')
+        cap.repair_state = AsyncMock(return_value={'status': 'ready'})
+        result = await cap.wrap_model_request(ctx, request_context=Values(), handler=AsyncMock())
+        cap.continued_queue_prompt.assert_awaited_once_with('s', 'owner', 'turn')
+        cap.repair_state.assert_awaited_once_with('s', 'w', base)
+        self.assertEqual(result.finish_reason, 'stop')
 
     async def test_discover_then_offer_exact_payload_once(self):
         cap = SessionWorkspace()

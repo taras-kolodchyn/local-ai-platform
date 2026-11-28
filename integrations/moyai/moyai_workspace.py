@@ -265,20 +265,36 @@ class SessionWorkspace(RepositoryWorkflow):
                                  'base': base, 'check_index': True}, 25)
         return result.get('status') == 'ready'
 
+    @durable_operation('continued_queue_prompt')
+    async def continued_queue_prompt(self, session: str, actor: str, turn: str) -> str | None:
+        from moyai.models import Session, Turn
+        from moyai.runtime import current
+        from sqlalchemy import select
+        runtime = current()
+        async with runtime.database.sessions() as db:
+            sealed = await db.scalar(select(Turn.prompt).join(Session, Session.id == Turn.session_id).where(
+                Turn.id == turn, Turn.session_id == session, Turn.actor_id == actor, Session.owner_id == actor,
+                Session.visibility == 'private', Session.surface == 'web'))
+        if sealed is not None:
+            prompt = runtime.security.unseal(sealed).decode()
+            if edit_base(prompt):
+                return prompt
+        return None
+
     @durable_operation('queue_repair_state')
     async def repair_state(self, session: str, authority: str, base: str) -> dict:
         return await ssh_json(('python3', '-I', '/opt/local-repository/staged_files.py'),
                               {'directory': workspace_directory(session, authority), 'base': base,
                                'check_index': True, 'repair': True}, 25)
 
-    async def repair_response(self, ctx, request, handler, base, state):
+    async def repair_response(self, ctx, request, handler, base, state, queue_prompt):
         shell = next((t for t in request.model_request_parameters.function_tools if t.name == 'shell'), None)
         if shell is None:
             return None  # The native runtime may still be loading local capabilities.
         if state.get('status') == 'record_tests':
             prompt = ('The intended changes are staged. Run ALL checks requested below in the supplied checkout. '
                       'Use one shell call. Chain successful checks with && and only after they pass run '
-                      'git update-ref refs/workflow/tested "$(git write-tree)".\n' + ctx.prompt)
+                      'git update-ref refs/workflow/tested "$(git write-tree)".\n' + queue_prompt)
             return await handler(force_call(request, shell, prompt))
         if state.get('status') != 'stage_changes':
             return None
@@ -298,7 +314,7 @@ class SessionWorkspace(RepositoryWorkflow):
                                                         'uniqueItems': True, 'maxItems': len(paths)}},
                                'required': ['paths']})
         prompt = (f'Choose all and only the files needed for the issue. Already staged: {json.dumps(staged)}. '
-                  f'Eligible changed files: {json.dumps(paths)}. Return an empty list if uncertain.\n' + ctx.prompt)
+                  f'Eligible changed files: {json.dumps(paths)}. Return an empty list if uncertain.\n' + queue_prompt)
         response = await handler(force_call(request, selector, prompt))
         calls = response.tool_calls
         if len(calls) != 1 or calls[0].tool_name != selector.name:
@@ -365,16 +381,20 @@ class SessionWorkspace(RepositoryWorkflow):
         if analysis_mode.active(ctx):
             # Repository completion and issue intake can have controller-side effects.
             return await handler(request_context)
-        base = edit_base(getattr(ctx, 'prompt', None))
+        queue_prompt = getattr(ctx, 'prompt', None)
+        if (not edit_base(queue_prompt) and getattr(ctx.deps, 'history_segment', 0) and private_issue_root(ctx)
+                and (not workflow.in_workflow() or workflow.patched('local-continued-queue-prompt-v1'))):
+            queue_prompt = await self.continued_queue_prompt(ctx.deps.session_id, ctx.deps.actor_id, ctx.deps.turn_id)
+        base = edit_base(queue_prompt)
         if (base and private_issue_root(ctx)
                 and (not workflow.in_workflow() or workflow.patched('local-queue-ready-completion-v1'))):
             await self.authorize_issue_response(ctx, request_context)
-            if (ctx.prompt.partition('\n')[2].startswith('Prepare the existing edits for issue #')
+            if (queue_prompt.partition('\n')[2].startswith('Prepare the existing edits for issue #')
                     and (not workflow.in_workflow() or workflow.patched('local-queue-stage-selection-v1'))):
                 state = await self.repair_state(*scope_of(ctx), base)
                 ready = state.get('status') == 'ready'
                 if not ready:
-                    response = await self.repair_response(ctx, request_context, handler, base, state)
+                    response = await self.repair_response(ctx, request_context, handler, base, state, queue_prompt)
                     if response is not None:
                         return response
             else:

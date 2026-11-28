@@ -172,7 +172,8 @@ pinned commit and applies it to the Git index as one batch. An existing
 staged path must be included. Unselected new files stay outside the index.
 Before each inference request in a queue edit or repair turn, the controller
 checks the tested index against the pinned commit. A ready index ends that
-turn immediately. The queue then rechecks the checkout and advances to
+turn immediately. After a history checkpoint, the controller recovers the queue
+instruction from the same private session, requester and turn. The queue then rechecks the checkout and advances to
 confirmed publication on its next tick.
 An unsupported snapshot or exhausted retries hold the issue for inspection.
 Before opening the confirmation form, the publication step checks the tree
