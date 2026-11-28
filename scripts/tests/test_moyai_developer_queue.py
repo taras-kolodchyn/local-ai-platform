@@ -245,6 +245,9 @@ class DeveloperQueueTests(unittest.TestCase):
         self.assertEqual((repair['stage'], repair['session']), ('repair_index', edit['session']))
         self.assertEqual(len(self.controller.requests), 2)
         prompt = self.controller.requests[-1]['prompt']
+        from staged_files import edit_base
+        self.assertEqual(edit_base(self.controller.requests[0]['prompt']), self.repo.sha)
+        self.assertEqual(edit_base(prompt), self.repo.sha)
         self.assertIn('git add --', prompt)
         self.assertIn(self.repo.issue_snapshot(7)['body'], prompt)
         turns[0]['status'] = 'completed'

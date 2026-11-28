@@ -166,6 +166,10 @@ changes against the pinned revision, that tracked edits are staged, and that
 the recorded tree matches the index. If staging or the test receipt is
 incomplete, Developer gets up to two local repair turns in the same checkout
 to stage the intended paths, rerun the issue tests and record the tree.
+Before each inference request in a queue edit or repair turn, the controller
+checks the tested index against the pinned commit. A ready index ends that
+turn immediately. The queue then rechecks the checkout and advances to
+confirmed publication on its next tick.
 An unsupported snapshot or exhausted retries hold the issue for inspection.
 Before opening the confirmation form, the publication step checks the tree
 again. An empty or changed checkout, a missing test marker, or an unsupported

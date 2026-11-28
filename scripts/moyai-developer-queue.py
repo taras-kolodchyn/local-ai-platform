@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'integrations/moyai'))
 sys.path.insert(0, str(ROOT / 'scripts'))
 from client import MoyaiClient
+from staged_files import EDIT_PREFIX
 from moyai_queue_review import ReviewQueue, ReviewSettings, session_busy
 
 
@@ -169,7 +170,7 @@ def stage_prompt(repository, job):
     if job['stage'] == 'repair_index':
         reason = ('The intended changes are missing from the index or tracked edits remain unstaged.'
                   if job['index_status'] == 'stage_changes' else 'The test receipt is missing or stale.')
-        return (
+        return f'{EDIT_PREFIX}{sha}\n' + (
             f'Prepare the existing edits for issue #{number} in this checkout. {reason} '
             'Inspect git status --short, git diff, and git diff --cached. Compare against the original issue. '
             'Use git add -- followed by only the intended paths. Verify git diff --cached shows the required change. '
@@ -181,7 +182,7 @@ def stage_prompt(repository, job):
         issue = json.dumps(job['issue_snapshot'], ensure_ascii=False)
         progress = ('Check existing progress and post one short English start comment without a timestamp if needed. '
                     if job.get('announce_start') else '')
-        return read_issue_prompt(repository, number) + (
+        return f'{EDIT_PREFIX}{sha}\n' + read_issue_prompt(repository, number) + (
             f'The queue verified that issue #{number} is open and has the {LABEL} label. '
             f'After the connector read, verify HEAD is {sha} in the prepared {branch} checkout. '
             f'{progress}Apply the requested edits directly. This step covers local edits and tests. '

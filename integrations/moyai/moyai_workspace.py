@@ -18,6 +18,7 @@ with workflow.unsafe.imports_passed_through():
     from github_issue import matches_target, private_issue_root, requested_issue_url
 from local_config import workspace_directory
 from pull_description import format_pull_response
+from staged_files import edit_base
 from repository_backend import SSH_ARGS, prepare_session, projected_tree_hash, scoped_ssh_args, scoped_tree, ssh_json
 from repository_ledger import RepositoryError
 from repository_workflow import RepositoryWorkflow, WRITES, allowed, connected_item, identity, scope_of
@@ -255,6 +256,13 @@ class SessionWorkspace(RepositoryWorkflow):
             raise ToolFailed('The analysis-only profile permits local reads and enabled gateway skills only.')
         return await super().before_tool_execute(ctx, call=call, tool_def=tool_def, args=args)
 
+    @durable_operation('queue_checkout_ready')
+    async def checkout_ready(self, session: str, authority: str, base: str) -> bool:
+        result = await ssh_json(('python3', '-I', '/opt/local-repository/staged_files.py'),
+                                {'directory': workspace_directory(session, authority),
+                                 'base': base, 'check_index': True}, 25)
+        return result.get('status') == 'ready'
+
     @durable_operation('staged_publication_files')
     async def staged_files(self, session: str, authority: str, base: str) -> dict:
         return await ssh_json(('python3', '-I', '/opt/local-repository/staged_files.py'),
@@ -306,6 +314,13 @@ class SessionWorkspace(RepositoryWorkflow):
         if analysis_mode.active(ctx):
             # Repository completion and issue intake can have controller-side effects.
             return await handler(request_context)
+        base = edit_base(getattr(ctx, 'prompt', None))
+        if (base and private_issue_root(ctx)
+                and (not workflow.in_workflow() or workflow.patched('local-queue-ready-completion-v1'))):
+            await self.authorize_issue_response(ctx, request_context)
+            if await self.checkout_ready(*scope_of(ctx), base):
+                return ModelResponse(parts=[TextPart('The tested index is ready for publication.')],
+                                     finish_reason='stop', provider_name='local-controller')
         target = re.fullmatch(
             r'Publish staged files for ([A-Za-z0-9-]+)/([A-Za-z0-9_.-]+) on issue-([1-9][0-9]*) '
             r'at ([0-9a-f]{40}) through push_files with confirmation\.', ctx.prompt

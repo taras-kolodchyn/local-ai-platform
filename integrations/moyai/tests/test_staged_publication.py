@@ -1,12 +1,14 @@
 """Check the arguments that enter the native confirmation boundary."""
 from types import SimpleNamespace as Values
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 from moyai.connection_catalog import ConnectionToolSearch, connection_search
 from moyai.connections import ConnectionTools
 from moyai.contracts import Grant, RunScope
 from moyai_workspace import SessionWorkspace
+from repository_workflow import RepositoryWorkflow
+from staged_files import EDIT_PREFIX
 from pydantic_ai import Agent, DeferredToolRequests
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelRequest, ToolReturnPart
@@ -15,6 +17,36 @@ from pydantic_ai.toolsets import FunctionToolset
 
 
 class StagedPublicationTests(IsolatedAsyncioTestCase):
+    async def test_ready_index_finishes_local_step_without_another_tool_call(self):
+        cap = SessionWorkspace()
+        cap.authorize_issue_response = AsyncMock()
+        cap.checkout_ready = AsyncMock(side_effect=[False, True])
+        base = 'a' * 40
+        ctx = Values(prompt=f'{EDIT_PREFIX}{base}\nPrepare the local changes.', run_id='r',
+                     deps=Values(session_id='s', workspace_key='w', root_run_id='r',
+                                 visibility='private', surface='web'))
+        request, handler = Values(), AsyncMock()
+        with patch.object(RepositoryWorkflow, 'wrap_model_request', new_callable=AsyncMock) as fallback:
+            async def route():
+                return await cap.wrap_model_request(ctx, request_context=request, handler=handler)
+
+            self.assertIs(await route(), fallback.return_value)
+            result = await route()
+            self.assertEqual(result.finish_reason, 'stop')
+            self.assertFalse(result.tool_calls)
+            self.assertIn('ready', result.text)
+            self.assertEqual(fallback.await_count, 1)
+            self.assertEqual(cap.checkout_ready.await_count, 2)
+            cap.checkout_ready.assert_awaited_with('s', 'w', base)
+            cap.authorize_issue_response.assert_awaited_with(ctx, request)
+
+            ctx.run_id = 'child'
+            self.assertIs(await route(), fallback.return_value)
+            ctx.run_id = 'r'
+            ctx.prompt = 'Review this issue.\n' + ctx.prompt
+            self.assertIs(await route(), fallback.return_value)
+            self.assertEqual(cap.checkout_ready.await_count, 2)
+
     async def test_discover_then_offer_exact_payload_once(self):
         cap = SessionWorkspace()
         cap.authorize_issue_response = AsyncMock()

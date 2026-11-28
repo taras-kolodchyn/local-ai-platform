@@ -10,6 +10,15 @@ import sys
 
 LIMIT = 128 * 1024
 TESTED_REF = 'refs/workflow/tested'
+EDIT_PREFIX = 'Prepare the queue checkout at '
+
+
+def edit_base(prompt):
+    if isinstance(prompt, str) and prompt.startswith(EDIT_PREFIX):
+        base, newline, _ = prompt[len(EDIT_PREFIX):].partition('\n')
+        if newline and re.fullmatch('[0-9a-f]{40}', base):
+            return base
+    return None
 
 
 class IndexNeedsRepair(ValueError):
