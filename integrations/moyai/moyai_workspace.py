@@ -3,6 +3,8 @@ import asyncio
 from dataclasses import replace
 from functools import cached_property
 from pathlib import PurePosixPath
+import json
+import shlex
 import re
 
 from pydantic_ai.capabilities import durable_operation
@@ -263,6 +265,55 @@ class SessionWorkspace(RepositoryWorkflow):
                                  'base': base, 'check_index': True}, 25)
         return result.get('status') == 'ready'
 
+    @durable_operation('queue_repair_state')
+    async def repair_state(self, session: str, authority: str, base: str) -> dict:
+        return await ssh_json(('python3', '-I', '/opt/local-repository/staged_files.py'),
+                              {'directory': workspace_directory(session, authority), 'base': base,
+                               'check_index': True, 'repair': True}, 25)
+
+    async def repair_response(self, ctx, request, handler, base, state):
+        shell = next((t for t in request.model_request_parameters.function_tools if t.name == 'shell'), None)
+        if shell is None:
+            return None  # The native runtime may still be loading local capabilities.
+        if state.get('status') == 'record_tests':
+            prompt = ('The intended changes are staged. Run ALL checks requested below in the supplied checkout. '
+                      'Use one shell call. Chain successful checks with && and only after they pass run '
+                      'git update-ref refs/workflow/tested "$(git write-tree)".\n' + ctx.prompt)
+            return await handler(force_call(request, shell, prompt))
+        if state.get('status') != 'stage_changes':
+            return None
+        paths, staged = state.get('paths', []), state.get('staged', [])
+        def finish(message):
+            return ModelResponse(parts=[TextPart(message)], finish_reason='stop', provider_name='local-controller')
+        selection_id = 'stage-' + ctx.deps.turn_id
+        if any(isinstance(part, (ToolReturnPart, RetryPromptPart)) and part.tool_call_id == selection_id
+               for message in request.messages for part in message.parts):
+            return finish('The selection did not resolve the unstaged changes. Inspect the checkout.')
+        if not paths or not set(staged) <= set(paths):
+            return finish('No eligible file selection. Inspect the checkout.')
+        selector = replace(shell, name='select_checkout_paths',
+                           description='Choose exactly the local changes required for this issue.',
+                           parameters_json_schema={'type': 'object', 'additionalProperties': False,
+                               'properties': {'paths': {'type': 'array', 'items': {'type': 'string', 'enum': paths},
+                                                        'uniqueItems': True, 'maxItems': len(paths)}},
+                               'required': ['paths']})
+        prompt = (f'Choose all and only the files needed for the issue. Already staged: {json.dumps(staged)}. '
+                  f'Eligible changed files: {json.dumps(paths)}. Return an empty list if uncertain.\n' + ctx.prompt)
+        response = await handler(force_call(request, selector, prompt))
+        calls = response.tool_calls
+        if len(calls) != 1 or calls[0].tool_name != selector.name:
+            return finish('No valid staging selection was returned.')
+        try:
+            selected = calls[0].args_as_dict()['paths']
+        except (KeyError, TypeError, ValueError):
+            return finish('No valid staging selection was returned.')
+        if (not isinstance(selected, list) or not selected or not all(isinstance(p, str) for p in selected)
+                or len(selected) != len(set(selected)) or not set(staged) <= set(selected) <= set(paths)):
+            return finish('No valid staging selection was returned.')
+        command = shlex.join(['python3', '-I', '/opt/local-repository/staged_files.py', '--stage', base, *selected])
+        return replace(response, parts=[ToolCallPart('shell', {'command': command}, selection_id)],
+                       finish_reason='tool_call')
+
     @durable_operation('staged_publication_files')
     async def staged_files(self, session: str, authority: str, base: str) -> dict:
         return await ssh_json(('python3', '-I', '/opt/local-repository/staged_files.py'),
@@ -318,7 +369,17 @@ class SessionWorkspace(RepositoryWorkflow):
         if (base and private_issue_root(ctx)
                 and (not workflow.in_workflow() or workflow.patched('local-queue-ready-completion-v1'))):
             await self.authorize_issue_response(ctx, request_context)
-            if await self.checkout_ready(*scope_of(ctx), base):
+            if (ctx.prompt.partition('\n')[2].startswith('Prepare the existing edits for issue #')
+                    and (not workflow.in_workflow() or workflow.patched('local-queue-stage-selection-v1'))):
+                state = await self.repair_state(*scope_of(ctx), base)
+                ready = state.get('status') == 'ready'
+                if not ready:
+                    response = await self.repair_response(ctx, request_context, handler, base, state)
+                    if response is not None:
+                        return response
+            else:
+                ready = await self.checkout_ready(*scope_of(ctx), base)
+            if ready:
                 return ModelResponse(parts=[TextPart('The tested index is ready for publication.')],
                                      finish_reason='stop', provider_name='local-controller')
         target = re.fullmatch(

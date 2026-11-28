@@ -5,7 +5,8 @@ import subprocess
 import tempfile
 import unittest
 
-snapshot = runpy.run_path(str(Path(__file__).resolve().parents[2] / 'integrations/moyai/staged_files.py'))['snapshot']
+staging = runpy.run_path(str(Path(__file__).resolve().parents[2] / 'integrations/moyai/staged_files.py'))
+snapshot = staging['snapshot']
 
 
 class StagedFilesTests(unittest.TestCase):
@@ -21,6 +22,28 @@ class StagedFilesTests(unittest.TestCase):
 
     def git(self, *args):
         return subprocess.check_output(['git', *args], cwd=self.root).decode().strip()
+
+    def test_selection_stages_exact_paths_and_requires_tests_afterward(self):
+        name = ':(glob)*.txt'
+        (self.root / name).write_text('added')
+        self.file.write_text('updated')
+        (self.root / 'unrelated.txt').write_text('leave this alone')
+        (self.root / '.env').write_text('fixture')
+        (self.root / 'binary').write_bytes(b'\0')
+        (self.root / 'link').symlink_to(self.file)
+        offered, staged = staging['stage_options'](self.root, self.base)
+        self.assertEqual(set(offered), {name, 'README.md', 'unrelated.txt'})
+        self.assertEqual(staged, [])
+        self.git('add', '--', 'README.md')
+        for invalid in ([name], ['README.md', '../outside'], ['README.md', 'link']):
+            with self.assertRaises(ValueError):
+                staging['stage_selected'](self.root, self.base, invalid)
+        staging['stage_selected'](self.root, self.base, [name, 'README.md'])
+        self.assertEqual(set(self.git('diff', '--cached', '--name-only').splitlines()), {name, 'README.md'})
+        with self.assertRaisesRegex(ValueError, 'record_tests'):
+            snapshot(self.root, self.base)
+        self.git('update-ref', 'refs/workflow/tested', self.git('write-tree'))
+        self.assertEqual({f['path'] for f in snapshot(self.root, self.base)}, {name, 'README.md'})
 
     def record(self):
         self.git('add', '-A')

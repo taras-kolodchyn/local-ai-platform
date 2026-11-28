@@ -11,7 +11,11 @@ from repository_workflow import RepositoryWorkflow
 from staged_files import EDIT_PREFIX
 from pydantic_ai import Agent, DeferredToolRequests
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.messages import ModelRequest, ToolReturnPart
+from pydantic_ai.messages import ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart
+from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.tools import ToolDefinition
+from dataclasses import dataclass
+import shlex
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.toolsets import FunctionToolset
 
@@ -46,6 +50,37 @@ class StagedPublicationTests(IsolatedAsyncioTestCase):
             ctx.prompt = 'Review this issue.\n' + ctx.prompt
             self.assertIs(await route(), fallback.return_value)
             self.assertEqual(cap.checkout_ready.await_count, 2)
+
+    async def test_repair_selection_dispatches_only_validated_local_paths(self):
+        @dataclass
+        class Request:
+            messages: list
+            model_request_parameters: ModelRequestParameters
+            model_settings: dict
+
+        cap = SessionWorkspace()
+        request = Request([], ModelRequestParameters(function_tools=[ToolDefinition(name='shell')]), {})
+        base = 'b' * 40
+        ctx = Values(prompt=f'{EDIT_PREFIX}{base}\nPrepare the existing edits for issue #4',
+                     deps=Values(turn_id='repair'))
+        state = {'status': 'stage_changes', 'paths': ['source.py', 'new file.py'], 'staged': ['source.py']}
+        choice = ['source.py', 'new file.py']
+
+        async def select(wire):
+            tool, = wire.model_request_parameters.function_tools
+            self.assertEqual(tool.name, 'select_checkout_paths')
+            return ModelResponse(parts=[ToolCallPart(tool.name, {'paths': choice})])
+
+        response = await cap.repair_response(ctx, request, select, base, state)
+        call, = response.tool_calls
+        self.assertEqual(call.tool_name, 'shell')
+        self.assertEqual(shlex.split(call.args['command'])[-4:], ['--stage', base, *choice])
+        choice[:] = ['new file.py']
+        self.assertFalse((await cap.repair_response(ctx, request, select, base, state)).tool_calls)
+        choice[:] = ['source.py', 'unlisted']
+        self.assertFalse((await cap.repair_response(ctx, request, select, base, state)).tool_calls)
+        request.messages = [ModelRequest(parts=[ToolReturnPart('shell', 'done', call.tool_call_id)])]
+        self.assertFalse((await cap.repair_response(ctx, request, AsyncMock(), base, state)).tool_calls)
 
     async def test_discover_then_offer_exact_payload_once(self):
         cap = SessionWorkspace()

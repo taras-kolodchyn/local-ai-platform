@@ -166,6 +166,10 @@ changes against the pinned revision, that tracked edits are staged, and that
 the recorded tree matches the index. If staging or the test receipt is
 incomplete, Developer gets up to two local repair turns in the same checkout
 to stage the intended paths, rerun the issue tests and record the tree.
+For staging, Developer chooses explicit paths from the private checkout's
+changed regular text files. The helper validates the selection against the
+pinned commit and applies it to the Git index as one batch. An existing
+staged path must be included. Unselected new files stay outside the index.
 Before each inference request in a queue edit or repair turn, the controller
 checks the tested index against the pinned commit. A ready index ends that
 turn immediately. The queue then rechecks the checkout and advances to
