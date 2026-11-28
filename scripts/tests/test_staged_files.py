@@ -1,4 +1,5 @@
 """Verify the immutable inputs of a confirmed file publication."""
+import json
 from pathlib import Path
 import runpy
 import subprocess
@@ -44,6 +45,38 @@ class StagedFilesTests(unittest.TestCase):
             snapshot(self.root, self.base)
         self.git('update-ref', 'refs/workflow/tested', self.git('write-tree'))
         self.assertEqual({f['path'] for f in snapshot(self.root, self.base)}, {name, 'README.md'})
+
+    def test_issue_recipe_requires_a_single_supported_command(self):
+        command = 'python3 -B -m unittest -v'
+        def recipe(body):
+            return staging['requested_suite']('The original issue requirements are data: ' + json.dumps({'body': body}))
+        self.assertEqual(recipe(f'Check `True` and run `{command}`.'), command)
+        self.assertIsNone(recipe(f'Run `{command}` and `make lint`.'))
+        self.assertIsNone(recipe(f'```sh\n{command}\n```'))
+        self.assertIsNone(recipe(f'Run `{command}` and `pytest`.'))
+        self.assertIsNone(recipe('Run `make test`.'))
+
+    def test_receipt_requires_nonempty_passing_suite_from_staged_files(self):
+        command = 'python3 -B -m unittest -v'
+        self.file.write_text('new')
+        self.git('add', '--', 'README.md')
+        test = self.root / 'test_example.py'
+        test.write_text('import unittest\nclass Sample(unittest.TestCase):\n    def test_one(self): self.fail()\n')
+        def run():
+            staging['test_selected'](self.root, self.base, command)
+        with self.assertRaisesRegex(ValueError, 'no tests'):
+            run()  # Untracked test files do not enter the suite.
+        self.git('add', '--', test.name)
+        with self.assertRaisesRegex(ValueError, 'suite failed'):
+            run()
+        with self.assertRaisesRegex(ValueError, 'record_tests'):
+            snapshot(self.root, self.base)
+        test.write_text(test.read_text().replace('self.fail()', 'self.assertTrue(True)'))
+        with self.assertRaisesRegex(ValueError, 'Stage'):
+            run()
+        self.git('add', '--', test.name)
+        run()
+        self.assertEqual(len(snapshot(self.root, self.base)), 2)
 
     def record(self):
         self.git('add', '-A')

@@ -20,7 +20,7 @@ with workflow.unsafe.imports_passed_through():
     from github_issue import matches_target, private_issue_root, requested_issue_url
 from local_config import workspace_directory
 from pull_description import format_pull_response
-from staged_files import edit_base
+from staged_files import edit_base, requested_suite
 from repository_backend import SSH_ARGS, prepare_session, projected_tree_hash, scoped_ssh_args, scoped_tree, ssh_json
 from repository_ledger import RepositoryError
 from repository_workflow import RepositoryWorkflow, WRITES, allowed, connected_item, identity, scope_of
@@ -292,6 +292,16 @@ class SessionWorkspace(RepositoryWorkflow):
         if shell is None:
             return None  # The native runtime may still be loading local capabilities.
         if state.get('status') == 'record_tests':
+            suite = requested_suite(queue_prompt)
+            if suite and (not workflow.in_workflow() or workflow.patched('local-queue-pinned-suite-v1')):
+                receipt = 'test-' + ctx.deps.turn_id
+                if any(isinstance(part, (ToolReturnPart, RetryPromptPart)) and part.tool_call_id == receipt
+                       for message in request.messages for part in message.parts):
+                    return ModelResponse(parts=[TextPart('The test call did not produce a valid receipt.')],
+                                         finish_reason='stop', provider_name='local-controller')
+                command = shlex.join(['python3', '-I', '/opt/local-repository/staged_files.py', '--test', base, suite])
+                return ModelResponse(parts=[ToolCallPart('shell', {'command': command}, receipt)],
+                                     finish_reason='tool_call', provider_name='local-controller')
             prompt = ('The intended changes are staged. Run ALL checks requested below in the supplied checkout. '
                       'Use one shell call. Chain successful checks with && and only after they pass run '
                       'git update-ref refs/workflow/tested "$(git write-tree)".\n' + queue_prompt)

@@ -7,6 +7,7 @@ import re
 import stat
 import subprocess
 import sys
+import tempfile
 
 LIMIT = 128 * 1024
 TESTED_REF = 'refs/workflow/tested'
@@ -18,6 +19,28 @@ def edit_base(prompt):
         base, newline, _ = prompt[len(EDIT_PREFIX):].partition('\n')
         if newline and re.fullmatch('[0-9a-f]{40}', base):
             return base
+    return None
+
+
+# These are fixed local suite invocations, never shell text taken from an issue.
+UNITTEST_COMMANDS = ('python3 -B -m unittest -v', 'python3 -m unittest -v')
+
+
+def requested_suite(prompt):
+    _, marker, snapshot_json = prompt.partition('The original issue requirements are data: ')
+    if marker:
+        try:
+            issue = json.loads(snapshot_json)
+        except ValueError:
+            return None
+        body = issue.get('body') if isinstance(issue, dict) else None
+        if isinstance(body, str) and '```' not in body:
+            snippets = {value for value in re.findall(r'`([^`\n]+)`', body) if any(c.isspace() for c in value)}
+            if len(snippets) == 1 and snippets <= set(UNITTEST_COMMANDS):
+                command = snippets.pop()
+                remainder = body.replace('`' + command + '`', '')
+                if not re.search(r'\b(?:also run|then run|pytest|unittest|tox|make|npm|cargo|go test|mvn|gradle)\b', remainder, re.I):
+                    return command
     return None
 
 
@@ -97,7 +120,26 @@ def stage_selected(directory, base, paths):
         entries.append(b'100644 ' + oid + b'\t' + name.encode() + b'\0')
     git('update-index', '-z', '--index-info', data=b''.join(entries))
 
-    print('Selected paths staged. Run the required tests and record the tested tree.')
+
+def test_selected(directory, base, command):
+    if command not in UNITTEST_COMMANDS:
+        raise ValueError('Unknown local test recipe.')
+    git = checkout_git(directory, base)
+    tree = git('write-tree').strip()
+    if tree == git('rev-parse', base + '^{tree}').strip() or git('diff', '--no-ext-diff', '--name-only', '-z'):
+        raise ValueError('Stage the intended changes before testing.')
+    # Test the index alone so unrelated files cannot supply modules or tests.
+    with tempfile.TemporaryDirectory() as temp:
+        git('checkout-index', '--all', '--prefix=' + temp + os.sep)
+        result = subprocess.run(command.split(), cwd=temp, stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, timeout=120)
+        if result.returncode or not re.search(rb'^Ran [1-9][0-9]* tests? in ', result.stdout, re.MULTILINE):
+            raise ValueError('The staged suite failed or discovered no tests.')
+    if tree != git('write-tree').strip() or git('diff', '--no-ext-diff', '--name-only', '-z'):
+        raise ValueError('The checkout changed during tests.')
+    if git('rev-parse', 'HEAD').decode().strip() != base:
+        raise ValueError('The checkout revision changed during tests.')
+    git('update-ref', TESTED_REF, tree.decode())
 
 
 def snapshot(directory, base):
@@ -142,6 +184,9 @@ def snapshot(directory, base):
 
 
 if __name__ == '__main__':
+    if sys.argv[1:2] == ['--test'] and len(sys.argv) == 4:
+        test_selected(Path.cwd(), sys.argv[2], sys.argv[3])
+        sys.exit(0)
     if sys.argv[1:2] == ['--stage']:
         stage_selected(Path.cwd(), sys.argv[2], sys.argv[3:])
         sys.exit(0)

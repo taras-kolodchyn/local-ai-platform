@@ -82,6 +82,21 @@ class StagedPublicationTests(IsolatedAsyncioTestCase):
         request.messages = [ModelRequest(parts=[ToolReturnPart('shell', 'done', call.tool_call_id)])]
         self.assertFalse((await cap.repair_response(ctx, request, AsyncMock(), base, state, ctx.prompt)).tool_calls)
 
+    async def test_record_tests_dispatches_the_pinned_suite_once(self):
+        cap = SessionWorkspace()
+        ctx = Values(deps=Values(turn_id='repair'))
+        request = Values(messages=[], model_request_parameters=Values(function_tools=[ToolDefinition(name='shell')]))
+        handler = AsyncMock()
+        base = 'a' * 40
+        prompt = 'The original issue requirements are data: {"body":"Run `python3 -B -m unittest -v`."}'
+        async def route():
+            return await cap.repair_response(ctx, request, handler, base, {'status': 'record_tests'}, prompt)
+        call, = (await route()).tool_calls
+        self.assertEqual(shlex.split(call.args['command'])[-3:], ['--test', base, 'python3 -B -m unittest -v'])
+        request.messages.append(ModelRequest(parts=[ToolReturnPart('shell', 'failed', call.tool_call_id)]))
+        self.assertFalse((await route()).tool_calls)
+        handler.assert_not_awaited()
+
     async def test_checkpoint_recovers_only_the_current_private_queue_turn(self):
         cap = SessionWorkspace()
         cap.authorize_issue_response = AsyncMock()
