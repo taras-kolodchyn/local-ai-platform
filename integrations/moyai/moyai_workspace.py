@@ -3,6 +3,8 @@ import asyncio
 from dataclasses import replace
 from functools import cached_property
 from pathlib import PurePosixPath
+import json
+import shlex
 import re
 
 from pydantic_ai.capabilities import durable_operation
@@ -18,6 +20,7 @@ with workflow.unsafe.imports_passed_through():
     from github_issue import matches_target, private_issue_root, requested_issue_url
 from local_config import workspace_directory
 from pull_description import format_pull_response
+from staged_files import edit_base, requested_suite
 from repository_backend import SSH_ARGS, prepare_session, projected_tree_hash, scoped_ssh_args, scoped_tree, ssh_json
 from repository_ledger import RepositoryError
 from repository_workflow import RepositoryWorkflow, WRITES, allowed, connected_item, identity, scope_of
@@ -255,6 +258,88 @@ class SessionWorkspace(RepositoryWorkflow):
             raise ToolFailed('The analysis-only profile permits local reads and enabled gateway skills only.')
         return await super().before_tool_execute(ctx, call=call, tool_def=tool_def, args=args)
 
+    @durable_operation('queue_checkout_ready')
+    async def checkout_ready(self, session: str, authority: str, base: str) -> bool:
+        result = await ssh_json(('python3', '-I', '/opt/local-repository/staged_files.py'),
+                                {'directory': workspace_directory(session, authority),
+                                 'base': base, 'check_index': True}, 25)
+        return result.get('status') == 'ready'
+
+    @durable_operation('continued_queue_prompt')
+    async def continued_queue_prompt(self, session: str, actor: str, turn: str) -> str | None:
+        from moyai.models import Session, Turn
+        from moyai.runtime import current
+        from sqlalchemy import select
+        runtime = current()
+        async with runtime.database.sessions() as db:
+            sealed = await db.scalar(select(Turn.prompt).join(Session, Session.id == Turn.session_id).where(
+                Turn.id == turn, Turn.session_id == session, Turn.actor_id == actor, Session.owner_id == actor,
+                Session.visibility == 'private', Session.surface == 'web'))
+        if sealed is not None:
+            prompt = runtime.security.unseal(sealed).decode()
+            if edit_base(prompt):
+                return prompt
+        return None
+
+    @durable_operation('queue_repair_state')
+    async def repair_state(self, session: str, authority: str, base: str) -> dict:
+        return await ssh_json(('python3', '-I', '/opt/local-repository/staged_files.py'),
+                              {'directory': workspace_directory(session, authority), 'base': base,
+                               'check_index': True, 'repair': True}, 25)
+
+    async def repair_response(self, ctx, request, handler, base, state, queue_prompt):
+        shell = next((t for t in request.model_request_parameters.function_tools if t.name == 'shell'), None)
+        if shell is None:
+            return None  # The native runtime may still be loading local capabilities.
+        if state.get('status') == 'record_tests':
+            suite = requested_suite(queue_prompt)
+            if suite and (not workflow.in_workflow() or workflow.patched('local-queue-pinned-suite-v1')):
+                receipt = 'test-' + ctx.deps.turn_id
+                if any(isinstance(part, (ToolReturnPart, RetryPromptPart)) and part.tool_call_id == receipt
+                       for message in request.messages for part in message.parts):
+                    return ModelResponse(parts=[TextPart('The test call did not produce a valid receipt.')],
+                                         finish_reason='stop', provider_name='local-controller')
+                command = shlex.join(['python3', '-I', '/opt/local-repository/staged_files.py', '--test', base, suite])
+                return ModelResponse(parts=[ToolCallPart('shell', {'command': command}, receipt)],
+                                     finish_reason='tool_call', provider_name='local-controller')
+            prompt = ('The intended changes are staged. Run ALL checks requested below in the supplied checkout. '
+                      'Use one shell call. Chain successful checks with && and only after they pass run '
+                      'git update-ref refs/workflow/tested "$(git write-tree)".\n' + queue_prompt)
+            return await handler(force_call(request, shell, prompt))
+        if state.get('status') != 'stage_changes':
+            return None
+        paths, staged = state.get('paths', []), state.get('staged', [])
+        def finish(message):
+            return ModelResponse(parts=[TextPart(message)], finish_reason='stop', provider_name='local-controller')
+        selection_id = 'stage-' + ctx.deps.turn_id
+        if any(isinstance(part, (ToolReturnPart, RetryPromptPart)) and part.tool_call_id == selection_id
+               for message in request.messages for part in message.parts):
+            return finish('The selection did not resolve the unstaged changes. Inspect the checkout.')
+        if not paths or not set(staged) <= set(paths):
+            return finish('No eligible file selection. Inspect the checkout.')
+        selector = replace(shell, name='select_checkout_paths',
+                           description='Choose exactly the local changes required for this issue.',
+                           parameters_json_schema={'type': 'object', 'additionalProperties': False,
+                               'properties': {'paths': {'type': 'array', 'items': {'type': 'string', 'enum': paths},
+                                                        'uniqueItems': True, 'maxItems': len(paths)}},
+                               'required': ['paths']})
+        prompt = (f'Choose all and only the files needed for the issue. Already staged: {json.dumps(staged)}. '
+                  f'Eligible changed files: {json.dumps(paths)}. Return an empty list if uncertain.\n' + queue_prompt)
+        response = await handler(force_call(request, selector, prompt))
+        calls = response.tool_calls
+        if len(calls) != 1 or calls[0].tool_name != selector.name:
+            return finish('No valid staging selection was returned.')
+        try:
+            selected = calls[0].args_as_dict()['paths']
+        except (KeyError, TypeError, ValueError):
+            return finish('No valid staging selection was returned.')
+        if (not isinstance(selected, list) or not selected or not all(isinstance(p, str) for p in selected)
+                or len(selected) != len(set(selected)) or not set(staged) <= set(selected) <= set(paths)):
+            return finish('No valid staging selection was returned.')
+        command = shlex.join(['python3', '-I', '/opt/local-repository/staged_files.py', '--stage', base, *selected])
+        return replace(response, parts=[ToolCallPart('shell', {'command': command}, selection_id)],
+                       finish_reason='tool_call')
+
     @durable_operation('staged_publication_files')
     async def staged_files(self, session: str, authority: str, base: str) -> dict:
         return await ssh_json(('python3', '-I', '/opt/local-repository/staged_files.py'),
@@ -306,6 +391,27 @@ class SessionWorkspace(RepositoryWorkflow):
         if analysis_mode.active(ctx):
             # Repository completion and issue intake can have controller-side effects.
             return await handler(request_context)
+        queue_prompt = getattr(ctx, 'prompt', None)
+        if (not edit_base(queue_prompt) and getattr(ctx.deps, 'history_segment', 0) and private_issue_root(ctx)
+                and (not workflow.in_workflow() or workflow.patched('local-continued-queue-prompt-v1'))):
+            queue_prompt = await self.continued_queue_prompt(ctx.deps.session_id, ctx.deps.actor_id, ctx.deps.turn_id)
+        base = edit_base(queue_prompt)
+        if (base and private_issue_root(ctx)
+                and (not workflow.in_workflow() or workflow.patched('local-queue-ready-completion-v1'))):
+            await self.authorize_issue_response(ctx, request_context)
+            if (queue_prompt.partition('\n')[2].startswith('Prepare the existing edits for issue #')
+                    and (not workflow.in_workflow() or workflow.patched('local-queue-stage-selection-v1'))):
+                state = await self.repair_state(*scope_of(ctx), base)
+                ready = state.get('status') == 'ready'
+                if not ready:
+                    response = await self.repair_response(ctx, request_context, handler, base, state, queue_prompt)
+                    if response is not None:
+                        return response
+            else:
+                ready = await self.checkout_ready(*scope_of(ctx), base)
+            if ready:
+                return ModelResponse(parts=[TextPart('The tested index is ready for publication.')],
+                                     finish_reason='stop', provider_name='local-controller')
         target = re.fullmatch(
             r'Publish staged files for ([A-Za-z0-9-]+)/([A-Za-z0-9_.-]+) on issue-([1-9][0-9]*) '
             r'at ([0-9a-f]{40}) through push_files with confirmation\.', ctx.prompt

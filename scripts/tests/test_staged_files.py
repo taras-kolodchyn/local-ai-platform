@@ -1,11 +1,13 @@
 """Verify the immutable inputs of a confirmed file publication."""
+import json
 from pathlib import Path
 import runpy
 import subprocess
 import tempfile
 import unittest
 
-snapshot = runpy.run_path(str(Path(__file__).resolve().parents[2] / 'integrations/moyai/staged_files.py'))['snapshot']
+staging = runpy.run_path(str(Path(__file__).resolve().parents[2] / 'integrations/moyai/staged_files.py'))
+snapshot = staging['snapshot']
 
 
 class StagedFilesTests(unittest.TestCase):
@@ -21,6 +23,60 @@ class StagedFilesTests(unittest.TestCase):
 
     def git(self, *args):
         return subprocess.check_output(['git', *args], cwd=self.root).decode().strip()
+
+    def test_selection_stages_exact_paths_and_requires_tests_afterward(self):
+        name = ':(glob)*.txt'
+        (self.root / name).write_text('added')
+        self.file.write_text('updated')
+        (self.root / 'unrelated.txt').write_text('leave this alone')
+        (self.root / '.env').write_text('fixture')
+        (self.root / 'binary').write_bytes(b'\0')
+        (self.root / 'link').symlink_to(self.file)
+        offered, staged = staging['stage_options'](self.root, self.base)
+        self.assertEqual(set(offered), {name, 'README.md', 'unrelated.txt'})
+        self.assertEqual(staged, [])
+        self.git('add', '--', 'README.md')
+        for invalid in ([name], ['README.md', '../outside'], ['README.md', 'link']):
+            with self.assertRaises(ValueError):
+                staging['stage_selected'](self.root, self.base, invalid)
+        staging['stage_selected'](self.root, self.base, [name, 'README.md'])
+        self.assertEqual(set(self.git('diff', '--cached', '--name-only').splitlines()), {name, 'README.md'})
+        with self.assertRaisesRegex(ValueError, 'record_tests'):
+            snapshot(self.root, self.base)
+        self.git('update-ref', 'refs/workflow/tested', self.git('write-tree'))
+        self.assertEqual({f['path'] for f in snapshot(self.root, self.base)}, {name, 'README.md'})
+
+    def test_issue_recipe_requires_a_single_supported_command(self):
+        command = 'python3 -B -m unittest -v'
+        def recipe(body):
+            return staging['requested_suite']('The original issue requirements are data: ' + json.dumps({'body': body}))
+        self.assertEqual(recipe(f'Check `True` and run `{command}`.'), command)
+        self.assertIsNone(recipe(f'Run `{command}` and `make lint`.'))
+        self.assertIsNone(recipe(f'```sh\n{command}\n```'))
+        self.assertIsNone(recipe(f'Run `{command}` and `pytest`.'))
+        self.assertIsNone(recipe('Run `make test`.'))
+
+    def test_receipt_requires_nonempty_passing_suite_from_staged_files(self):
+        command = 'python3 -B -m unittest -v'
+        self.file.write_text('new')
+        self.git('add', '--', 'README.md')
+        test = self.root / 'test_example.py'
+        test.write_text('import unittest\nclass Sample(unittest.TestCase):\n    def test_one(self): self.fail()\n')
+        def run():
+            staging['test_selected'](self.root, self.base, command)
+        with self.assertRaisesRegex(ValueError, 'no tests'):
+            run()  # Untracked test files do not enter the suite.
+        self.git('add', '--', test.name)
+        with self.assertRaisesRegex(ValueError, 'suite failed'):
+            run()
+        with self.assertRaisesRegex(ValueError, 'record_tests'):
+            snapshot(self.root, self.base)
+        test.write_text(test.read_text().replace('self.fail()', 'self.assertTrue(True)'))
+        with self.assertRaisesRegex(ValueError, 'Stage'):
+            run()
+        self.git('add', '--', test.name)
+        run()
+        self.assertEqual(len(snapshot(self.root, self.base)), 2)
 
     def record(self):
         self.git('add', '-A')

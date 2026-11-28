@@ -166,6 +166,20 @@ changes against the pinned revision, that tracked edits are staged, and that
 the recorded tree matches the index. If staging or the test receipt is
 incomplete, Developer gets up to two local repair turns in the same checkout
 to stage the intended paths, rerun the issue tests and record the tree.
+For staging, Developer chooses explicit paths from the private checkout's
+changed regular text files. The helper validates the selection against the
+pinned commit and applies it to the Git index as one batch. An existing
+staged path must be included. Unselected new files stay outside the index.
+For an issue that names a single supported Python unittest command
+(`python3 -m unittest -v` or `python3 -B -m unittest -v`), index repair runs
+the suite against a temporary checkout of the staged files. It records the
+tree only if tests were discovered and passed and the index still matches.
+Other test commands follow the normal Developer test step.
+Before each inference request in a queue edit or repair turn, the controller
+checks the tested index against the pinned commit. A ready index ends that
+turn immediately. After a history checkpoint, the controller recovers the queue
+instruction from the same private session, requester and turn. The queue then rechecks the checkout and advances to
+confirmed publication on its next tick.
 An unsupported snapshot or exhausted retries hold the issue for inspection.
 Before opening the confirmation form, the publication step checks the tree
 again. An empty or changed checkout, a missing test marker, or an unsupported
